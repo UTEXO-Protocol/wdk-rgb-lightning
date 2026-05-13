@@ -14,7 +14,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Jainakin/wdk-rgb-lightning.git"
+    "url": "https://github.com/UTEXO-Protocol/wdk-rgb-lightning.git"
   },
   "main": "index.js",
   "type": "module",
