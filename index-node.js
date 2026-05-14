@@ -1,0 +1,21 @@
+// Copyright 2026 UTEXO.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+'use strict'
+
+// Node entry — wires the napi binding. Resolved through the `node`
+// conditional export in package.json when the consumer is running on
+// plain Node.js (server, CLI, tests). The napi addon ships separately
+// as @utexo/rgb-lightning-node-nodejs (peer dep) and provides the same
+// SdkNode + NativeExternalSigner surface the bare addon exposes.
+
+import WalletManagerBase from './src/wallet-manager-rgb-lightning.js'
+import { NodeRgbLightningBinding } from './src/node-binding.js'
+
+export default class WalletManagerRgbLightning extends WalletManagerBase {
+  static get Binding () { return NodeRgbLightningBinding }
+}
+
+export { default as WalletAccountRgbLightning } from './src/wallet-account-rgb-lightning.js'
+export { NodeRgbLightningBinding } from './src/node-binding.js'

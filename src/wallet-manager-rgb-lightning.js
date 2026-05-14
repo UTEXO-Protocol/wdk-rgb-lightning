@@ -6,16 +6,16 @@
 
 import WalletManager from '@tetherto/wdk-wallet'
 import { mnemonicToSeedSync } from 'bip39'
-import { BareRgbLightningBinding } from './bare-binding.js'
 import WalletAccountRgbLightning from './wallet-account-rgb-lightning.js'
 
 const MEMPOOL_SPACE_URL = 'https://mempool.space'
 
 /** @typedef {import('@tetherto/wdk-wallet').FeeRates} FeeRates */
-/** @typedef {import('./bare-binding.js').BareRgbLightningBindingConfig} BareRgbLightningBindingConfig */
+/** @typedef {import('./binding-interface.js').IRgbLightningBinding} IRgbLightningBinding */
+/** @typedef {import('./binding-interface.js').RgbLightningBindingConfig} RgbLightningBindingConfig */
 
 /**
- * @typedef {BareRgbLightningBindingConfig & {
+ * @typedef {RgbLightningBindingConfig & {
  *   bitcoindRpcUsername?: string,
  *   bitcoindRpcPassword?: string,
  *   bitcoindRpcHost?: string,
@@ -69,6 +69,22 @@ function mnemonicToNodeSeedHex (mnemonic) {
  */
 export default class WalletManagerRgbLightning extends WalletManager {
   /**
+   * Subclasses (one per runtime) override this static getter to point
+   * at the binding implementation that works in their environment.
+   * The base class is intentionally abstract — call sites should pull
+   * a concrete class from `./index-bare.js` or `./index-node.js`.
+   *
+   * @returns {new (config: RgbLightningBindingConfig) => IRgbLightningBinding}
+   */
+  static get Binding () {
+    throw new Error(
+      'WalletManagerRgbLightning is abstract — import from ' +
+      "'@utexo/wdk-rgb-lightning' (Node) or via the bare conditional " +
+      'export (RN/bare worklet) so the right binding is wired automatically.'
+    )
+  }
+
+  /**
    * @param {string | Uint8Array} seed - BIP-39 mnemonic phrase (string)
    *   or a Uint8Array carrying the same. Inherited from WDK's
    *   `WalletManager` contract.
@@ -86,7 +102,7 @@ export default class WalletManagerRgbLightning extends WalletManager {
     }
 
     /** @private */ this._network = config.network
-    /** @private @type {BareRgbLightningBinding | null} */
+    /** @private @type {IRgbLightningBinding | null} */
     this._binding = null
   }
 
@@ -101,7 +117,8 @@ export default class WalletManagerRgbLightning extends WalletManager {
       throw new Error('RGB Lightning wallets only support account index 0.')
     }
     if (!this._accounts[index]) {
-      const binding = new BareRgbLightningBinding({
+      const Binding = this.constructor.Binding
+      const binding = new Binding({
         network: this._network,
         dataDir: this._config.dataDir,
         daemonListeningPort: this._config.daemonListeningPort,
