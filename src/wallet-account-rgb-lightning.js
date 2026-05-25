@@ -10,6 +10,13 @@
 /** @typedef {import('@tetherto/wdk-wallet').TransferOptions} TransferOptions */
 /** @typedef {import('@tetherto/wdk-wallet').TransferResult} TransferResult */
 /** @typedef {import('./bare-binding.js').BareRgbLightningBinding} BareRgbLightningBinding */
+/** @typedef {import('./lsp-client.js').LspClient} LspClient */
+
+import {
+  payLightningAddress as _payLightningAddress,
+  requestLspRgbDeposit as _requestLspRgbDeposit,
+  payRgbViaLsp as _payRgbViaLsp
+} from './lsp-helpers.js'
 
 /**
  * Sentinel placeholder address returned by `getAddress()` before the
@@ -652,6 +659,37 @@ export default class WalletAccountRgbLightning {
       return DEFAULT_FEE_RATE_SAT_PER_VB
     }
   }
+
+  // ==========================================================================
+  // LSP integration — utexo-lsp (or any LUD-06 / utexo-lsp-compatible server)
+  // ==========================================================================
+  // Thin pass-throughs to ./lsp-helpers.js so callers can do
+  //   await account.payLightningAddress('alice@lsp.example', 5_000_000n)
+  // without importing the helpers module. The helpers are also
+  // exported standalone for advanced callers that prefer functional
+  // composition over instance methods (e.g. for read-only accounts).
+
+  /**
+   * Pay a Lightning Address (LUD-06). Works against any LNURL-pay
+   * server, including but not limited to utexo-lsp.
+   * @see ./lsp-helpers.js#payLightningAddress
+   */
+  payLightningAddress (addr, amountMsat, opts) {
+    return _payLightningAddress(this, addr, amountMsat, opts)
+  }
+
+  /**
+   * Ask an LSP to broker an RGB→LN deposit: wallet supplies (or mints)
+   * a BOLT11 invoice; LSP returns an RGB invoice for the sender.
+   * @see ./lsp-helpers.js#requestLspRgbDeposit
+   */
+  requestLspRgbDeposit (args) { return _requestLspRgbDeposit(this, args) }
+
+  /**
+   * Pay an RGB invoice via an LSP-mediated LN payment.
+   * @see ./lsp-helpers.js#payRgbViaLsp
+   */
+  payRgbViaLsp (args) { return _payRgbViaLsp(this, args) }
 
   // ==========================================================================
   // Cleanup
