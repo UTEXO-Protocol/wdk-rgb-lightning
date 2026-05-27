@@ -114,6 +114,22 @@ export default class WalletAccountRgbLightning {
     return { ok: true }
   }
 
+  /**
+   * Forcibly take over a stale VSS ownership fence after the previous
+   * node died holding it. Authenticates with the wallet password.
+   * Throws if VSS isn't configured (no `vssUrl` at construction).
+   *
+   * Recovery flow only — DO NOT call while another live node may still
+   * hold the fence. Doing so corrupts the shared VSS state. See the VSS
+   * docs section "Single-writer ownership" for the contract.
+   *
+   * @param {string} password
+   */
+  async clearVssFence (password) {
+    this._binding.clearVssFence(password)
+    return { ok: true }
+  }
+
   // ==========================================================================
   // Node info / network / sync — ✅ wired
   // ==========================================================================
@@ -214,7 +230,22 @@ export default class WalletAccountRgbLightning {
   // BOLT11 invoices — ✅ wired
   // ==========================================================================
 
-  /** @param {Object} request - JsonLnInvoiceRequest (amount_msat, expiry_sec, asset_id, asset_amount, ...) */
+  /**
+   * Create a BOLT11 invoice (BTC or RGB-asset-bound).
+   *
+   * @param {Object}  request
+   * @param {number}  [request.amt_msat]            Optional fixed amount.
+   * @param {number}   request.expiry_sec           Invoice expiry, seconds.
+   * @param {string}  [request.asset_id]            RGB contract id for an asset-bound invoice.
+   * @param {number}  [request.asset_amount]        RGB units (with asset_id).
+   * @param {string}  [request.payment_hash]        Pre-image hash for HODL invoices.
+   * @param {string}  [request.description_hash]    LUD-06 description hash (hex).
+   * @param {number}  [request.min_final_cltv_expiry_delta]
+   *   Override the min_final_cltv_expiry on the BOLT11. Required for APay
+   *   outbound flows where the LSP needs the wallet's outbound invoice to
+   *   honor a tunable claim-deadline policy. Passthrough — RLN-side default
+   *   applies when omitted.
+   */
   async createInvoice (request) { return this._node.lnInvoice(request) }
 
   /** @param {string} invoice */

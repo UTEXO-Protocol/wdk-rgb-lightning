@@ -45,6 +45,9 @@ const {
  * @property {boolean} [permissiveSignerPolicy=true] - VLS policy filter;
  *   pass `false` to enforce the full simple policy. Defaults to
  *   permissive for in-process use.
+ * @property {string} [vssUrl]               - opt-in VSS cloud backup URL
+ * @property {boolean} [vssAllowHttp=false]  - allow http:// for non-loopback
+ * @property {boolean} [vssAllowEmptyRestore=false] - tolerate failed restore
  */
 
 /**
@@ -73,6 +76,11 @@ export class BareRgbLightningBinding {
       max_media_upload_size_mb: config.maxMediaUploadSizeMb ?? 5,
       enable_virtual_channels_v0: config.enableVirtualChannelsV0 ?? false
     }
+    // VSS fields are only forwarded when the host opts in. Omitting them
+    // lets the RLN-side `#[serde(default)]` keep VSS fully disabled.
+    if (config.vssUrl) this._initRequest.vss_url = config.vssUrl
+    if (config.vssAllowHttp) this._initRequest.vss_allow_http = true
+    if (config.vssAllowEmptyRestore) this._initRequest.vss_allow_empty_restore = true
     /** @type {SdkNode | null} */
     this._node = null
     /** @type {NativeExternalSigner | null} */
@@ -166,6 +174,18 @@ export class BareRgbLightningBinding {
       throw new Error('attachExternalSigner(seedHex) must be called before bootstrap()')
     }
     return this._signer.bootstrap()
+  }
+
+  /**
+   * Take over a stale VSS ownership fence after a previous node died
+   * holding it. Authenticates with the wallet password. Throws
+   * `Rln(FailedVssInit)` if VSS isn't configured or the takeover fails.
+   *
+   * @param {string} password
+   */
+  clearVssFence (password) {
+    const node = this.ensureNode()
+    node.vssClearFence({ password })
   }
 
   /** Best-effort shutdown. Idempotent. */
