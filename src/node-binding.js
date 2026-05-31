@@ -117,6 +117,18 @@ export class NodeRgbLightningBinding {
     node.vssClearFence({ password })
   }
 
+  /**
+   * Register with an LSP as an APay (async-payments) recipient. See
+   * BareRgbLightningBinding.apayNew for the full contract.
+   *
+   * @param {string} hostNodeId
+   * @returns {object} AsyncOrderNewResponse
+   */
+  apayNew (hostNodeId) {
+    const node = this.ensureNode()
+    return node.apayNew(hostNodeId)
+  }
+
   shutdown () {
     if (this._node) {
       this._node.shutdown()

@@ -130,6 +130,25 @@ export default class WalletAccountRgbLightning {
     return { ok: true }
   }
 
+  /**
+   * Register this wallet with an LSP as an APay (async-payments)
+   * recipient. Enables offline-receive over Lightning Address: the
+   * wallet uploads a batch of pre-allocated payment hashes to the LSP,
+   * which then accepts Lightning payments addressed to those hashes
+   * on the wallet's behalf even while the wallet is offline.
+   *
+   * Upstream: PR #51 (`apay_new` SDK method).
+   *
+   * @param {string} hostNodeId - the LSP's node_id (hex, compressed secp256k1)
+   * @returns {Promise<object>} AsyncOrderNewResponse:
+   *   `{ request_id, host_node_id, protocol_version, order_id, status,
+   *      accepted_through_index, next_index_expected, unused_hashes,
+   *      refill_batch_size, first_hash_index }`
+   */
+  async apayNew (hostNodeId) {
+    return this._binding.apayNew(hostNodeId)
+  }
+
   // ==========================================================================
   // Node info / network / sync — ✅ wired
   // ==========================================================================

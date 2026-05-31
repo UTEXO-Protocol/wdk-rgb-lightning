@@ -58,6 +58,13 @@
  *   used at unlock). Throws if VSS isn't configured. Pointing two
  *   live nodes at the same VSS store corrupts state — only call this
  *   when you're certain the previous owner is gone.
+ * @property {(hostNodeId: string) => object}           apayNew
+ *   Register this node with an LSP as an async-payments (APay) recipient.
+ *   Used for offline-receive over Lightning Address: the wallet uploads
+ *   a batch of pre-allocated payment hashes to the LSP, which then
+ *   accepts payments addressed to those hashes on the wallet's behalf
+ *   while the wallet is offline. Argument is the LSP's node_id (hex).
+ *   Returns the AsyncOrderNewResponse from upstream PR #51.
  * @property {() => void}                               shutdown
  *   Idempotent stop — releases the node handle + destroys the signer.
  */

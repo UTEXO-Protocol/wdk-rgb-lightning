@@ -188,6 +188,22 @@ export class BareRgbLightningBinding {
     node.vssClearFence({ password })
   }
 
+  /**
+   * Register with an LSP as an APay (async-payments) recipient. The
+   * wallet uploads a batch of pre-allocated payment hashes to the LSP;
+   * the LSP then accepts Lightning payments addressed to those hashes
+   * on the wallet's behalf, even while the wallet is offline.
+   *
+   * @param {string} hostNodeId - the LSP's node_id (hex, compressed secp256k1)
+   * @returns {object} AsyncOrderNewResponse — request_id, host_node_id,
+   *   protocol_version, order_id, status, accepted_through_index,
+   *   next_index_expected, unused_hashes, refill_batch_size, first_hash_index
+   */
+  apayNew (hostNodeId) {
+    const node = this.ensureNode()
+    return node.apayNew(hostNodeId)
+  }
+
   /** Best-effort shutdown. Idempotent. */
   shutdown () {
     if (this._node) {
