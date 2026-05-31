@@ -118,6 +118,17 @@ export class NodeRgbLightningBinding {
   }
 
   /**
+   * Register this node with an LSP as an async-payments (APay) recipient.
+   *
+   * @param {string} hostNodeId  - LSP's node_id (hex)
+   * @returns {object}  AsyncOrderNewResponse from upstream PR #51
+   */
+  apayNew (hostNodeId) {
+    const node = this.node
+    return node.apayNew(hostNodeId)
+  }
+
+  /**
    * Register with an LSP as an APay (async-payments) recipient. See
    * BareRgbLightningBinding.apayNew for the full contract.
    *
