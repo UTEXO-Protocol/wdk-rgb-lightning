@@ -36,6 +36,11 @@ export class NodeRgbLightningBinding {
       max_media_upload_size_mb: config.maxMediaUploadSizeMb ?? 5,
       enable_virtual_channels_v0: config.enableVirtualChannelsV0 ?? false
     }
+    // VSS fields are only forwarded when the host opts in. Omitting them
+    // lets the RLN-side `#[serde(default)]` keep VSS fully disabled.
+    if (config.vssUrl) this._initRequest.vss_url = config.vssUrl
+    if (config.vssAllowHttp) this._initRequest.vss_allow_http = true
+    if (config.vssAllowEmptyRestore) this._initRequest.vss_allow_empty_restore = true
     /** @type {unknown | null} */
     this._node = null
     /** @type {unknown | null} */
@@ -98,6 +103,41 @@ export class NodeRgbLightningBinding {
       throw new Error('attachExternalSigner(seedHex) must be called before bootstrap()')
     }
     return this._signer.bootstrap()
+  }
+
+  /**
+   * Take over a stale VSS ownership fence after a previous node died
+   * holding it. Authenticates with the wallet password. Throws
+   * `Rln(FailedVssInit)` if VSS isn't configured or the takeover fails.
+   *
+   * @param {string} password
+   */
+  clearVssFence (password) {
+    const node = this.ensureNode()
+    node.vssClearFence({ password })
+  }
+
+  /**
+   * Register this node with an LSP as an async-payments (APay) recipient.
+   *
+   * @param {string} hostNodeId  - LSP's node_id (hex)
+   * @returns {object}  AsyncOrderNewResponse from upstream PR #51
+   */
+  apayNew (hostNodeId) {
+    const node = this.node
+    return node.apayNew(hostNodeId)
+  }
+
+  /**
+   * Register with an LSP as an APay (async-payments) recipient. See
+   * BareRgbLightningBinding.apayNew for the full contract.
+   *
+   * @param {string} hostNodeId
+   * @returns {object} AsyncOrderNewResponse
+   */
+  apayNew (hostNodeId) {
+    const node = this.ensureNode()
+    return node.apayNew(hostNodeId)
   }
 
   shutdown () {

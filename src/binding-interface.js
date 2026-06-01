@@ -20,6 +20,22 @@
  * @property {number}  [maxMediaUploadSizeMb=5]
  * @property {boolean} [enableVirtualChannelsV0=false]
  * @property {boolean} [permissiveSignerPolicy=true]
+ * @property {string}  [vssUrl]
+ *   Enables VSS cloud backup. Setting it points the node at a remote
+ *   key-value store that mirrors LDK channel state + RGB wallet data
+ *   in near-real-time. The encryption key is derived from the BIP-39
+ *   mnemonic, so recovery requires the original seed. Leave undefined
+ *   to disable VSS (default). Only `https://` URLs (or loopback http)
+ *   are accepted unless `vssAllowHttp` is set.
+ * @property {boolean} [vssAllowHttp=false]
+ *   Permit plain `http://` for non-loopback hosts. Off by default so
+ *   channel state can't be sent in plaintext to an untrusted server
+ *   by accident.
+ * @property {boolean} [vssAllowEmptyRestore=false]
+ *   On a fresh device, start with empty local state if the VSS
+ *   restore step fails (e.g. server unreachable). Off by default —
+ *   set true only when bootstrapping a new node from scratch and you
+ *   accept that any previously-backed-up state will not be pulled in.
  */
 
 /**
@@ -36,6 +52,19 @@
  *   The `SdkNode` handle (getter). Throws if `unlock()` has not run.
  * @property {() => object}                             bootstrap
  *   Returns the signer's bootstrap payload (node_id, xpubs, master_fp).
+ * @property {(password: string) => void}               clearVssFence
+ *   Forcibly take over a stale VSS ownership fence after the previous
+ *   node died holding it. Requires the wallet password (the same one
+ *   used at unlock). Throws if VSS isn't configured. Pointing two
+ *   live nodes at the same VSS store corrupts state — only call this
+ *   when you're certain the previous owner is gone.
+ * @property {(hostNodeId: string) => object}           apayNew
+ *   Register this node with an LSP as an async-payments (APay) recipient.
+ *   Used for offline-receive over Lightning Address: the wallet uploads
+ *   a batch of pre-allocated payment hashes to the LSP, which then
+ *   accepts payments addressed to those hashes on the wallet's behalf
+ *   while the wallet is offline. Argument is the LSP's node_id (hex).
+ *   Returns the AsyncOrderNewResponse from upstream PR #51.
  * @property {() => void}                               shutdown
  *   Idempotent stop — releases the node handle + destroys the signer.
  */

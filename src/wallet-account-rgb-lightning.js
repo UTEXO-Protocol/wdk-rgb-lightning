@@ -10,6 +10,13 @@
 /** @typedef {import('@tetherto/wdk-wallet').TransferOptions} TransferOptions */
 /** @typedef {import('@tetherto/wdk-wallet').TransferResult} TransferResult */
 /** @typedef {import('./bare-binding.js').BareRgbLightningBinding} BareRgbLightningBinding */
+/** @typedef {import('./lsp-client.js').LspClient} LspClient */
+
+import {
+  payLightningAddress as _payLightningAddress,
+  requestLspRgbDeposit as _requestLspRgbDeposit,
+  payRgbViaLsp as _payRgbViaLsp
+} from './lsp-helpers.js'
 
 /**
  * Sentinel placeholder address returned by `getAddress()` before the
@@ -105,6 +112,62 @@ export default class WalletAccountRgbLightning {
   async shutdown () {
     this._binding.shutdown()
     return { ok: true }
+  }
+
+  /**
+   * Forcibly take over a stale VSS ownership fence after the previous
+   * node died holding it. Authenticates with the wallet password.
+   * Throws if VSS isn't configured (no `vssUrl` at construction).
+   *
+   * Recovery flow only — DO NOT call while another live node may still
+   * hold the fence. Doing so corrupts the shared VSS state. See the VSS
+   * docs section "Single-writer ownership" for the contract.
+   *
+   * @param {string} password
+   */
+  async clearVssFence (password) {
+    this._binding.clearVssFence(password)
+    return { ok: true }
+  }
+
+  /**
+   * Register this node with an LSP as an async-payments (APay) recipient.
+   * Used for offline-receive over Lightning Address — the wallet uploads
+   * a batch of pre-allocated payment hashes to the LSP, which then
+   * accepts payments addressed to those hashes on the wallet's behalf
+   * while this wallet is offline. The LSP later forwards the funds when
+   * the wallet comes back online, redeeming the pre-allocated hash.
+   *
+   * Backed by upstream rgb-lightning-node PR #51 (`apay_new` UniFFI
+   * method). Requires bare ≥ v0.1.0-beta.11 / nodejs ≥ v0.1.0-beta.7.
+   *
+   * @param {string} hostNodeId  - LSP's node_id (hex, 33-byte compressed secp256k1).
+   * @returns {Promise<object>}  AsyncOrderNewResponse:
+   *   `{ request_id, host_node_id, protocol_version, order_id, status,
+   *      accepted_through_index, next_index_expected, unused_hashes,
+   *      refill_batch_size, first_hash_index }`
+   */
+  async apayNew (hostNodeId) {
+    return this._binding.apayNew(hostNodeId)
+  }
+
+  /**
+   * Register this wallet with an LSP as an APay (async-payments)
+   * recipient. Enables offline-receive over Lightning Address: the
+   * wallet uploads a batch of pre-allocated payment hashes to the LSP,
+   * which then accepts Lightning payments addressed to those hashes
+   * on the wallet's behalf even while the wallet is offline.
+   *
+   * Upstream: PR #51 (`apay_new` SDK method).
+   *
+   * @param {string} hostNodeId - the LSP's node_id (hex, compressed secp256k1)
+   * @returns {Promise<object>} AsyncOrderNewResponse:
+   *   `{ request_id, host_node_id, protocol_version, order_id, status,
+   *      accepted_through_index, next_index_expected, unused_hashes,
+   *      refill_batch_size, first_hash_index }`
+   */
+  async apayNew (hostNodeId) {
+    return this._binding.apayNew(hostNodeId)
   }
 
   // ==========================================================================
@@ -207,7 +270,22 @@ export default class WalletAccountRgbLightning {
   // BOLT11 invoices — ✅ wired
   // ==========================================================================
 
-  /** @param {Object} request - JsonLnInvoiceRequest (amount_msat, expiry_sec, asset_id, asset_amount, ...) */
+  /**
+   * Create a BOLT11 invoice (BTC or RGB-asset-bound).
+   *
+   * @param {Object}  request
+   * @param {number}  [request.amt_msat]            Optional fixed amount.
+   * @param {number}   request.expiry_sec           Invoice expiry, seconds.
+   * @param {string}  [request.asset_id]            RGB contract id for an asset-bound invoice.
+   * @param {number}  [request.asset_amount]        RGB units (with asset_id).
+   * @param {string}  [request.payment_hash]        Pre-image hash for HODL invoices.
+   * @param {string}  [request.description_hash]    LUD-06 description hash (hex).
+   * @param {number}  [request.min_final_cltv_expiry_delta]
+   *   Override the min_final_cltv_expiry on the BOLT11. Required for APay
+   *   outbound flows where the LSP needs the wallet's outbound invoice to
+   *   honor a tunable claim-deadline policy. Passthrough — RLN-side default
+   *   applies when omitted.
+   */
   async createInvoice (request) { return this._node.lnInvoice(request) }
 
   /** @param {string} invoice */
@@ -652,6 +730,37 @@ export default class WalletAccountRgbLightning {
       return DEFAULT_FEE_RATE_SAT_PER_VB
     }
   }
+
+  // ==========================================================================
+  // LSP integration — utexo-lsp (or any LUD-06 / utexo-lsp-compatible server)
+  // ==========================================================================
+  // Thin pass-throughs to ./lsp-helpers.js so callers can do
+  //   await account.payLightningAddress('alice@lsp.example', 5_000_000n)
+  // without importing the helpers module. The helpers are also
+  // exported standalone for advanced callers that prefer functional
+  // composition over instance methods (e.g. for read-only accounts).
+
+  /**
+   * Pay a Lightning Address (LUD-06). Works against any LNURL-pay
+   * server, including but not limited to utexo-lsp.
+   * @see ./lsp-helpers.js#payLightningAddress
+   */
+  payLightningAddress (addr, amountMsat, opts) {
+    return _payLightningAddress(this, addr, amountMsat, opts)
+  }
+
+  /**
+   * Ask an LSP to broker an RGB→LN deposit: wallet supplies (or mints)
+   * a BOLT11 invoice; LSP returns an RGB invoice for the sender.
+   * @see ./lsp-helpers.js#requestLspRgbDeposit
+   */
+  requestLspRgbDeposit (args) { return _requestLspRgbDeposit(this, args) }
+
+  /**
+   * Pay an RGB invoice via an LSP-mediated LN payment.
+   * @see ./lsp-helpers.js#payRgbViaLsp
+   */
+  payRgbViaLsp (args) { return _payRgbViaLsp(this, args) }
 
   // ==========================================================================
   // Cleanup

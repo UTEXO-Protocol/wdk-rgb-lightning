@@ -19,3 +19,18 @@ export default class WalletManagerRgbLightning extends WalletManagerBase {
 
 export { default as WalletAccountRgbLightning } from './src/wallet-account-rgb-lightning.js'
 export { NodeRgbLightningBinding } from './src/node-binding.js'
+
+// LSP client surface — see ./src/lsp-client.js, lnurl-pay.js, lsp-helpers.js.
+// Pure-fetch implementations; identical module under Bare (./index-bare.js).
+export { LspClient, LspError } from './src/lsp-client.js'
+export {
+  LnurlPayError,
+  parseLightningAddress,
+  fetchDiscovery,
+  resolveAddressToInvoice
+} from './src/lnurl-pay.js'
+export {
+  payLightningAddress,
+  requestLspRgbDeposit,
+  payRgbViaLsp
+} from './src/lsp-helpers.js'
