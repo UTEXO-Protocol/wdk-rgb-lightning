@@ -152,22 +152,104 @@ export default class WalletAccountRgbLightning {
   }
 
   /**
-   * Register this wallet with an LSP as an APay (async-payments)
-   * recipient. Enables offline-receive over Lightning Address: the
-   * wallet uploads a batch of pre-allocated payment hashes to the LSP,
-   * which then accepts Lightning payments addressed to those hashes
-   * on the wallet's behalf even while the wallet is offline.
+   * One-shot LSP bootstrap. Renat's dev plan (May 27, items 3 + 4)
+   * called for `/connectpeer` and `apay/new` to fire automatically as
+   * part of SDK init. Rather than coupling them to `unlock()` — where
+   * an LSP-handshake hiccup would block the rest of the wallet from
+   * coming up — we expose them as one explicit opt-in method the
+   * consumer calls after `unlock()` returns.
    *
-   * Upstream: PR #51 (`apay_new` SDK method).
+   * Flow:
+   *   1. `connectPeer(peerPubkeyAndAddr)` to dial the LSP's RLN node.
+   *   2. Poll `listPeers` until the peer shows up (max `waitForPeerMs`).
+   *      Necessary because RLN's `connectPeer` returns once the TCP
+   *      handshake completes, but the noise handshake + the LDK peer
+   *      table update lag ~5–30 s on real networks (this is the same
+   *      race t22 in the E2E suite documents).
+   *   3. Optionally `apayNew(hostNodeId)` to register as an async-pay
+   *      recipient with the LSP. Skipped if `hostNodeId` is undefined.
    *
-   * @param {string} hostNodeId - the LSP's node_id (hex, compressed secp256k1)
-   * @returns {Promise<object>} AsyncOrderNewResponse:
-   *   `{ request_id, host_node_id, protocol_version, order_id, status,
-   *      accepted_through_index, next_index_expected, unused_hashes,
-   *      refill_batch_size, first_hash_index }`
+   * If any step throws, the partial state is left in place — the
+   * consumer can retry, or call `connectPeer` / `apayNew` directly to
+   * recover. This avoids the worst case of half-bootstrapping + then
+   * failing the whole unlock.
+   *
+   * @param {object}  opts
+   * @param {string}  opts.peerPubkeyAndAddr  LSP peer `pubkey@host:port` for connectPeer.
+   * @param {string}  [opts.hostNodeId]       LSP's node_id (hex). When set, apayNew is
+   *                                          called once the peer is visible. Omit to
+   *                                          skip APay registration.
+   * @param {number}  [opts.waitForPeerMs=30000]   How long to wait for the peer to show
+   *                                          up in listPeers after connect. The 30s
+   *                                          default matches the noise-handshake budget
+   *                                          we observe on regtest + signet.
+   * @param {number}  [opts.pollIntervalMs=1000]   How often to recheck listPeers.
+   * @returns {Promise<{
+   *   connect: object,
+   *   peerVisible: boolean,
+   *   apay?: object
+   * }>}  `connect` is the connectPeer response, `peerVisible` is true if
+   *      the peer reached listPeers within the window, `apay` is the
+   *      AsyncOrderNewResponse from apayNew (omitted if hostNodeId was undefined).
    */
-  async apayNew (hostNodeId) {
-    return this._binding.apayNew(hostNodeId)
+  async bootstrapLsp ({
+    peerPubkeyAndAddr,
+    hostNodeId,
+    waitForPeerMs = 30000,
+    pollIntervalMs = 1000
+  } = {}) {
+    if (typeof peerPubkeyAndAddr !== 'string' || peerPubkeyAndAddr.length === 0) {
+      throw new TypeError('bootstrapLsp: peerPubkeyAndAddr (pubkey@host:port) is required')
+    }
+    // Extract `pubkey` so we can match against listPeers regardless of
+    // address-format quirks (DNS vs IP vs trailing slash).
+    const atIdx = peerPubkeyAndAddr.indexOf('@')
+    const peerPubkey = atIdx > 0 ? peerPubkeyAndAddr.slice(0, atIdx) : peerPubkeyAndAddr
+    if (peerPubkey.length === 0) {
+      throw new TypeError('bootstrapLsp: peerPubkeyAndAddr must be in pubkey@host:port form')
+    }
+
+    const connect = await this.connectPeer(peerPubkeyAndAddr)
+
+    // Wait until listPeers reflects the new peer. RLN's connectPeer
+    // returns before LDK fully wires the channel manager; calling
+    // apayNew before the peer is "ready" reliably triggers
+    // Rln(Conflict): /apay/new timed out waiting for host response.
+    //
+    // Defensive shape handling: listPeers historically returned a
+    // raw Vec<Peer> JSON array, but post-dev-merge the bare/nodejs
+    // bindings wrap it as `{ peers: [...] }` to match RLN's HTTP
+    // response shape (t22 in the E2E suite reads `.peers`). Accept
+    // either.
+    const deadline = Date.now() + Math.max(0, Number(waitForPeerMs) || 0)
+    const pollMs = Math.max(100, Number(pollIntervalMs) || 1000)
+    let peerVisible = false
+    while (Date.now() < deadline) {
+      const resp = await this.listPeers().catch(() => null)
+      const peers = Array.isArray(resp)
+        ? resp
+        : (resp && Array.isArray(resp.peers) ? resp.peers : [])
+      if (peers.some((p) => p && p.pubkey === peerPubkey)) {
+        peerVisible = true
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs))
+    }
+
+    /** @type {{connect: object, peerVisible: boolean, apay?: object}} */
+    const result = { connect, peerVisible }
+    if (typeof hostNodeId === 'string' && hostNodeId.length > 0) {
+      if (!peerVisible) {
+        throw new Error(
+          'bootstrapLsp: peer did not appear in listPeers within ' +
+          `${waitForPeerMs}ms — refusing to call apayNew because RLN ` +
+          'will time out waiting for host response. Retry later or ' +
+          'call apayNew directly once the peer is visible.'
+        )
+      }
+      result.apay = await this.apayNew(hostNodeId)
+    }
+    return result
   }
 
   // ==========================================================================
