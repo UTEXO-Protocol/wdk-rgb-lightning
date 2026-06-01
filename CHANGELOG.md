@@ -8,6 +8,18 @@ while pre-`1.0`.
 
 ## [Unreleased]
 
+## [0.1.0-beta.2] — 2026-06-01
+
+Wires up `account.vssBackup()` end-to-end + ships the LspClient
+production hardening from the Unreleased section.
+
+### Changed
+- Peer-dep floors raised:
+  - `@utexo/rgb-lightning-node-bare` → `^0.1.0-beta.12`
+  - `@utexo/rgb-lightning-node-nodejs` → `^0.1.0-beta.8`
+  Both ship the new `sdkNodeVssBackup` C-FFI wrapper so
+  `account.vssBackup()` resolves at runtime.
+
 ### Added
 - `account.bootstrapLsp({ peerPubkeyAndAddr, hostNodeId,
   waitForPeerMs, pollIntervalMs })` — opt-in one-shot LSP
