@@ -8,6 +8,11 @@ while pre-`1.0`.
 
 ## [Unreleased]
 
+## [0.1.0-beta.1] — 2026-06-01
+
+First public beta. Status promoted from alpha; README, LICENSE, and
+CHANGELOG brought to beta quality.
+
 ### Added
 - LSP client surface (`LspClient`, `LnurlPay`, helpers) for routed
   Lightning Address payments and RGB-over-LSP deposits.
@@ -16,6 +21,17 @@ while pre-`1.0`.
 - `apayNew(hostNodeId)` for receiver-side async-payments (APay)
   registration against an LSP (upstream RLN PR #51).
 - `min_final_cltv_expiry_delta` documented on `createInvoice`.
+- Apache-2.0 `LICENSE` file.
+- This `CHANGELOG.md` (Keep a Changelog format).
+
+### Changed
+- Peer-dep floors raised to the validated bindings: `^0.1.0-beta.11`
+  for `@utexo/rgb-lightning-node-bare` and `^0.1.0-beta.7` for
+  `@utexo/rgb-lightning-node-nodejs` — the versions this beta was
+  exercised against (47/59 Node E2E baseline, iOS sim parity on
+  iPhone 17 Pro Max).
+- README expanded to beta depth: install matrix, end-to-end example
+  with VSS + APay, security model section, troubleshooting.
 
 ## [0.1.0-alpha.2] — 2026-05-20
 
