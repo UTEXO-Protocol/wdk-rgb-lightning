@@ -8,6 +8,19 @@ while pre-`1.0`.
 
 ## [Unreleased]
 
+### Added
+- `account.bootstrapLsp({ peerPubkeyAndAddr, hostNodeId,
+  waitForPeerMs, pollIntervalMs })` — opt-in one-shot LSP
+  bootstrap. Connects the peer, polls `listPeers` until the noise
+  handshake settles, then calls `apayNew`. Replaces the manual
+  three-call sequence and addresses Renat's May 27 dev-plan items 3
+  + 4 (connectPeer + apay/new during SDK init).
+
+### Fixed
+- Duplicate `apayNew` method on `WalletAccountRgbLightning` — the
+  second definition shadowed the first; same implementation, only
+  the docstring differed. Consolidated into a single definition.
+
 ## [0.1.0-beta.1] — 2026-06-01
 
 First public beta. Status promoted from alpha; README, LICENSE, and
