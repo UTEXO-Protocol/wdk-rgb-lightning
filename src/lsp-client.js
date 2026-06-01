@@ -22,6 +22,11 @@
  * and the raw response body so callers can map specific failures
  * (e.g. 400 from /onchain_send when an asset is outside the LSP's
  * allowlist) without re-parsing the message string.
+ *
+ * When the LSP returns a structured error body (`{ error: "...",
+ * code?: number, name?: "Tag" }`), the parsed fields are exposed on
+ * `errorBody`, `errorCode`, and `errorTag` so callers can match on
+ * structured fields rather than substring-match the message.
  */
 export class LspError extends Error {
   constructor (endpoint, status, body, cause) {
@@ -34,6 +39,21 @@ export class LspError extends Error {
     this.endpoint = endpoint
     this.status = status
     this.body = body
+    /** Parsed `{error,code,name}` fields, when the body is JSON. */
+    this.errorBody = null
+    this.errorCode = null
+    this.errorTag = null
+    if (typeof body === 'string' && body.length > 0 && body.charCodeAt(0) === 0x7b /* { */) {
+      try {
+        const parsed = JSON.parse(body)
+        if (parsed && typeof parsed === 'object') {
+          this.errorBody = parsed
+          if (typeof parsed.error === 'string') this.message = `${head} → HTTP ${status}: ${parsed.error}`
+          if (typeof parsed.code === 'number' || typeof parsed.code === 'string') this.errorCode = parsed.code
+          if (typeof parsed.name === 'string') this.errorTag = parsed.name
+        }
+      } catch { /* not JSON — leave raw body in this.body */ }
+    }
     if (cause) this.cause = cause
   }
 }
@@ -44,18 +64,49 @@ const DEFAULT_TIMEOUT_MS = 15_000
 /** Max response body we'll buffer (1 MiB). Mirrors the LSP's own cap. */
 const MAX_RESPONSE_BYTES = 1 << 20
 
+/**
+ * HTTP statuses we retry. 5xx (server errors) + 429 (rate-limit) are
+ * idempotent-safe to retry; everything else is a "the request is
+ * wrong" or "you don't have permission" outcome that retrying won't
+ * fix.
+ */
+const RETRY_STATUSES = new Set([502, 503, 504, 429])
+
+/** Methods safe to retry without consulting the server (RFC 7231 §4.2.2). */
+const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE'])
+
+/** Default retry budget: 3 attempts with exponential backoff (250/500/1000 ms). */
+const DEFAULT_RETRIES = 3
+const RETRY_BASE_MS = 250
+
+/** Hostnames that are always allowed over plain HTTP (mirrors RLN VSS allow-http loopback rule). */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '10.0.2.2' /* Android emu */])
+
 export class LspClient {
   /**
    * @param {object} opts
    * @param {string} opts.baseUrl       Origin of the LSP API, e.g. `https://lsp.utexo.io`.
    *                                    Trailing slash optional; we normalise.
-   * @param {number} [opts.timeoutMs]   Per-request timeout. Default 15 s.
+   * @param {number} [opts.timeoutMs]   Per-request timeout. Default 15 s. Can be
+   *                                    overridden per call by passing `timeoutMs` to
+   *                                    the individual method (e.g. `health({ timeoutMs: 2000 })`).
    * @param {typeof fetch} [opts.fetch] Override the global `fetch` (testing / proxies).
    * @param {Record<string,string>} [opts.defaultHeaders]
    *                                    Headers merged into every request. Useful for
    *                                    operator-provided API keys once the LSP grows them.
+   * @param {boolean} [opts.allowHttp=false]
+   *                                    Permit plain `http://` for non-loopback hosts.
+   *                                    Off by default — production deployments should
+   *                                    use https only. Loopback hosts (localhost,
+   *                                    127.0.0.1, ::1, 10.0.2.2) are always allowed.
+   *                                    Mirrors RLN's `vssAllowHttp` knob.
+   * @param {number} [opts.maxRetries=3] How many 5xx/429 retries before throwing. Set
+   *                                    to 0 to disable retries. Only idempotent methods
+   *                                    (GET/HEAD/OPTIONS/PUT/DELETE) are retried —
+   *                                    POST calls fail-fast since the LSP doesn't yet
+   *                                    accept idempotency keys.
    */
-  constructor ({ baseUrl, timeoutMs = DEFAULT_TIMEOUT_MS, fetch: fetchImpl, defaultHeaders } = {}) {
+  constructor ({ baseUrl, timeoutMs = DEFAULT_TIMEOUT_MS, fetch: fetchImpl, defaultHeaders, allowHttp = false, maxRetries = DEFAULT_RETRIES } = {}) {
     if (typeof baseUrl !== 'string' || baseUrl.length === 0) {
       throw new TypeError('LspClient: baseUrl is required')
     }
@@ -63,27 +114,57 @@ export class LspClient {
     if (typeof fetcher !== 'function') {
       throw new TypeError('LspClient: no fetch available; pass opts.fetch or run in an environment that exposes global fetch (Bare via bare-fetch/global, Node ≥18)')
     }
-    this._base = baseUrl.replace(/\/+$/, '')
+    const normalized = baseUrl.replace(/\/+$/, '')
+    // HTTPS enforcement: reject plain http on non-loopback unless the
+    // host explicitly opts in via allowHttp. Mirrors the same safety
+    // rail RLN uses for vssAllowHttp — channel-state and Lightning-
+    // Address payment requests are too sensitive to send over plaintext
+    // by accident.
+    let parsedUrl
+    try { parsedUrl = new URL(normalized) }
+    catch { throw new TypeError(`LspClient: baseUrl is not a valid URL: ${baseUrl}`) }
+    if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
+      throw new TypeError(`LspClient: baseUrl must use http: or https:, got ${parsedUrl.protocol}`)
+    }
+    if (parsedUrl.protocol === 'http:' && !allowHttp && !LOOPBACK_HOSTS.has(parsedUrl.hostname)) {
+      throw new Error(
+        `LspClient: plain http:// is only allowed for loopback hosts; ` +
+        `got '${parsedUrl.hostname}'. Pass allowHttp:true to opt in for ` +
+        `non-loopback hosts (regtest staging, etc.).`
+      )
+    }
+    this._base = normalized
     this._timeoutMs = Math.max(1, Number(timeoutMs) || DEFAULT_TIMEOUT_MS)
+    this._maxRetries = Math.max(0, Number.isFinite(maxRetries) ? Math.trunc(maxRetries) : DEFAULT_RETRIES)
     this._fetch = fetcher
     this._headers = { ...(defaultHeaders ?? {}) }
   }
 
   get baseUrl () { return this._base }
 
-  /** Liveness probe. Cheap; safe to call every few seconds. */
-  health () { return this._req('GET', '/health') }
+  /**
+   * Liveness probe. Cheap; safe to call every few seconds.
+   * @param {object} [opts]
+   * @param {number} [opts.timeoutMs] Override the constructor-default timeout.
+   */
+  health (opts = {}) { return this._req('GET', '/health', undefined, opts) }
 
-  /** Returns the LSP's view of its upstream RLN node (pubkey, channel summary, etc). */
-  getInfo () { return this._req('GET', '/get_info') }
+  /**
+   * Returns the LSP's view of its upstream RLN node (pubkey, channel summary, etc).
+   * @param {object} [opts]
+   * @param {number} [opts.timeoutMs]
+   */
+  getInfo (opts = {}) { return this._req('GET', '/get_info', undefined, opts) }
 
   /**
    * LUD-06 discovery for a Lightning Address hosted by this LSP.
    * @param {string} username The local-part of `user@host` (no '@', no host).
+   * @param {object} [opts]
+   * @param {number} [opts.timeoutMs]
    */
-  lnurlDiscovery (username) {
+  lnurlDiscovery (username, opts = {}) {
     if (!isNonEmptyString(username)) throw new TypeError('LspClient.lnurlDiscovery: username required')
-    return this._req('GET', `/.well-known/lnurlp/${encodeURIComponent(username)}`)
+    return this._req('GET', `/.well-known/lnurlp/${encodeURIComponent(username)}`, undefined, opts)
   }
 
   /**
@@ -94,6 +175,7 @@ export class LspClient {
    * @param {object} [opts]
    * @param {string} [opts.assetId]     Optional RGB asset filter the LSP may honour.
    * @param {bigint|number|string} [opts.assetAmount] Optional RGB amount.
+   * @param {number} [opts.timeoutMs]
    */
   lnurlCallback (username, amountMsat, opts = {}) {
     if (!isNonEmptyString(username)) throw new TypeError('LspClient.lnurlCallback: username required')
@@ -101,7 +183,7 @@ export class LspClient {
     params.set('amount', toIntString(amountMsat, 'amountMsat'))
     if (opts.assetId !== undefined) params.set('asset_id', String(opts.assetId))
     if (opts.assetAmount !== undefined) params.set('asset_amount', toIntString(opts.assetAmount, 'assetAmount'))
-    return this._req('GET', `/pay/callback/${encodeURIComponent(username)}?${params.toString()}`)
+    return this._req('GET', `/pay/callback/${encodeURIComponent(username)}?${params.toString()}`, undefined, opts)
   }
 
   /**
@@ -120,16 +202,21 @@ export class LspClient {
    * @param {string} [params.ln.descriptionHash]
    * @param {string} [params.ln.paymentHash]
    * @param {number} [params.ln.minFinalCltvExpiryDelta]
-   * @returns {Promise<{rgb_invoice:string, ln_invoice:string, mapping_id:number}>}
+   * @returns {Promise<{rgbInvoice:string, lnInvoice:string, mappingId:number}>}
+   *   Note: response is normalized to camelCase to match
+   *   `lightningReceive()` and the helpers in `lsp-helpers.js`. The LSP
+   *   itself returns snake_case JSON; we remap at this layer so the
+   *   public surface of LspClient is uniformly camelCase.
    */
-  onchainSend ({ rgbInvoice, ln } = {}) {
+  async onchainSend ({ rgbInvoice, ln, timeoutMs } = {}) {
     if (!isNonEmptyString(rgbInvoice)) throw new TypeError('LspClient.onchainSend: rgbInvoice required')
     if (!ln || typeof ln !== 'object') throw new TypeError('LspClient.onchainSend: ln params required')
     const body = {
       rgb_invoice: rgbInvoice,
       lninvoice: snakeCaseLnParams(ln)
     }
-    return this._req('POST', '/onchain_send', body)
+    const raw = await this._req('POST', '/onchain_send', body, { timeoutMs })
+    return camelCaseLspResponse(raw)
   }
 
   /**
@@ -147,9 +234,11 @@ export class LspClient {
    * @param {number} [params.rgb.durationSeconds]
    * @param {number} [params.rgb.minConfirmations] Backend-controlled; LSP may ignore.
    * @param {boolean} [params.rgb.witness]     default false
-   * @returns {Promise<{ln_invoice:string, rgb_invoice:string, mapping_id:number}>}
+   * @returns {Promise<{lnInvoice:string, rgbInvoice:string, mappingId:number}>}
+   *   Normalized to camelCase. The LSP returns snake_case JSON; we
+   *   remap here so the public surface of LspClient is uniform.
    */
-  lightningReceive ({ lnInvoice, rgb } = {}) {
+  async lightningReceive ({ lnInvoice, rgb, timeoutMs } = {}) {
     if (!isNonEmptyString(lnInvoice)) throw new TypeError('LspClient.lightningReceive: lnInvoice required')
     if (!rgb || typeof rgb !== 'object') throw new TypeError('LspClient.lightningReceive: rgb params required')
     if (!isNonEmptyString(rgb.assetId)) throw new TypeError('LspClient.lightningReceive: rgb.assetId required')
@@ -157,50 +246,71 @@ export class LspClient {
       ln_invoice: lnInvoice,
       rgb_invoice: snakeCaseRgbParams(rgb)
     }
-    return this._req('POST', '/lightning_receive', body)
+    const raw = await this._req('POST', '/lightning_receive', body, { timeoutMs })
+    return camelCaseLspResponse(raw)
   }
 
   // ---------------------------------------------------------------------------
 
-  async _req (method, path, body) {
+  async _req (method, path, body, opts) {
     const url = `${this._base}${path}`
-    const init = {
-      method,
-      headers: {
-        Accept: 'application/json',
-        ...this._headers
-      },
-      signal: this._timeoutSignal()
-    }
-    if (body !== undefined && body !== null) {
-      init.headers['Content-Type'] = 'application/json'
-      init.body = JSON.stringify(body)
-    }
+    const callTimeoutMs = opts && Number.isFinite(Number(opts.timeoutMs)) && Number(opts.timeoutMs) > 0
+      ? Math.trunc(Number(opts.timeoutMs))
+      : this._timeoutMs
+    const canRetry = IDEMPOTENT_METHODS.has(method) && this._maxRetries > 0
+    // attempt 0 is the original; subsequent attempts are retries.
+    // Backoff: 250ms, 500ms, 1000ms, …  (exponential, doubled per try).
+    for (let attempt = 0; ; attempt++) {
+      const init = {
+        method,
+        headers: {
+          Accept: 'application/json',
+          ...this._headers
+        },
+        signal: this._timeoutSignal(callTimeoutMs)
+      }
+      if (body !== undefined && body !== null) {
+        init.headers['Content-Type'] = 'application/json'
+        init.body = JSON.stringify(body)
+      }
 
-    let res
-    try {
-      res = await this._fetch(url, init)
-    } catch (cause) {
-      throw new LspError(path, 0, '', cause)
-    }
+      let res
+      try {
+        res = await this._fetch(url, init)
+      } catch (cause) {
+        // Transport-level failure (DNS, TCP reset, abort). Retry the
+        // idempotent class — these are exactly the case where a 5xx
+        // upstream proxy can't even respond, and a backoff is the
+        // right fix.
+        if (canRetry && attempt < this._maxRetries) {
+          await wait(backoffMs(attempt))
+          continue
+        }
+        throw new LspError(path, 0, '', cause)
+      }
 
-    // Read at most MAX_RESPONSE_BYTES. WHATWG Response doesn't expose a
-    // hard byte cap, so we accept the body in full but reject anything
-    // suspiciously large. Avoids OOM on a misconfigured LSP that
-    // returns megabytes of HTML.
-    const text = await res.text()
-    if (text.length > MAX_RESPONSE_BYTES) {
-      throw new LspError(path, res.status, `response too large (${text.length} bytes)`)
-    }
+      // Read at most MAX_RESPONSE_BYTES. WHATWG Response doesn't expose
+      // a hard byte cap, so we accept the body in full but reject
+      // anything suspiciously large. Avoids OOM on a misconfigured LSP
+      // that returns megabytes of HTML.
+      const text = await res.text()
+      if (text.length > MAX_RESPONSE_BYTES) {
+        throw new LspError(path, res.status, `response too large (${text.length} bytes)`)
+      }
 
-    if (!res.ok) {
-      throw new LspError(path, res.status, text.trim())
-    }
-    if (text.length === 0) return null
-    try {
-      return JSON.parse(text)
-    } catch (cause) {
-      throw new LspError(path, res.status, `invalid JSON: ${text.slice(0, 200)}`, cause)
+      if (!res.ok) {
+        if (canRetry && RETRY_STATUSES.has(res.status) && attempt < this._maxRetries) {
+          await wait(backoffMs(attempt))
+          continue
+        }
+        throw new LspError(path, res.status, text.trim())
+      }
+      if (text.length === 0) return null
+      try {
+        return JSON.parse(text)
+      } catch (cause) {
+        throw new LspError(path, res.status, `invalid JSON: ${text.slice(0, 200)}`, cause)
+      }
     }
   }
 
@@ -209,23 +319,44 @@ export class LspClient {
    * and Node ≥17. Falls back to a manually plumbed AbortController for
    * older runtimes — keeps the package portable without bumping the
    * `engines.node` floor.
+   *
+   * @param {number} timeoutMs  Per-call timeout override.
    */
-  _timeoutSignal () {
+  _timeoutSignal (timeoutMs) {
+    const ms = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : this._timeoutMs
     if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
-      return AbortSignal.timeout(this._timeoutMs)
+      return AbortSignal.timeout(ms)
     }
     if (typeof AbortController !== 'undefined') {
       const ctrl = new AbortController()
-      setTimeout(() => ctrl.abort(new Error(`LSP request timed out after ${this._timeoutMs}ms`)), this._timeoutMs).unref?.()
+      setTimeout(() => ctrl.abort(new Error(`LSP request timed out after ${ms}ms`)), ms).unref?.()
       return ctrl.signal
     }
     return undefined
   }
 }
 
+function wait (ms) { return new Promise((resolve) => setTimeout(resolve, ms)) }
+function backoffMs (attempt) { return RETRY_BASE_MS * Math.pow(2, attempt) }
+
 // ---------------------------------------------------------------------------
 // Shape adapters
 // ---------------------------------------------------------------------------
+
+/**
+ * The LSP returns snake_case JSON (`{rgb_invoice, ln_invoice,
+ * mapping_id}`). Map it to camelCase to match this module's public
+ * API style + the helpers in lsp-helpers.js. Other keys pass through
+ * unchanged for forward compatibility.
+ */
+function camelCaseLspResponse (raw) {
+  if (!raw || typeof raw !== 'object') return raw
+  const out = { ...raw }
+  if ('rgb_invoice' in raw) out.rgbInvoice = raw.rgb_invoice
+  if ('ln_invoice' in raw) out.lnInvoice = raw.ln_invoice
+  if ('mapping_id' in raw) out.mappingId = raw.mapping_id
+  return out
+}
 
 function snakeCaseLnParams (ln) {
   const out = {}

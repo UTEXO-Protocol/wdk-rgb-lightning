@@ -189,6 +189,20 @@ export class BareRgbLightningBinding {
   }
 
   /**
+   * Force an immediate VSS backup flush. Returns `{ version }` JSON
+   * where version is the snapshot index just persisted. Throws if VSS
+   * isn't configured (`vssUrl` unset at construction) or the flush
+   * fails (server unreachable, auth rejected). Useful for app-
+   * controlled checkpoints rather than relying on the implicit
+   * on-write flush.
+   *
+   * @returns {{version: number}}
+   */
+  vssBackup () {
+    return this.node.vssBackup()
+  }
+
+  /**
    * Register this node with an LSP as an async-payments (APay) recipient.
    * Used for offline-receive over Lightning Address — the wallet uploads
    * a batch of pre-allocated payment hashes to the LSP, which then

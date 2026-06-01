@@ -15,6 +15,29 @@ while pre-`1.0`.
   handshake settles, then calls `apayNew`. Replaces the manual
   three-call sequence and addresses Renat's May 27 dev-plan items 3
   + 4 (connectPeer + apay/new during SDK init).
+- `account.vssBackup()` — force an immediate VSS backup flush.
+  Returns `{ version }` of the snapshot just persisted. For app-
+  controlled checkpoints (e.g. fsync-before-suspend). Backed by
+  upstream `vss_backup()` UniFFI; requires the C-FFI patch series
+  at `rgb-lightning-node-bare/patches/` to be applied before the
+  static lib is built.
+- `LspClient` production hardening:
+  - HTTPS enforcement: rejects `http://` for non-loopback hosts
+    unless `allowHttp:true` is set (mirrors the `vssAllowHttp`
+    pattern).
+  - Retry + exponential backoff on 502/503/504/429 for idempotent
+    methods (GET/HEAD/OPTIONS/PUT/DELETE). POST endpoints fail-fast
+    until utexo-lsp grows idempotency-key support.
+  - `LspError` now parses `{error, code, name}` from the response
+    JSON body — exposed as `err.errorBody`, `err.errorCode`,
+    `err.errorTag` so callers can match on structured fields
+    rather than substring-match the message.
+  - Per-call `timeoutMs` override on every method (e.g.
+    `health({ timeoutMs: 2000 })`).
+  - `onchainSend()` + `lightningReceive()` responses normalized
+    to camelCase (`{lnInvoice, rgbInvoice, mappingId}`); raw
+    snake_case fields preserved on the same object for backward
+    compatibility.
 
 ### Fixed
 - Duplicate `apayNew` method on `WalletAccountRgbLightning` — the

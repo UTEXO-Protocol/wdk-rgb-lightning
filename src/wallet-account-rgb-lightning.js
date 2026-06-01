@@ -131,6 +131,32 @@ export default class WalletAccountRgbLightning {
   }
 
   /**
+   * Force an immediate VSS backup flush. Returns `{ version }` where
+   * version is the monotonically-increasing snapshot index just
+   * persisted. The number is useful for ordering / "is this device
+   * caught up with my last known checkpoint" comparisons; it carries
+   * no other semantics.
+   *
+   * Throws if VSS isn't configured (no `vssUrl` at construction) or
+   * the flush fails (server unreachable, auth rejected). Backed by
+   * upstream `vss_backup()` UniFFI method. Requires the C-FFI patch
+   * series at `rgb-lightning-node-bare/patches/` to be applied
+   * before the static lib is built (adds `rln_sdk_node_vss_backup`).
+   *
+   * Use for app-controlled checkpoints (e.g. "save state before app
+   * suspend") rather than relying on RLN's implicit on-write flush.
+   * RLN already syncs to VSS on every state-changing operation; this
+   * method is for the moments your app knows are critical (closing,
+   * backgrounding, payment-just-settled) and wants a "fsync now"
+   * round-trip with the cloud before potentially being killed.
+   *
+   * @returns {Promise<{version: number}>}
+   */
+  async vssBackup () {
+    return this._binding.vssBackup()
+  }
+
+  /**
    * Register this node with an LSP as an async-payments (APay) recipient.
    * Used for offline-receive over Lightning Address — the wallet uploads
    * a batch of pre-allocated payment hashes to the LSP, which then

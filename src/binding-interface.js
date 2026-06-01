@@ -58,6 +58,13 @@
  *   used at unlock). Throws if VSS isn't configured. Pointing two
  *   live nodes at the same VSS store corrupts state — only call this
  *   when you're certain the previous owner is gone.
+ * @property {() => {version: number}}                   vssBackup
+ *   Force an immediate VSS backup flush. Returns `{ version }` where
+ *   version is the snapshot index just persisted. Useful for app-
+ *   controlled checkpoints (e.g. "save state before app suspend")
+ *   rather than relying on the implicit on-write flush. Throws if
+ *   VSS isn't configured (no `vssUrl` at construction) or the flush
+ *   fails (server unreachable, auth rejected, etc.).
  * @property {(hostNodeId: string) => object}           apayNew
  *   Register this node with an LSP as an async-payments (APay) recipient.
  *   Used for offline-receive over Lightning Address: the wallet uploads

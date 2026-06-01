@@ -91,11 +91,14 @@ export async function requestLspRgbDeposit (account, { lsp, lnInvoice, lnInvoice
     }
   }
 
+  // LspClient.lightningReceive() now returns the response normalized
+  // to camelCase ({lnInvoice, rgbInvoice, mappingId}); raw snake_case
+  // fields are preserved on the same object for backward compatibility.
   const res = await client.lightningReceive({ lnInvoice: invoice, rgb })
   return {
-    lnInvoice: res.ln_invoice,
-    rgbInvoice: res.rgb_invoice,
-    mappingId: res.mapping_id
+    lnInvoice: res.lnInvoice ?? res.ln_invoice,
+    rgbInvoice: res.rgbInvoice ?? res.rgb_invoice,
+    mappingId: res.mappingId ?? res.mapping_id
   }
 }
 
@@ -126,13 +129,16 @@ export async function payRgbViaLsp (account, { lsp, rgbInvoice, ln, lspOpts } = 
   if (ln == null) throw new TypeError('payRgbViaLsp: ln params required')
 
   const client = asLspClient(lsp, lspOpts)
+  // LspClient.onchainSend() now returns the response normalized to
+  // camelCase; raw snake_case fields are preserved for backward compat.
   const issued = await client.onchainSend({ rgbInvoice, ln })
-  const sendResult = await account.sendPayment({ invoice: issued.ln_invoice })
+  const lnInvoice = issued.lnInvoice ?? issued.ln_invoice
+  const sendResult = await account.sendPayment({ invoice: lnInvoice })
 
   return {
-    lnInvoice: issued.ln_invoice,
-    rgbInvoice: issued.rgb_invoice,
-    mappingId: issued.mapping_id,
+    lnInvoice,
+    rgbInvoice: issued.rgbInvoice ?? issued.rgb_invoice,
+    mappingId: issued.mappingId ?? issued.mapping_id,
     sendResult
   }
 }

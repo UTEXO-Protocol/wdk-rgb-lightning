@@ -118,6 +118,17 @@ export class NodeRgbLightningBinding {
   }
 
   /**
+   * Force an immediate VSS backup flush. Returns `{ version }`.
+   * Mirror of the bare binding's vssBackup. See bare-binding.js for
+   * the full contract.
+   *
+   * @returns {{version: number}}
+   */
+  vssBackup () {
+    return this.node.vssBackup()
+  }
+
+  /**
    * Register this node with an LSP as an async-payments (APay) recipient.
    *
    * @param {string} hostNodeId  - LSP's node_id (hex)
