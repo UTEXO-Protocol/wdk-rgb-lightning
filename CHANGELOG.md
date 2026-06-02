@@ -8,6 +8,15 @@ while pre-`1.0`.
 
 ## [Unreleased]
 
+### Changed
+- README: rewrote the *"Why a separate module from `wdk-wallet-rgb`?"*
+  section to clarify that LDK's existing signer-trait surface is
+  sufficient (we plug VLS into `SignerProvider` / `NodeSigner` /
+  `EcdsaChannelSigner` and don't use `KeysManager`), and to name the
+  actual blocker for module consolidation — RLN + `rgb-lib` need
+  `*Begin / *End` PSBT-split entry points for the on-chain ops that
+  still raise `UnsupportedInExternalSignerMode`. No code changes.
+
 ## [0.1.0-beta.2] — 2026-06-01
 
 Wires up `account.vssBackup()` end-to-end + ships the LspClient

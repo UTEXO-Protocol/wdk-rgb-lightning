@@ -61,13 +61,30 @@ that matches your runtime.
 
 ## Why a separate module from `wdk-wallet-rgb`?
 
-Historically RLN *owned* its seed (LDK `KeysManager` derived from a
-stored mnemonic), which is incompatible with WDK's
-secret-manager-owned-seed contract. Rather than fork the on-chain
-module, we ship a separate LN-only module that uses the
-**external-signer** path (`NativeExternalSigner`) so the seed stays in
-the host. The two modules share the same `rgb-lib` SQLite `dataDir`,
-so on-chain views stay unified.
+`wdk-wallet-rgb` runs against a watch-only `rgb-lib` and signs Taproot
+PSBTs externally via WDK's `BareSigner`, so the seed never leaves the
+WDK secret manager. `rgb-lightning-node` (RLN) historically took the
+opposite approach — it owned the mnemonic in-process to drive both
+on-chain rgb-lib operations and LDK's channel-state signer.
+
+We close that gap with RLN's **external-signer mode**
+(`NativeExternalSigner`), which plugs [`vls-protocol-signer`][vls]
+into LDK's existing `SignerProvider` / `NodeSigner` /
+`EcdsaChannelSigner` traits. The seed stays in WDK; only a one-shot
+BIP-32 entropy is handed to the in-process VLS signer for
+channel-state crypto. No LDK changes were required for this —
+`KeysManager` is just one concrete impl of those traits, and we don't
+use it.
+
+The two WDK modules remain separate today because a handful of RLN
+on-chain operations (`issueAssetNia/Ifa/Cfa/Uda`, `inflate`, on-chain
+RGB send, open-asset-channel-as-initiator) still reject the
+external-signer path with `UnsupportedInExternalSignerMode`. Folding
+this module into `wdk-wallet-rgb` is gated on RLN + `rgb-lib` exposing
+`*Begin / *End` PSBT-split entry points for those ops so the host can
+sign them through the same `BareSigner` flow `wdk-wallet-rgb` already
+uses. The two modules share the same `rgb-lib` SQLite `dataDir`, so
+on-chain views stay unified in the meantime.
 
 ## Usage
 
