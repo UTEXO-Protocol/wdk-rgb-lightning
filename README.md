@@ -76,15 +76,16 @@ channel-state crypto. No LDK changes were required for this —
 `KeysManager` is just one concrete impl of those traits, and we don't
 use it.
 
-The two WDK modules remain separate today because a handful of RLN
-on-chain operations (`issueAssetNia/Ifa/Cfa/Uda`, `inflate`, on-chain
-RGB send, open-asset-channel-as-initiator) still reject the
-external-signer path with `UnsupportedInExternalSignerMode`. Folding
-this module into `wdk-wallet-rgb` is gated on RLN + `rgb-lib` exposing
-`*Begin / *End` PSBT-split entry points for those ops so the host can
-sign them through the same `BareSigner` flow `wdk-wallet-rgb` already
-uses. The two modules share the same `rgb-lib` SQLite `dataDir`, so
-on-chain views stay unified in the meantime.
+Most on-chain RGB operations already work in external-signer mode via
+the PSBT-split (`*Begin → rgb_sign_psbt → *End`) path: `sendBtc`,
+`sendRgb`, `createUtxos`, and `openChannel` (both BTC and RGB-asset
+variants). Five operations still reject the external-signer path with
+`UnsupportedInExternalSignerMode`: `issueAssetNia/Ifa/Cfa/Uda` and
+`inflate`. Folding this module into `wdk-wallet-rgb` is gated on RLN +
+`rgb-lib` exposing `*Begin / *End` entry points for those five so the
+host can sign them through the same `BareSigner` flow `wdk-wallet-rgb`
+already uses. The two modules share the same `rgb-lib` SQLite
+`dataDir`, so on-chain views stay unified in the meantime.
 
 ## Usage
 

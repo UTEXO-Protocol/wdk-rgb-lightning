@@ -10,12 +10,16 @@ while pre-`1.0`.
 
 ### Changed
 - README: rewrote the *"Why a separate module from `wdk-wallet-rgb`?"*
-  section to clarify that LDK's existing signer-trait surface is
+  section to (a) clarify that LDK's existing signer-trait surface is
   sufficient (we plug VLS into `SignerProvider` / `NodeSigner` /
-  `EcdsaChannelSigner` and don't use `KeysManager`), and to name the
-  actual blocker for module consolidation — RLN + `rgb-lib` need
-  `*Begin / *End` PSBT-split entry points for the on-chain ops that
-  still raise `UnsupportedInExternalSignerMode`. No code changes.
+  `EcdsaChannelSigner` and don't use `KeysManager`), and (b) tighten
+  the remaining-blocker list. After verifying against RLN tip
+  (`roman/feat/external-signer` @ `0824529` / v0.5.0-beta.1), the
+  rejected-in-external-signer-mode set is just five ops:
+  `issueAssetNia/Ifa/Cfa/Uda` and `inflate`. `sendBtc`, `sendRgb`,
+  `createUtxos`, and `openChannel` (BTC + RGB-asset) already work via
+  the `*Begin → rgb_sign_psbt → *End` PSBT-split path. No code
+  changes.
 
 ## [0.1.0-beta.2] — 2026-06-01
 
