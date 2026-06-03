@@ -9,17 +9,13 @@ while pre-`1.0`.
 ## [Unreleased]
 
 ### Changed
-- README: rewrote the *"Why a separate module from `wdk-wallet-rgb`?"*
-  section to (a) clarify that LDK's existing signer-trait surface is
-  sufficient (we plug VLS into `SignerProvider` / `NodeSigner` /
-  `EcdsaChannelSigner` and don't use `KeysManager`), and (b) tighten
-  the remaining-blocker list. After verifying against RLN tip
-  (`roman/feat/external-signer` @ `0824529` / v0.5.0-beta.1), the
-  rejected-in-external-signer-mode set is just five ops:
-  `issueAssetNia/Ifa/Cfa/Uda` and `inflate`. `sendBtc`, `sendRgb`,
-  `createUtxos`, and `openChannel` (BTC + RGB-asset) already work via
-  the `*Begin → rgb_sign_psbt → *End` PSBT-split path. No code
-  changes.
+- README: tightened the *"Why a separate module from `wdk-wallet-rgb`?"*
+  section. Added a *"Use `wdk-wallet-rgb` for asset issuance +
+  inflation"* subsection pointing at the on-chain module for the five
+  ops not exposed here (`issueAssetNia/Ifa/Cfa/Uda`, `inflate`). Both
+  modules target the same `rgb-lib` SQLite `dataDir`, so assets
+  issued via `wdk-wallet-rgb` are available here for channels and
+  invoices. No code changes.
 
 ## [0.1.0-beta.2] — 2026-06-01
 

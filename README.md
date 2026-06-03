@@ -61,31 +61,19 @@ that matches your runtime.
 
 ## Why a separate module from `wdk-wallet-rgb`?
 
-`wdk-wallet-rgb` runs against a watch-only `rgb-lib` and signs Taproot
-PSBTs externally via WDK's `BareSigner`, so the seed never leaves the
-WDK secret manager. `rgb-lightning-node` (RLN) historically took the
-opposite approach — it owned the mnemonic in-process to drive both
-on-chain rgb-lib operations and LDK's channel-state signer.
+`rgb-lightning-node` (RLN) runs its own LDK + rgb-lib runtime, so it
+ships as its own WDK module. We run it in external-signer mode
+(`NativeExternalSigner`) so the seed stays in WDK. Both modules
+target the same `rgb-lib` SQLite `dataDir`, so on-chain and Lightning
+views stay unified.
 
-We close that gap with RLN's **external-signer mode**
-(`NativeExternalSigner`), which plugs [`vls-protocol-signer`][vls]
-into LDK's existing `SignerProvider` / `NodeSigner` /
-`EcdsaChannelSigner` traits. The seed stays in WDK; only a one-shot
-BIP-32 entropy is handed to the in-process VLS signer for
-channel-state crypto. No LDK changes were required for this —
-`KeysManager` is just one concrete impl of those traits, and we don't
-use it.
+### Use `wdk-wallet-rgb` for asset issuance + inflation
 
-Most on-chain RGB operations already work in external-signer mode via
-the PSBT-split (`*Begin → rgb_sign_psbt → *End`) path: `sendBtc`,
-`sendRgb`, `createUtxos`, and `openChannel` (both BTC and RGB-asset
-variants). Five operations still reject the external-signer path with
-`UnsupportedInExternalSignerMode`: `issueAssetNia/Ifa/Cfa/Uda` and
-`inflate`. Folding this module into `wdk-wallet-rgb` is gated on RLN +
-`rgb-lib` exposing `*Begin / *End` entry points for those five so the
-host can sign them through the same `BareSigner` flow `wdk-wallet-rgb`
-already uses. The two modules share the same `rgb-lib` SQLite
-`dataDir`, so on-chain views stay unified in the meantime.
+Five ops aren't exposed here — `issueAssetNia` / `issueAssetIfa` /
+`issueAssetCfa` / `issueAssetUda`, and `inflate`. Use
+[`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb] for those; assets issued
+there are available here for channels and invoices on the shared
+`dataDir`.
 
 ## Usage
 
