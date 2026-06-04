@@ -1,6 +1,6 @@
 {
   "name": "@utexo/wdk-rgb-lightning",
-  "version": "0.1.0-beta.2",
+  "version": "0.1.0-beta.3",
   "description": "WDK module for RGB Lightning (rgb-lightning-node) — channels, invoices, payments, hodl, RGB-over-LN.",
   "keywords": [
     "wdk",
@@ -28,8 +28,8 @@
     "bip39": "3.1.0"
   },
   "peerDependencies": {
-    "@utexo/rgb-lightning-node-bare": "^0.1.0-beta.12",
-    "@utexo/rgb-lightning-node-nodejs": "^0.1.0-beta.8"
+    "@utexo/rgb-lightning-node-bare": "^0.3.0-beta.1",
+    "@utexo/rgb-lightning-node-nodejs": "^0.3.0-beta.1"
   },
   "peerDependenciesMeta": {
     "@utexo/rgb-lightning-node-bare": {
