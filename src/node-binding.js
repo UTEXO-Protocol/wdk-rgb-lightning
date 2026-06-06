@@ -41,6 +41,9 @@ export class NodeRgbLightningBinding {
     if (config.vssUrl) this._initRequest.vss_url = config.vssUrl
     if (config.vssAllowHttp) this._initRequest.vss_allow_http = true
     if (config.vssAllowEmptyRestore) this._initRequest.vss_allow_empty_restore = true
+    // LSP / APay wiring — see BareRgbLightningBinding for the contract.
+    if (config.lspBaseUrl) this._initRequest.lsp_base_url = config.lspBaseUrl
+    if (config.lspBearerToken) this._initRequest.lsp_bearer_token = config.lspBearerToken
     /** @type {unknown | null} */
     this._node = null
     /** @type {unknown | null} */

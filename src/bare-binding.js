@@ -48,6 +48,8 @@ const {
  * @property {string} [vssUrl]               - opt-in VSS cloud backup URL
  * @property {boolean} [vssAllowHttp=false]  - allow http:// for non-loopback
  * @property {boolean} [vssAllowEmptyRestore=false] - tolerate failed restore
+ * @property {string} [lspBaseUrl]           - LSP base URL for APay (internal)
+ * @property {string} [lspBearerToken]       - LSP `/internal/*` bearer
  */
 
 /**
@@ -81,6 +83,12 @@ export class BareRgbLightningBinding {
     if (config.vssUrl) this._initRequest.vss_url = config.vssUrl
     if (config.vssAllowHttp) this._initRequest.vss_allow_http = true
     if (config.vssAllowEmptyRestore) this._initRequest.vss_allow_empty_restore = true
+    // LSP / APay wiring — needed for RLN's internal async-payments client
+    // to reach the LSP's /internal/async_order/* endpoints from inside
+    // `account.apayNew()` / `account.bootstrapLsp()`. Omit both to leave
+    // APay disabled.
+    if (config.lspBaseUrl) this._initRequest.lsp_base_url = config.lspBaseUrl
+    if (config.lspBearerToken) this._initRequest.lsp_bearer_token = config.lspBearerToken
     /** @type {SdkNode | null} */
     this._node = null
     /** @type {NativeExternalSigner | null} */

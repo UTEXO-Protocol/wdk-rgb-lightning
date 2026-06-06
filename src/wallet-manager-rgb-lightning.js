@@ -128,7 +128,9 @@ export default class WalletManagerRgbLightning extends WalletManager {
         permissiveSignerPolicy: this._config.permissiveSignerPolicy,
         vssUrl: this._config.vssUrl,
         vssAllowHttp: this._config.vssAllowHttp,
-        vssAllowEmptyRestore: this._config.vssAllowEmptyRestore
+        vssAllowEmptyRestore: this._config.vssAllowEmptyRestore,
+        lspBaseUrl: this._config.lspBaseUrl,
+        lspBearerToken: this._config.lspBearerToken
       })
       this._binding = binding
 

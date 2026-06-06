@@ -36,6 +36,15 @@
  *   restore step fails (e.g. server unreachable). Off by default —
  *   set true only when bootstrapping a new node from scratch and you
  *   accept that any previously-backed-up state will not be pulled in.
+ * @property {string}  [lspBaseUrl]
+ *   LSP base URL used by RLN's *internal* APay client when this node
+ *   acts as an async-payments recipient. Required for `account.apayNew()`
+ *   and `account.bootstrapLsp()` round-trips to reach the LSP's
+ *   `/internal/async_order/*` endpoints. Omit to disable APay.
+ * @property {string}  [lspBearerToken]
+ *   Bearer token sent on requests to the LSP's `/internal/*` endpoints.
+ *   Must match the LSP's `APAY_BEARER_TOKEN` config. Omit if the LSP
+ *   doesn't require auth (some dev setups).
  */
 
 /**
