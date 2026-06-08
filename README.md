@@ -8,17 +8,6 @@ Pairs with [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb] for the on-chain
 RGB side. They share the same `rgb-lib` SQLite `dataDir`, so on-chain
 balances and Lightning balances surface against the same asset records.
 
-## Status
-
-**Beta.** External-signer integration is end-to-end validated on both
-Node and React Native (iPhone simulator, real-device builds via the
-[utexo-rgb-wdk-demo] showcase app). VSS cloud backup is wired and
-working on regtest. APay receiver-side registration (PR #51) is
-exposed but requires LSP-side support to complete the round trip.
-
-Per-method status markers (`✅ / 🚧 / ⏸`) live inline in
-`src/wallet-account-rgb-lightning.js`.
-
 ## Architecture
 
 ```
