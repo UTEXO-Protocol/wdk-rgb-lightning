@@ -39,14 +39,26 @@ module-load.
 
 ```sh
 npm install @utexo/wdk-rgb-lightning
-# plus the runtime-matching peer:
-npm install @utexo/rgb-lightning-node-nodejs   # Node host
+# plus the runtime-matching native binding — install from the
+# GitHub Release directly until the matrix-CI publish pipelines
+# for these packages land (they're not on npm yet):
+npm install github:UTEXO-Protocol/rgb-lightning-node-nodejs#v0.1.0-beta.8    # Node host
 # or
-npm install @utexo/rgb-lightning-node-bare     # bare / RN host
+npm install github:UTEXO-Protocol/rgb-lightning-node-bare#v0.1.0-beta.12     # Bare / RN host
 ```
 
-Both bindings are declared as optional peer deps — install the one
+Both bindings are declared as optional peer deps; install the one
 that matches your runtime.
+
+> **Why the `github:` install spec?** The bindings ship platform-
+> specific prebuilds (7 targets for Bare, 5 for the napi binary) and
+> are released as GitHub tags with the prebuilt artifacts attached.
+> The npm publish pipelines for them aren't live yet, so the
+> `github:UTEXO-Protocol/<repo>#v<tag>` spec is the current install
+> path. Each binding's `postinstall` then downloads the matching
+> prebuilt artifact from its GitHub Release. Once both bindings are
+> on npm, this will collapse back to a plain `npm install
+> @utexo/rgb-lightning-node-{bare,nodejs}`.
 
 ## Why a separate module from `wdk-wallet-rgb`?
 
