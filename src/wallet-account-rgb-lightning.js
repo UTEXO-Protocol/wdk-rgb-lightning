@@ -17,6 +17,14 @@ import {
   requestLspRgbDeposit as _requestLspRgbDeposit,
   payRgbViaLsp as _payRgbViaLsp
 } from './lsp-helpers.js'
+import {
+  UnlockError,
+  VssError,
+  VssNotConfiguredError,
+  ApayError,
+  NotImplementedError,
+  wrapError
+} from './errors.js'
 
 /**
  * Sentinel placeholder address returned by `getAddress()` before the
@@ -92,7 +100,15 @@ export default class WalletAccountRgbLightning {
    * @param {Object} unlockRequest
    */
   async unlock (unlockRequest) {
-    this._binding.unlock(unlockRequest)
+    try {
+      this._binding.unlock(unlockRequest)
+    } catch (e) {
+      // Wrap into a typed UnlockError so callers can branch on
+      // `err.name === 'UnlockError'` / `err.code` instead of
+      // substring-matching the RLN message. The original message is
+      // preserved verbatim and attached as `cause`.
+      throw wrapError(e, UnlockError)
+    }
     // Return something non-undefined so the worklet's `safeStringify`
     // produces a real string. The RN-side response schema rejects
     // null/undefined results (see wdk-react-native-core schemas).
@@ -124,10 +140,46 @@ export default class WalletAccountRgbLightning {
    * docs section "Single-writer ownership" for the contract.
    *
    * @param {string} password
+   * @throws {VssNotConfiguredError} if the wallet was built without a vssUrl.
+   * @throws {VssError} if the takeover is rejected by the VSS server.
    */
   async clearVssFence (password) {
-    this._binding.clearVssFence(password)
+    this._assertVssConfigured()
+    try {
+      this._binding.clearVssFence(password)
+    } catch (e) {
+      throw wrapError(e, VssError)
+    }
     return { ok: true }
+  }
+
+  /**
+   * @private
+   * @throws {VssNotConfiguredError} if no vssUrl was set at construction.
+   */
+  _assertVssConfigured () {
+    const status = this._binding.vssStatus()
+    if (!status || !status.configured) {
+      throw new VssNotConfiguredError()
+    }
+  }
+
+  /**
+   * Local-view VSS status — does not hit the server. Reports whether
+   * VSS was configured at construction (`vssUrl`), the configured URL +
+   * allow-http flag, and `lastBackupVersion`: the snapshot version from
+   * the most recent `vssBackup()` call this session (`null` if none).
+   *
+   * RLN's C-FFI exposes no read-only server-side backup-info query
+   * (unlike rgb-lib's `vssBackupInfo`), so a live server version is only
+   * available by calling `vssBackup()` (which flushes and returns the
+   * fresh `{ version }`). Use this method for cheap "is VSS on / what
+   * was my last checkpoint" reads without a network round-trip.
+   *
+   * @returns {Promise<{ configured: boolean, url: string|null, allowHttp: boolean, lastBackupVersion: number|null }>}
+   */
+  async vssStatus () {
+    return this._binding.vssStatus()
   }
 
   /**
@@ -151,9 +203,16 @@ export default class WalletAccountRgbLightning {
    * round-trip with the cloud before potentially being killed.
    *
    * @returns {Promise<{version: number}>}
+   * @throws {VssNotConfiguredError} if the wallet was built without a vssUrl.
+   * @throws {VssError} if the flush fails (server unreachable, auth rejected).
    */
   async vssBackup () {
-    return this._binding.vssBackup()
+    this._assertVssConfigured()
+    try {
+      return this._binding.vssBackup()
+    } catch (e) {
+      throw wrapError(e, VssError)
+    }
   }
 
   /**
@@ -174,7 +233,11 @@ export default class WalletAccountRgbLightning {
    *      refill_batch_size, first_hash_index }`
    */
   async apayNew (hostNodeId) {
-    return this._binding.apayNew(hostNodeId)
+    try {
+      return this._binding.apayNew(hostNodeId)
+    } catch (e) {
+      throw wrapError(e, ApayError)
+    }
   }
 
   /**
@@ -266,11 +329,12 @@ export default class WalletAccountRgbLightning {
     const result = { connect, peerVisible }
     if (typeof hostNodeId === 'string' && hostNodeId.length > 0) {
       if (!peerVisible) {
-        throw new Error(
+        throw new ApayError(
           'bootstrapLsp: peer did not appear in listPeers within ' +
           `${waitForPeerMs}ms — refusing to call apayNew because RLN ` +
           'will time out waiting for host response. Retry later or ' +
-          'call apayNew directly once the peer is visible.'
+          'call apayNew directly once the peer is visible.',
+          { code: 'APAY_PEER_NOT_VISIBLE' }
         )
       }
       result.apay = await this.apayNew(hostNodeId)
@@ -395,6 +459,54 @@ export default class WalletAccountRgbLightning {
    *   applies when omitted.
    */
   async createInvoice (request) { return this._node.lnInvoice(request) }
+
+  /**
+   * Cross-SDK alias for {@link createInvoice}. The reference on-chain
+   * SDK (`@utexo/rgb-sdk-rn`) names the receive-side entry
+   * `createLightningInvoice`; we expose the same name here for
+   * discoverability, accepting either the native RLN snake_case request
+   * (forwarded verbatim) or a camelCase convenience shape
+   * `{ amountMsat?, expirySec, assetId?, assetAmount?, paymentHash?,
+   *    descriptionHash?, minFinalCltvExpiryDelta? }`.
+   *
+   * Unlike the reference SDK's stub (which throws "not implemented"),
+   * this is fully backed by a local LDK node.
+   *
+   * @param {Object} request
+   * @returns {Promise<object>}  RLN's lnInvoice response (invoice, payment_hash, ...).
+   */
+  async createLightningInvoice (request) {
+    return this.createInvoice(WalletAccountRgbLightning._toLnInvoiceRequest(request))
+  }
+
+  /**
+   * Normalise a camelCase convenience invoice request to RLN's
+   * snake_case shape. Passes through snake_case keys untouched so a
+   * native request object still works verbatim.
+   * @private
+   * @param {Object} [req]
+   * @returns {Object}
+   */
+  static _toLnInvoiceRequest (req) {
+    if (!req || typeof req !== 'object') return req
+    const out = { ...req }
+    const map = {
+      amountMsat: 'amt_msat',
+      expirySec: 'expiry_sec',
+      assetId: 'asset_id',
+      assetAmount: 'asset_amount',
+      paymentHash: 'payment_hash',
+      descriptionHash: 'description_hash',
+      minFinalCltvExpiryDelta: 'min_final_cltv_expiry_delta'
+    }
+    for (const [camel, snake] of Object.entries(map)) {
+      if (camel in out && !(snake in out)) {
+        out[snake] = out[camel]
+        delete out[camel]
+      }
+    }
+    return out
+  }
 
   /** @param {string} invoice */
   async decodeInvoice (invoice) { return this._node.decodeLnInvoice(invoice) }
@@ -622,7 +734,7 @@ export default class WalletAccountRgbLightning {
    * @returns {Promise<boolean>}
    */
   async verify (_message, _signature) {
-    throw new Error(
+    throw new NotImplementedError(
       'verify() requires upstream c-ffi support for rln_verify_message — ' +
       'pending: expose lightning::util::message_signing::verify in rgb-lightning-node/bindings/c-ffi.'
     )
@@ -639,7 +751,7 @@ export default class WalletAccountRgbLightning {
    * @returns {Promise<never>}
    */
   async signTransaction (_tx) {
-    throw new Error(
+    throw new NotImplementedError(
       'signTransaction() is not exposed on RGB Lightning accounts — ' +
       'use sendTransaction(request) for on-chain spends (VLS signs in-process), ' +
       'sendPayment/keysend for LN, or sendRgbAsset for RGB transfers.'

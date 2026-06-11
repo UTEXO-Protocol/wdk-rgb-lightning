@@ -74,6 +74,12 @@
  *   rather than relying on the implicit on-write flush. Throws if
  *   VSS isn't configured (no `vssUrl` at construction) or the flush
  *   fails (server unreachable, auth rejected, etc.).
+ * @property {() => { configured: boolean, url: string|null, allowHttp: boolean, lastBackupVersion: number|null }} vssStatus
+ *   Local-view VSS status (no server round-trip): whether VSS was
+ *   configured at construction, the URL + allow-http flag, and the
+ *   version from the most recent `vssBackup()` this session. RLN's
+ *   C-FFI exposes no read-only server-side backup-info query, so for
+ *   a live server version call `vssBackup()`.
  * @property {(hostNodeId: string) => object}           apayNew
  *   Register this node with an LSP as an async-payments (APay) recipient.
  *   Used for offline-receive over Lightning Address: the wallet uploads

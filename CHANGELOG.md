@@ -8,6 +8,37 @@ while pre-`1.0`.
 
 ## [Unreleased]
 
+### Added
+- **TypeScript declarations.** Ship a hand-authored `index.d.ts`
+  covering the full public surface (manager, account, bindings,
+  errors, `LspClient`, LNURL + LSP helpers) and wire it via the
+  `types` field + the `types` condition in the `exports` map. The
+  package previously shipped no types; consumers now get IntelliSense
+  + type-checking. Verified with `tsc --strict` (internal + consumer
+  resolution under `nodenext`).
+- **Typed error hierarchy** (`src/errors.js`): `RgbLightningError`
+  (base, with `code` + `cause` + `toJSON()`) and `UnlockError`,
+  `VssError`, `VssNotConfiguredError`, `ApayError`,
+  `NotImplementedError`. `unlock`, `clearVssFence`, `vssBackup`,
+  `apayNew`, `bootstrapLsp`, `verify`, and `signTransaction` now throw
+  these instead of bare `Error`, so callers branch on `err.name` /
+  `err.code` rather than substring-matching `Rln(...)` strings. The
+  original RLN message is preserved verbatim and attached as `cause`,
+  so existing substring checks keep working.
+- `account.vssStatus()` — local-view VSS status
+  (`{ configured, url, allowHttp, lastBackupVersion }`) with no server
+  round-trip. (RLN's C-FFI has no read-only server-side backup-info
+  query; call `vssBackup()` for a live version.)
+- `account.createLightningInvoice(request)` — cross-SDK alias for
+  `createInvoice` (matches `@utexo/rgb-sdk-rn`'s naming), accepting
+  either the native snake_case request or a camelCase convenience
+  shape.
+
+### Fixed
+- Removed a duplicate `apayNew` method definition in both
+  `node-binding.js` and `bare-binding.js` (the shadowed first copy
+  used `this.node`, which throws pre-unlock).
+
 ### Changed
 - README: tightened the *"Why a separate module from `wdk-wallet-rgb`?"*
   section. Added a *"Use `wdk-wallet-rgb` for asset issuance +

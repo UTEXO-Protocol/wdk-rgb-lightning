@@ -50,6 +50,8 @@ export class NodeRgbLightningBinding {
     this._signer = null
     /** @type {boolean} */
     this._sdkInitDone = false
+    /** @type {number | null} Snapshot version returned by the most recent vssBackup(). */
+    this._lastVssVersion = null
   }
 
   ensureNode () {
@@ -128,18 +130,30 @@ export class NodeRgbLightningBinding {
    * @returns {{version: number}}
    */
   vssBackup () {
-    return this.node.vssBackup()
+    const r = this.node.vssBackup()
+    if (r && typeof r.version === 'number') this._lastVssVersion = r.version
+    return r
   }
 
   /**
-   * Register this node with an LSP as an async-payments (APay) recipient.
+   * Local-view VSS status. RLN's C-FFI exposes no read-only
+   * server-side backup-info query (unlike rgb-lib's `vssBackupInfo`),
+   * so this reports what the host can know without a round-trip:
+   * whether VSS was configured at construction, the configured URL +
+   * allow-http flag, and the snapshot version from the most recent
+   * `vssBackup()` call this session (`null` if none yet). For a live
+   * server version, call `vssBackup()` (it flushes and returns the
+   * fresh `{ version }`).
    *
-   * @param {string} hostNodeId  - LSP's node_id (hex)
-   * @returns {object}  AsyncOrderNewResponse from upstream PR #51
+   * @returns {{ configured: boolean, url: string|null, allowHttp: boolean, lastBackupVersion: number|null }}
    */
-  apayNew (hostNodeId) {
-    const node = this.node
-    return node.apayNew(hostNodeId)
+  vssStatus () {
+    return {
+      configured: !!this._config.vssUrl,
+      url: this._config.vssUrl ?? null,
+      allowHttp: !!this._config.vssAllowHttp,
+      lastBackupVersion: this._lastVssVersion
+    }
   }
 
   /**

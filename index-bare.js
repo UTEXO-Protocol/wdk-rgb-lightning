@@ -18,6 +18,17 @@ export default class WalletManagerRgbLightning extends WalletManagerBase {
 export { default as WalletAccountRgbLightning } from './src/wallet-account-rgb-lightning.js'
 export { BareRgbLightningBinding } from './src/bare-binding.js'
 
+// Typed error hierarchy — see ./src/errors.js. Lets callers branch on
+// `err.name` / `err.code` instead of substring-matching RLN messages.
+export {
+  RgbLightningError,
+  UnlockError,
+  VssError,
+  VssNotConfiguredError,
+  ApayError,
+  NotImplementedError
+} from './src/errors.js'
+
 // LSP client surface — see ./src/lsp-client.js, lnurl-pay.js, lsp-helpers.js.
 // Pure-fetch implementations; work in Bare (via bare-fetch/global, already
 // installed by ./bare.js) and Node ≥18 (native fetch) without per-runtime
