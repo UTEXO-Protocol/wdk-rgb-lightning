@@ -81,7 +81,40 @@ export interface CreateLightningInvoiceRequest {
   assetAmount?: number
   paymentHash?: string
   descriptionHash?: string
+  /**
+   * Override the BOLT11 min_final_cltv_expiry. For APay this is set by
+   * the LSP policy (`APAY_*_MIN_FINAL_CLTV_EXPIRY_DELTA`): inbound
+   * (merchant-offline window, e.g. 864 blocks) and outbound (LDK
+   * minimum, 42). Passthrough; RLN default applies when omitted.
+   */
   minFinalCltvExpiryDelta?: number
+}
+
+/**
+ * Channel-open request forwarded verbatim to RLN. Only the fields most
+ * relevant to APay are typed here; any other RLN openchannel field may
+ * also be passed.
+ *
+ * NOTE (RGB HTLC minimum): an RGB-routed HTLC has a hard minimum of
+ * 3_000_000 msat (the LSP's `MIN_AMT_MSAT`). Invoices/payments below
+ * this will fail to route on RGB channels.
+ */
+export interface OpenChannelRequest {
+  peer_pubkey_and_opt_addr: string
+  capacity_sat: number
+  push_msat?: number
+  asset_id?: string
+  asset_amount?: number
+  public?: boolean
+  with_anchors?: boolean
+  /**
+   * Open as a virtual (non-broadcast) channel. Set to
+   * `'trusted_no_broadcast'` for APay against a production LSP. The
+   * counterparty must trust this node via its `virtualPeerPubkeys`
+   * (and vice-versa). Requires `enableVirtualChannelsV0` at construction.
+   */
+  virtual_open_mode?: 'trusted_no_broadcast'
+  [key: string]: unknown
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -95,7 +128,18 @@ export interface RgbLightningBindingConfig {
   daemonListeningPort?: number
   ldkPeerListeningPort?: number
   maxMediaUploadSizeMb?: number
+  /**
+   * Enable virtual-channels-v0. REQUIRED (with `virtualPeerPubkeys`)
+   * for async-payments against a production LSP — mobile clients reject
+   * standard channels and must use `trusted_no_broadcast` virtual channels.
+   */
   enableVirtualChannelsV0?: boolean
+  /**
+   * Trust list of peer node_ids (hex) allowed to open/receive
+   * `trusted_no_broadcast` virtual channels with this node. For APay,
+   * set to `[lspNodeId]`. Forwarded as `virtual_peer_pubkeys`.
+   */
+  virtualPeerPubkeys?: string[]
   permissiveSignerPolicy?: boolean
   /** Enables VSS cloud backup. Only https:// (or loopback http) unless `vssAllowHttp`. */
   vssUrl?: string
@@ -202,7 +246,7 @@ export class WalletAccountRgbLightning {
   getAddress(): string
 
   // Channels
-  openChannel(request: object): Promise<object>
+  openChannel(request: OpenChannelRequest | object): Promise<object>
   closeChannel(request: object): Promise<{ ok: true }>
   listChannels(): Promise<object>
   getChannelId(temporaryChannelIdHex: string): Promise<object>

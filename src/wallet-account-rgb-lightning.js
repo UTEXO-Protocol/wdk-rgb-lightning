@@ -391,7 +391,22 @@ export default class WalletAccountRgbLightning {
   // Channels — ✅ all wired
   // ==========================================================================
 
-  /** @param {Object} request - JsonOpenChannelRequest */
+  /**
+   * Open a Lightning channel. Request is forwarded verbatim to RLN.
+   *
+   * For async-payments (APay) against a production LSP, open a virtual
+   * channel by passing `virtual_open_mode: 'trusted_no_broadcast'` and
+   * constructing the wallet with `enableVirtualChannelsV0: true` +
+   * `virtualPeerPubkeys: [lspNodeId]`. Standard (broadcast) channels are
+   * rejected by APay mobile clients.
+   *
+   * Note: RGB-routed HTLCs have a hard minimum of 3_000_000 msat (the
+   * LSP's `MIN_AMT_MSAT`); size asset channels accordingly.
+   *
+   * @param {Object} request - JsonOpenChannelRequest (`peer_pubkey_and_opt_addr`,
+   *   `capacity_sat`, `push_msat?`, `asset_id?`, `asset_amount?`, `public?`,
+   *   `with_anchors?`, `virtual_open_mode?`).
+   */
   async openChannel (request) { return this._node.openChannel(request) }
 
   /** @param {Object} request - JsonCloseChannelRequest */

@@ -19,6 +19,18 @@
  * @property {number}  [ldkPeerListeningPort=0]
  * @property {number}  [maxMediaUploadSizeMb=5]
  * @property {boolean} [enableVirtualChannelsV0=false]
+ *   Enable virtual-channels-v0. REQUIRED (together with
+ *   `virtualPeerPubkeys`) for async-payments (APay) against a
+ *   production LSP — mobile clients reject standard channels and must
+ *   open `trusted_no_broadcast` virtual channels.
+ * @property {string[]} [virtualPeerPubkeys]
+ *   Trust list of peer node_ids (hex, 33-byte compressed secp256k1)
+ *   allowed to open / receive `trusted_no_broadcast` virtual channels
+ *   with this node. For APay this is the LSP's node_id:
+ *   `virtualPeerPubkeys: [lspNodeId]`. RLN's `allows_peer` rejects a
+ *   virtual channel whose counterparty isn't in this list. Omit (or
+ *   empty) to disable virtual peering. Forwarded as
+ *   `virtual_peer_pubkeys` in the init request.
  * @property {boolean} [permissiveSignerPolicy=true]
  * @property {string}  [vssUrl]
  *   Enables VSS cloud backup. Setting it points the node at a remote

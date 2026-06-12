@@ -9,6 +9,16 @@ while pre-`1.0`.
 ## [Unreleased]
 
 ### Added
+- **`virtualPeerPubkeys` config** — plumbed through manager → binding →
+  init request (`virtual_peer_pubkeys`). Required (together with
+  `enableVirtualChannelsV0`) for async-payments against a production
+  LSP: every mobile client must list the LSP's node_id so RLN's
+  `allows_peer` accepts the `trusted_no_broadcast` virtual channel.
+  Per Yurii's Signet LSP setup. The native layer already accepted the
+  field via the init JSON, so no native rebuild; forwarded only when a
+  non-empty array. Also documents `virtual_open_mode:
+  'trusted_no_broadcast'` on `openChannel` and the 3_000_000-msat RGB
+  HTLC minimum (`MIN_AMT_MSAT`).
 - **TypeScript declarations.** Ship a hand-authored `index.d.ts`
   covering the full public surface (manager, account, bindings,
   errors, `LspClient`, LNURL + LSP helpers) and wire it via the

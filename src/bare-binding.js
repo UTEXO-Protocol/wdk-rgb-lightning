@@ -78,6 +78,15 @@ export class BareRgbLightningBinding {
       max_media_upload_size_mb: config.maxMediaUploadSizeMb ?? 5,
       enable_virtual_channels_v0: config.enableVirtualChannelsV0 ?? false
     }
+    // Virtual-channels-v0 trust list. When the LSP opens (or the device
+    // opens against the LSP) a `trusted_no_broadcast` virtual channel,
+    // the device must list the LSP's node_id here or RLN's `allows_peer`
+    // rejects the channel. Production APay requires this — see Yurii's
+    // Signet LSP setup: every mobile client sets enableVirtualChannelsV0
+    // + virtualPeerPubkeys=[LSP node_id]. Forwarded only when non-empty.
+    if (Array.isArray(config.virtualPeerPubkeys) && config.virtualPeerPubkeys.length > 0) {
+      this._initRequest.virtual_peer_pubkeys = config.virtualPeerPubkeys
+    }
     // VSS fields are only forwarded when the host opts in. Omitting them
     // lets the RLN-side `#[serde(default)]` keep VSS fully disabled.
     if (config.vssUrl) this._initRequest.vss_url = config.vssUrl
