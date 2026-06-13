@@ -28,8 +28,8 @@
     "bip39": "3.1.0"
   },
   "peerDependencies": {
-    "@utexo/rgb-lightning-node-bare": "^0.6.0-beta.1",
-    "@utexo/rgb-lightning-node-nodejs": "^0.6.0-beta.1"
+    "@utexo/rgb-lightning-node-bare": ">=0.1.0-beta.12",
+    "@utexo/rgb-lightning-node-nodejs": ">=0.1.0-beta.8"
   },
   "peerDependenciesMeta": {
     "@utexo/rgb-lightning-node-bare": {
