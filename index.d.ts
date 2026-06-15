@@ -90,6 +90,16 @@ export interface CreateLightningInvoiceRequest {
   minFinalCltvExpiryDelta?: number
 }
 
+export interface CreateHodlInvoiceParams {
+  /** 32-byte payment hash (hex). The preimage is released later via claimHodlInvoice. */
+  paymentHash: string
+  amtMsat?: number
+  expirySec: number
+  assetId?: string
+  assetAmount?: number
+  minFinalCltvExpiryDelta?: number
+}
+
 /**
  * Channel-open request forwarded verbatim to RLN. Only the fields most
  * relevant to APay are typed here; any other RLN openchannel field may
@@ -238,6 +248,13 @@ export class WalletAccountRgbLightning {
     waitForPeerMs?: number
     pollIntervalMs?: number
   }): Promise<BootstrapLspResult>
+  /** The lspBaseUrl / lspBearerToken this node was constructed with. */
+  getLspConfig(): { baseUrl: string | null; bearerToken: string | null }
+  /**
+   * Build the composed {@link UtexoLsp} flow object. No-arg form
+   * auto-discovers the peer from the wallet's lspBaseUrl.
+   */
+  createLsp(peer?: LspPeer, peerPort?: number): Promise<UtexoLsp>
 
   // Node info / network / sync
   getNodeInfo(): Promise<object>
@@ -262,6 +279,8 @@ export class WalletAccountRgbLightning {
   createLightningInvoice(request: CreateLightningInvoiceRequest | object): Promise<object>
   decodeInvoice(invoice: string): Promise<object>
   getInvoiceStatus(invoice: string): Promise<object>
+  /** Create a HODL invoice bound to a caller-supplied payment hash. */
+  createHodlInvoice(params: CreateHodlInvoiceParams): Promise<{ bolt11: string; paymentHash: string }>
   cancelHodlInvoice(request: object): Promise<{ ok: true }>
   claimHodlInvoice(request: object): Promise<object>
 
@@ -397,6 +416,10 @@ export class LspClient {
   getInfo(opts?: { timeoutMs?: number }): Promise<object>
   lnurlDiscovery(username: string, opts?: { timeoutMs?: number }): Promise<LnurlPayDiscovery>
   lnurlCallback(username: string, amountMsat: bigint | number, opts?: { assetId?: string; assetAmount?: number; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[] }>
+  /** Full LUD-06 resolution routed through this LSP's baseUrl (discovery + callback). */
+  resolveAddress(username: string, amountMsat: bigint | number, opts?: { assetId?: string; assetAmount?: bigint | number; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[]; status?: string; reason?: string }>
+  /** Resolve the auto-assigned Lightning Address for a node pubkey (post-apayNew). */
+  getLightningAddressByPubkey(peerPubkey: string, opts?: { timeoutMs?: number }): Promise<{ username: string; domain: string }>
   onchainSend(params: {
     rgbInvoice: string
     ln: { amtMsat: bigint | number; expirySec: number; assetId?: string; assetAmount?: number; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
@@ -475,3 +498,108 @@ export interface PayRgbViaLspResult extends LspBridgeResult {
 export function payLightningAddress(account: WalletAccountRgbLightning, addr: string, amountMsat: bigint | number, opts?: PayLightningAddressOptions): Promise<PayLightningAddressResult>
 export function requestLspRgbDeposit(account: WalletAccountRgbLightning, args: RequestLspRgbDepositArgs): Promise<LspRgbDepositResult>
 export function payRgbViaLsp(account: WalletAccountRgbLightning, args: PayRgbViaLspArgs): Promise<PayRgbViaLspResult>
+
+// ───────────────────────────────────────────────────────────────────
+// UtexoLsp — composed LSP flows (parity with @utexo/rgb-sdk-rn)
+// ───────────────────────────────────────────────────────────────────
+
+/** Canonical receive state (4 terminal-or-pending values). */
+export type ReceiveStatus = 'Pending' | 'Succeeded' | 'Failed' | 'Expired'
+
+/** Single config object describing the LSP peer for composed flows. */
+export interface LspPeer {
+  baseUrl: string
+  peerPubkey: string
+  peerHost: string
+  peerPort: number
+  bearerToken?: string
+  timeoutMs?: number
+  allowHttp?: boolean
+}
+
+/** Shared polling options for the wait/await flows. */
+export interface WaitOptions {
+  timeoutMs?: number
+  pollIntervalMs?: number
+  signal?: AbortSignal
+  onProgress?: (msg: string) => void
+  /** Run at the start of each poll iteration — e.g. mine a regtest block. */
+  onEachPoll?: () => Promise<void>
+}
+
+export interface ChannelReadyInfo {
+  channelId: string
+  peerPubkey: string
+  capacitySat: number
+  outboundBalanceMsat: number
+  inboundBalanceMsat: number
+}
+
+export interface ReceiveAssetOptions {
+  assetId: string
+  amountSats?: number
+  amountRgb?: number
+  expirySeconds?: number
+}
+
+export interface ReceiveAssetResult {
+  lnInvoice: string
+  rgbInvoice: string
+  mappingId: string
+}
+
+export interface SendAssetOptions {
+  rgbInvoice: string
+  ln?: { amtMsat?: bigint | number; expirySec?: number; assetId?: string; assetAmount?: bigint | number; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
+}
+
+export interface SendAssetResult extends LspBridgeResult {
+  sendResult: object
+}
+
+export interface PayAddressOptions {
+  address: string
+  amtMsat: bigint | number
+  asset?: { assetId: string; assetAmount: number }
+}
+
+export interface LightningAddressInfo {
+  username: string
+  domain: string
+  /** Convenience: `username@domain`. */
+  address: string
+}
+
+export interface ClaimResult {
+  paymentHash: string
+  claimed: boolean
+  error?: string
+}
+
+export class UtexoLsp {
+  constructor(account: WalletAccountRgbLightning, peer: LspPeer)
+  readonly http: LspClient
+  readonly peer: LspPeer
+  connect(): Promise<{ ok: true }>
+  waitForChannel(assetId: string, opts?: WaitOptions): Promise<ChannelReadyInfo>
+  receiveAsset(opts: ReceiveAssetOptions): Promise<ReceiveAssetResult>
+  awaitReceiveSettlement(lnInvoice: string, opts?: WaitOptions): Promise<'settled' | 'timed_out'>
+  waitForOutboundLiquidity(minMsat: number, opts?: WaitOptions): Promise<void>
+  sendAsset(opts: SendAssetOptions): Promise<SendAssetResult>
+  payAddress(opts: PayAddressOptions): Promise<{ invoice: string; sendResult: object }>
+  enableLightningAddress(): Promise<LightningAddressInfo>
+  claimPendingPayments(): Promise<ClaimResult[]>
+}
+
+export function peerUri(peer: LspPeer): string
+export function normalizeReceiveStatus(raw: string | { status?: string } | null | undefined): ReceiveStatus
+
+export class LspChannelTimeoutError extends Error {
+  assetId: string
+  elapsedMs: number
+}
+
+export class LspSettlementError extends Error {
+  step: 'ln_invoice'
+  status: ReceiveStatus
+}

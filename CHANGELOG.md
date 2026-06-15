@@ -9,6 +9,35 @@ while pre-`1.0`.
 ## [Unreleased]
 
 ### Added
+- **`UtexoLsp` composed-flow class** (`src/utexo-lsp.js`) — brings the
+  LSP surface to parity with `@utexo/rgb-sdk-rn`'s `UtexoLsp`. A
+  stateful orchestration object over an account + `LspClient` covering
+  the full lifecycle: `connect`, `waitForChannel`, `receiveAsset`,
+  `awaitReceiveSettlement`, `waitForOutboundLiquidity`, `sendAsset`,
+  `payAddress`, `enableLightningAddress`, and `claimPendingPayments`.
+  All poll loops accept `WaitOptions` (`timeoutMs`, `pollIntervalMs`,
+  `signal`, `onProgress`, `onEachPoll`). Construct via
+  `account.createLsp(peer?)` — the no-arg form auto-discovers the peer
+  from the wallet's `lspBaseUrl`. Also exports `LspChannelTimeoutError`,
+  `LspSettlementError`, `peerUri()`, and `normalizeReceiveStatus()`.
+- **`LspClient.resolveAddress(username, amtMsat, opts)`** — full LUD-06
+  resolution (discovery + callback) routed through the LSP's `baseUrl`,
+  with the callback URL rewritten onto the base origin so the second hop
+  inherits the client's retry/timeout rails and survives an LSP that
+  advertises an internal/emulator host (e.g. `10.0.2.2`). Mirrors
+  `rgb-sdk-rn`'s `UtexoLSPClient.resolveAddress`.
+- **`LspClient.getLightningAddressByPubkey(pubkey, opts)`** — reads back
+  the auto-assigned `{ username, domain }` the LSP minted for a node
+  pubkey (post-`apayNew`). The one raw-client endpoint we were missing.
+- **`account.createLsp(peer?, peerPort?)`** + **`account.getLspConfig()`**
+  — factory for `UtexoLsp` and a read of the `lspBaseUrl`/
+  `lspBearerToken` the node was constructed with.
+- **`account.createHodlInvoice(params)`** — named convenience over
+  `createInvoice({ payment_hash })`, returning `{ bolt11, paymentHash }`.
+  Parity with `rgb-sdk-rn`'s `createHodlInvoice`.
+- TS declarations extended for all of the above (`UtexoLsp`, `LspPeer`,
+  `WaitOptions`, `ReceiveStatus`, `ChannelReadyInfo`,
+  `CreateHodlInvoiceParams`, the two new error classes, etc.).
 - **`virtualPeerPubkeys` config** — plumbed through manager → binding →
   init request (`virtual_peer_pubkeys`). Required (together with
   `enableVirtualChannelsV0`) for async-payments against a production

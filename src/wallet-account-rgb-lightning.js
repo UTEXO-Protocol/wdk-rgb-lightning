@@ -17,6 +17,8 @@ import {
   requestLspRgbDeposit as _requestLspRgbDeposit,
   payRgbViaLsp as _payRgbViaLsp
 } from './lsp-helpers.js'
+import { LspClient } from './lsp-client.js'
+import { UtexoLsp } from './utexo-lsp.js'
 import {
   UnlockError,
   VssError,
@@ -342,6 +344,63 @@ export default class WalletAccountRgbLightning {
     return result
   }
 
+  /**
+   * Returns the `lspBaseUrl` / `lspBearerToken` this account's node was
+   * constructed with (from the wallet-manager config). Useful to confirm
+   * APay config matches the {@link createLsp} peer config. Mirrors
+   * `@utexo/rgb-sdk-rn`'s `getLspConfig`.
+   *
+   * @returns {{ baseUrl: string|null, bearerToken: string|null }}
+   */
+  getLspConfig () {
+    const cfg = (this._binding && this._binding._config) || {}
+    return {
+      baseUrl: cfg.lspBaseUrl ?? null,
+      bearerToken: cfg.lspBearerToken ?? null
+    }
+  }
+
+  /**
+   * Build a {@link UtexoLsp} — the composed LSP flow object (connect,
+   * wait-for-channel, receive/send asset, pay address, enable Lightning
+   * Address, claim pending). Mirrors `@utexo/rgb-sdk-rn`'s
+   * `wallet.createLsp(peer?)`.
+   *
+   * No-arg form auto-discovers the peer from the wallet's `lspBaseUrl`:
+   * pubkey via `GET /get_info`, host from the base URL, port from
+   * `peerPort` (default 9735).
+   *
+   * Explicit form takes a full LspPeer
+   * (`{ baseUrl, peerPubkey, peerHost, peerPort, bearerToken?, timeoutMs?, allowHttp? }`).
+   *
+   * @param {object} [peer]
+   * @param {number} [peerPort=9735]  Used only by the auto-discover form.
+   * @returns {Promise<UtexoLsp>}
+   */
+  async createLsp (peer, peerPort = 9735) {
+    if (peer) return new UtexoLsp(this, peer)
+
+    const { baseUrl, bearerToken } = this.getLspConfig()
+    if (!baseUrl) {
+      throw new Error('createLsp: lspBaseUrl not set — pass a peer explicitly or construct the wallet with lspBaseUrl')
+    }
+    const http = new LspClient({
+      baseUrl,
+      defaultHeaders: bearerToken ? { Authorization: `Bearer ${bearerToken}` } : undefined
+    })
+    const info = await http.getInfo()
+    if (!info || typeof info.pubkey !== 'string' || info.pubkey.length === 0) {
+      throw new Error('createLsp: LSP /get_info returned no pubkey')
+    }
+    return new UtexoLsp(this, {
+      baseUrl,
+      peerPubkey: info.pubkey,
+      peerHost: new URL(baseUrl).hostname,
+      peerPort,
+      bearerToken: bearerToken ?? undefined
+    })
+  }
+
   // ==========================================================================
   // Node info / network / sync — ✅ wired
   // ==========================================================================
@@ -528,6 +587,40 @@ export default class WalletAccountRgbLightning {
 
   /** @param {string} invoice */
   async getInvoiceStatus (invoice) { return this._node.invoiceStatus(invoice) }
+
+  /**
+   * Create a HODL (hold) invoice — a BOLT11 bound to a caller-supplied
+   * `paymentHash` whose preimage the receiver releases later via
+   * {@link claimHodlInvoice}. Convenience wrapper over
+   * {@link createInvoice} (which already accepts `payment_hash`); named
+   * for parity with `@utexo/rgb-sdk-rn`'s `createHodlInvoice`.
+   *
+   * @param {object} params
+   * @param {string}  params.paymentHash             32-byte payment hash (hex).
+   * @param {number} [params.amtMsat]
+   * @param {number}  params.expirySec
+   * @param {string} [params.assetId]
+   * @param {number} [params.assetAmount]
+   * @param {number} [params.minFinalCltvExpiryDelta]
+   * @returns {Promise<{ bolt11:string, paymentHash:string }>}
+   */
+  async createHodlInvoice (params = {}) {
+    if (!params || typeof params.paymentHash !== 'string' || params.paymentHash.length === 0) {
+      throw new TypeError('createHodlInvoice: params.paymentHash (hex) is required')
+    }
+    const res = await this.createLightningInvoice({
+      paymentHash: params.paymentHash,
+      amountMsat: params.amtMsat ?? undefined,
+      expirySec: params.expirySec,
+      assetId: params.assetId ?? undefined,
+      assetAmount: params.assetAmount ?? undefined,
+      minFinalCltvExpiryDelta: params.minFinalCltvExpiryDelta ?? undefined
+    })
+    return {
+      bolt11: res?.invoice ?? res?.bolt11 ?? '',
+      paymentHash: res?.payment_hash ?? params.paymentHash
+    }
+  }
 
   // Hodl invoices — 🚧 (request shape is upstream-defined; passthrough kept simple)
   /** @param {Object} request */

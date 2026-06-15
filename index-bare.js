@@ -45,3 +45,13 @@ export {
   requestLspRgbDeposit,
   payRgbViaLsp
 } from './src/lsp-helpers.js'
+// Composed LSP flows — connect → wait-for-channel → receive/send →
+// settle → pay-address → enable-Lightning-Address → claim. API parity
+// with @utexo/rgb-sdk-rn's UtexoLsp. See ./src/utexo-lsp.js.
+export {
+  UtexoLsp,
+  LspChannelTimeoutError,
+  LspSettlementError,
+  peerUri,
+  normalizeReceiveStatus
+} from './src/utexo-lsp.js'
