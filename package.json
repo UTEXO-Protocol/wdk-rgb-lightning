@@ -17,6 +17,7 @@
     "url": "https://github.com/UTEXO-Protocol/wdk-rgb-lightning.git"
   },
   "main": "index.js",
+  "types": "./index.d.ts",
   "type": "module",
   "scripts": {
     "lint": "standard",
@@ -44,6 +45,7 @@
   },
   "exports": {
     ".": {
+      "types": "./index.d.ts",
       "bare": "./bare.js",
       "node": "./index-node.js",
       "default": "./index.js"

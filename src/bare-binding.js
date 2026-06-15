@@ -78,6 +78,15 @@ export class BareRgbLightningBinding {
       max_media_upload_size_mb: config.maxMediaUploadSizeMb ?? 5,
       enable_virtual_channels_v0: config.enableVirtualChannelsV0 ?? false
     }
+    // Virtual-channels-v0 trust list. When the LSP opens (or the device
+    // opens against the LSP) a `trusted_no_broadcast` virtual channel,
+    // the device must list the LSP's node_id here or RLN's `allows_peer`
+    // rejects the channel. Production APay requires this — see Yurii's
+    // Signet LSP setup: every mobile client sets enableVirtualChannelsV0
+    // + virtualPeerPubkeys=[LSP node_id]. Forwarded only when non-empty.
+    if (Array.isArray(config.virtualPeerPubkeys) && config.virtualPeerPubkeys.length > 0) {
+      this._initRequest.virtual_peer_pubkeys = config.virtualPeerPubkeys
+    }
     // VSS fields are only forwarded when the host opts in. Omitting them
     // lets the RLN-side `#[serde(default)]` keep VSS fully disabled.
     if (config.vssUrl) this._initRequest.vss_url = config.vssUrl
@@ -95,6 +104,8 @@ export class BareRgbLightningBinding {
     this._signer = null
     /** @type {boolean} */
     this._sdkInitDone = false
+    /** @type {number | null} Snapshot version returned by the most recent vssBackup(). */
+    this._lastVssVersion = null
   }
 
   /**
@@ -207,34 +218,41 @@ export class BareRgbLightningBinding {
    * @returns {{version: number}}
    */
   vssBackup () {
-    return this.node.vssBackup()
+    const r = this.node.vssBackup()
+    if (r && typeof r.version === 'number') this._lastVssVersion = r.version
+    return r
+  }
+
+  /**
+   * Local-view VSS status. RLN's C-FFI exposes no read-only
+   * server-side backup-info query (unlike rgb-lib's `vssBackupInfo`),
+   * so this reports what the host can know without a round-trip:
+   * whether VSS was configured at construction, the configured URL +
+   * allow-http flag, and the snapshot version from the most recent
+   * `vssBackup()` call this session (`null` if none yet). For a live
+   * server version, call `vssBackup()` (it flushes and returns the
+   * fresh `{ version }`).
+   *
+   * @returns {{ configured: boolean, url: string|null, allowHttp: boolean, lastBackupVersion: number|null }}
+   */
+  vssStatus () {
+    return {
+      configured: !!this._config.vssUrl,
+      url: this._config.vssUrl ?? null,
+      allowHttp: !!this._config.vssAllowHttp,
+      lastBackupVersion: this._lastVssVersion
+    }
   }
 
   /**
    * Register this node with an LSP as an async-payments (APay) recipient.
    * Used for offline-receive over Lightning Address — the wallet uploads
    * a batch of pre-allocated payment hashes to the LSP, which then
-   * accepts payments addressed to those hashes on the wallet's behalf
-   * while the wallet is offline.
+   * accepts Lightning payments addressed to those hashes on the wallet's
+   * behalf, even while the wallet is offline.
    *
    * @param {string} hostNodeId  - LSP's node_id (hex, 33-byte compressed secp256k1)
    * @returns {object}  AsyncOrderNewResponse — request_id, host_node_id,
-   *   protocol_version, order_id, status, accepted_through_index,
-   *   next_index_expected, unused_hashes, refill_batch_size, first_hash_index
-   */
-  apayNew (hostNodeId) {
-    const node = this.node
-    return node.apayNew(hostNodeId)
-  }
-
-  /**
-   * Register with an LSP as an APay (async-payments) recipient. The
-   * wallet uploads a batch of pre-allocated payment hashes to the LSP;
-   * the LSP then accepts Lightning payments addressed to those hashes
-   * on the wallet's behalf, even while the wallet is offline.
-   *
-   * @param {string} hostNodeId - the LSP's node_id (hex, compressed secp256k1)
-   * @returns {object} AsyncOrderNewResponse — request_id, host_node_id,
    *   protocol_version, order_id, status, accepted_through_index,
    *   next_index_expected, unused_hashes, refill_batch_size, first_hash_index
    */
