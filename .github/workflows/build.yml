@@ -1,0 +1,35 @@
+name: Build and Test
+
+# Mirrors UTEXO-Protocol/wdk-wallet-rgb/.github/workflows/build.yml. This
+# package is pure JS (the native bindings are optional peer deps), so the
+# PR check is lint only — there is no `test` script in package.json.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm install
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Lint
+        run: npm run lint
