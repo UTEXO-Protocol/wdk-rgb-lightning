@@ -121,16 +121,19 @@ export class LspClient {
     // Address payment requests are too sensitive to send over plaintext
     // by accident.
     let parsedUrl
-    try { parsedUrl = new URL(normalized) }
-    catch { throw new TypeError(`LspClient: baseUrl is not a valid URL: ${baseUrl}`) }
+    try {
+      parsedUrl = new URL(normalized)
+    } catch {
+      throw new TypeError(`LspClient: baseUrl is not a valid URL: ${baseUrl}`)
+    }
     if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
       throw new TypeError(`LspClient: baseUrl must use http: or https:, got ${parsedUrl.protocol}`)
     }
     if (parsedUrl.protocol === 'http:' && !allowHttp && !LOOPBACK_HOSTS.has(parsedUrl.hostname)) {
       throw new Error(
-        `LspClient: plain http:// is only allowed for loopback hosts; ` +
+        'LspClient: plain http:// is only allowed for loopback hosts; ' +
         `got '${parsedUrl.hostname}'. Pass allowHttp:true to opt in for ` +
-        `non-loopback hosts (regtest staging, etc.).`
+        'non-loopback hosts (regtest staging, etc.).'
       )
     }
     this._base = normalized
