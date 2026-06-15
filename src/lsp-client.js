@@ -79,8 +79,12 @@ const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE'])
 const DEFAULT_RETRIES = 3
 const RETRY_BASE_MS = 250
 
-/** Hostnames that are always allowed over plain HTTP (mirrors RLN VSS allow-http loopback rule). */
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '10.0.2.2' /* Android emu */])
+/**
+ * Hostnames that are always allowed over plain HTTP (mirrors RLN VSS
+ * allow-http loopback rule). `10.0.2.2` is the Android emulator's
+ * host-loopback alias.
+ */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '10.0.2.2'])
 
 export class LspClient {
   /**
