@@ -47,18 +47,11 @@ jobs:
             echo "auto=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Update RLN peer dependency versions
-        if: steps.rln.outputs.auto == 'true'
-        run: |
-          RLN_VERSION="${{ steps.rln.outputs.version }}"
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.peerDependencies['@utexo/rgb-lightning-node-bare'] = '^${RLN_VERSION}';
-            pkg.peerDependencies['@utexo/rgb-lightning-node-nodejs'] = '^${RLN_VERSION}';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-          echo "Updated peer deps → ^${RLN_VERSION}"
+      # NOTE: binding peerDependencies are intentionally NOT derived from the
+      # RLN SDK version. The native binding packages
+      # (@utexo/rgb-lightning-node-{bare,nodejs}) carry their own npm version
+      # line (0.1.0-beta.x), decoupled from the RLN SDK release tag
+      # (0.6.0-beta.x). Bump those peerDeps by hand when a new binding is cut.
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -76,7 +69,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json
-          git commit -m "chore: bump RLN peer deps to v${{ steps.rln.outputs.version }}"
+          git commit -m "chore(release): bump prerelease version (RLN SDK v${{ steps.rln.outputs.version }})"
           git push
 
       - name: Install dependencies
@@ -98,6 +91,8 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "version=v$VERSION" >> $GITHUB_OUTPUT
+          echo "bare=$(node -p "require('./package.json').peerDependencies['@utexo/rgb-lightning-node-bare']")" >> $GITHUB_OUTPUT
+          echo "nodejs=$(node -p "require('./package.json').peerDependencies['@utexo/rgb-lightning-node-nodejs']")" >> $GITHUB_OUTPUT
 
       - name: Create Release
         if: steps.rln.outputs.auto == 'true'
@@ -119,8 +114,8 @@ jobs:
 
             ### Peer dependencies
             ```json
-            "@utexo/rgb-lightning-node-bare": "^${{ steps.rln.outputs.version }}",
-            "@utexo/rgb-lightning-node-nodejs": "^${{ steps.rln.outputs.version }}"
+            "@utexo/rgb-lightning-node-bare": "${{ steps.pkg_version.outputs.bare }}",
+            "@utexo/rgb-lightning-node-nodejs": "${{ steps.pkg_version.outputs.nodejs }}"
             ```
           draft: false
           prerelease: ${{ contains(steps.pkg_version.outputs.version, 'beta') || contains(steps.pkg_version.outputs.version, 'alpha') }}

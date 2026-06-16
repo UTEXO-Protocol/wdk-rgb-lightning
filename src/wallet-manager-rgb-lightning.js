@@ -125,6 +125,7 @@ export default class WalletManagerRgbLightning extends WalletManager {
         ldkPeerListeningPort: this._config.ldkPeerListeningPort,
         maxMediaUploadSizeMb: this._config.maxMediaUploadSizeMb,
         enableVirtualChannelsV0: this._config.enableVirtualChannelsV0,
+        virtualPeerPubkeys: this._config.virtualPeerPubkeys,
         permissiveSignerPolicy: this._config.permissiveSignerPolicy,
         vssUrl: this._config.vssUrl,
         vssAllowHttp: this._config.vssAllowHttp,
