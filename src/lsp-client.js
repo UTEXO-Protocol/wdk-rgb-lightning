@@ -194,6 +194,79 @@ export class LspClient {
   }
 
   /**
+   * Full LUD-06 resolution against *this* LSP: discover the callback
+   * URL from the Lightning-Address metadata, then fetch the BOLT11
+   * invoice in one call. Unlike {@link resolveAddressToInvoice} in
+   * `lnurl-pay.js` (which is host-agnostic and dials the address's own
+   * domain), this method always routes through the LSP's `baseUrl`: the
+   * callback URL the LSP returns is rewritten onto `baseUrl`'s origin so
+   * the second hop also benefits from this client's retry/timeout rails
+   * and works when the LSP advertises an internal/emulator host
+   * (e.g. `10.0.2.2`) the device can't otherwise reach.
+   *
+   * Mirrors `@utexo/rgb-sdk-rn`'s `UtexoLSPClient.resolveAddress`.
+   *
+   * @param {string} username                       Local-part of `user@host`.
+   * @param {bigint|number|string} amountMsat
+   * @param {object} [opts]
+   * @param {string} [opts.assetId]
+   * @param {bigint|number|string} [opts.assetAmount]
+   * @param {number} [opts.timeoutMs]
+   * @returns {Promise<{ pr:string, routes:unknown[], status?:string, reason?:string }>}
+   */
+  async resolveAddress (username, amountMsat, opts = {}) {
+    if (!isNonEmptyString(username)) throw new TypeError('LspClient.resolveAddress: username required')
+    const meta = await this.lnurlDiscovery(username, opts)
+    if (!meta || typeof meta.callback !== 'string' || meta.callback.length === 0) {
+      throw new LspError(`/.well-known/lnurlp/${username}`, 200, 'missing callback in LNURL response')
+    }
+    const cbPath = this._rewriteCallbackToPath(meta.callback)
+    const params = new URLSearchParams()
+    params.set('amount', toIntString(amountMsat, 'amountMsat'))
+    if (opts.assetId !== undefined) params.set('asset_id', String(opts.assetId))
+    if (opts.assetAmount !== undefined) params.set('asset_amount', toIntString(opts.assetAmount, 'assetAmount'))
+    const sep = cbPath.includes('?') ? '&' : '?'
+    return this._req('GET', `${cbPath}${sep}${params.toString()}`, undefined, opts)
+  }
+
+  /**
+   * Resolve the auto-assigned Lightning Address (`{ username, domain }`)
+   * the LSP minted for a node pubkey — i.e. the offline-receive address
+   * created as a side effect of `apayNew` / `async_order/new`. Give the
+   * resulting `username@domain` to senders.
+   *
+   * Mirrors `@utexo/rgb-sdk-rn`'s
+   * `UtexoLSPClient.getLightningAddressByPubkey`.
+   *
+   * @param {string} peerPubkey  33-byte compressed node pubkey (hex).
+   * @param {object} [opts]
+   * @param {number} [opts.timeoutMs]
+   * @returns {Promise<{ username:string, domain:string }>}
+   */
+  getLightningAddressByPubkey (peerPubkey, opts = {}) {
+    const pk = typeof peerPubkey === 'string' ? peerPubkey.trim() : ''
+    if (pk.length === 0) throw new TypeError('LspClient.getLightningAddressByPubkey: peerPubkey required')
+    return this._req('GET', `/lightning_address/by_pubkey/${encodeURIComponent(pk)}`, undefined, opts)
+  }
+
+  /**
+   * Reduce an LSP-advertised callback URL to a path (+query+hash) rooted
+   * at this client's `baseUrl`. Keeps the second LUD-06 hop on the same
+   * origin so it inherits the client's retry/timeout config and dodges
+   * unreachable internal hosts. Falls back to the raw string if it can't
+   * be parsed.
+   * @private
+   */
+  _rewriteCallbackToPath (callbackUrl) {
+    try {
+      const cb = new URL(callbackUrl, this._base)
+      return `${cb.pathname}${cb.search}${cb.hash}`
+    } catch {
+      return callbackUrl.startsWith('/') ? callbackUrl : `/${callbackUrl}`
+    }
+  }
+
+  /**
    * Bridge: caller hands the LSP an RGB invoice + LN-side parameters;
    * the LSP returns a BOLT11 invoice for the caller to pay. Once paid,
    * the LSP runs `sendrgb` to the recipient embedded in the RGB

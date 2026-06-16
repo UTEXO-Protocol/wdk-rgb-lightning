@@ -8,6 +8,76 @@ while pre-`1.0`.
 
 ## [Unreleased]
 
+### Added
+- **`UtexoLsp` composed-flow class** (`src/utexo-lsp.js`) — brings the
+  LSP surface to parity with `@utexo/rgb-sdk-rn`'s `UtexoLsp`. A
+  stateful orchestration object over an account + `LspClient` covering
+  the full lifecycle: `connect`, `waitForChannel`, `receiveAsset`,
+  `awaitReceiveSettlement`, `waitForOutboundLiquidity`, `sendAsset`,
+  `payAddress`, `enableLightningAddress`, and `claimPendingPayments`.
+  All poll loops accept `WaitOptions` (`timeoutMs`, `pollIntervalMs`,
+  `signal`, `onProgress`, `onEachPoll`). Construct via
+  `account.createLsp(peer?)` — the no-arg form auto-discovers the peer
+  from the wallet's `lspBaseUrl`. Also exports `LspChannelTimeoutError`,
+  `LspSettlementError`, `peerUri()`, and `normalizeReceiveStatus()`.
+- **`LspClient.resolveAddress(username, amtMsat, opts)`** — full LUD-06
+  resolution (discovery + callback) routed through the LSP's `baseUrl`,
+  with the callback URL rewritten onto the base origin so the second hop
+  inherits the client's retry/timeout rails and survives an LSP that
+  advertises an internal/emulator host (e.g. `10.0.2.2`). Mirrors
+  `rgb-sdk-rn`'s `UtexoLSPClient.resolveAddress`.
+- **`LspClient.getLightningAddressByPubkey(pubkey, opts)`** — reads back
+  the auto-assigned `{ username, domain }` the LSP minted for a node
+  pubkey (post-`apayNew`). The one raw-client endpoint we were missing.
+- **`account.createLsp(peer?, peerPort?)`** + **`account.getLspConfig()`**
+  — factory for `UtexoLsp` and a read of the `lspBaseUrl`/
+  `lspBearerToken` the node was constructed with.
+- **`account.createHodlInvoice(params)`** — named convenience over
+  `createInvoice({ payment_hash })`, returning `{ bolt11, paymentHash }`.
+  Parity with `rgb-sdk-rn`'s `createHodlInvoice`.
+- TS declarations extended for all of the above (`UtexoLsp`, `LspPeer`,
+  `WaitOptions`, `ReceiveStatus`, `ChannelReadyInfo`,
+  `CreateHodlInvoiceParams`, the two new error classes, etc.).
+- **`virtualPeerPubkeys` config** — plumbed through manager → binding →
+  init request (`virtual_peer_pubkeys`). Required (together with
+  `enableVirtualChannelsV0`) for async-payments against a production
+  LSP: every mobile client must list the LSP's node_id so RLN's
+  `allows_peer` accepts the `trusted_no_broadcast` virtual channel.
+  Per Yurii's Signet LSP setup. The native layer already accepted the
+  field via the init JSON, so no native rebuild; forwarded only when a
+  non-empty array. Also documents `virtual_open_mode:
+  'trusted_no_broadcast'` on `openChannel` and the 3_000_000-msat RGB
+  HTLC minimum (`MIN_AMT_MSAT`).
+- **TypeScript declarations.** Ship a hand-authored `index.d.ts`
+  covering the full public surface (manager, account, bindings,
+  errors, `LspClient`, LNURL + LSP helpers) and wire it via the
+  `types` field + the `types` condition in the `exports` map. The
+  package previously shipped no types; consumers now get IntelliSense
+  + type-checking. Verified with `tsc --strict` (internal + consumer
+  resolution under `nodenext`).
+- **Typed error hierarchy** (`src/errors.js`): `RgbLightningError`
+  (base, with `code` + `cause` + `toJSON()`) and `UnlockError`,
+  `VssError`, `VssNotConfiguredError`, `ApayError`,
+  `NotImplementedError`. `unlock`, `clearVssFence`, `vssBackup`,
+  `apayNew`, `bootstrapLsp`, `verify`, and `signTransaction` now throw
+  these instead of bare `Error`, so callers branch on `err.name` /
+  `err.code` rather than substring-matching `Rln(...)` strings. The
+  original RLN message is preserved verbatim and attached as `cause`,
+  so existing substring checks keep working.
+- `account.vssStatus()` — local-view VSS status
+  (`{ configured, url, allowHttp, lastBackupVersion }`) with no server
+  round-trip. (RLN's C-FFI has no read-only server-side backup-info
+  query; call `vssBackup()` for a live version.)
+- `account.createLightningInvoice(request)` — cross-SDK alias for
+  `createInvoice` (matches `@utexo/rgb-sdk-rn`'s naming), accepting
+  either the native snake_case request or a camelCase convenience
+  shape.
+
+### Fixed
+- Removed a duplicate `apayNew` method definition in both
+  `node-binding.js` and `bare-binding.js` (the shadowed first copy
+  used `this.node`, which throws pre-unlock).
+
 ### Changed
 - README: tightened the *"Why a separate module from `wdk-wallet-rgb`?"*
   section. Added a *"Use `wdk-wallet-rgb` for asset issuance +
