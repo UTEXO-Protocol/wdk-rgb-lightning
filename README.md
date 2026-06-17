@@ -37,6 +37,7 @@ need a standalone on-chain RGB wallet.
 - [VSS cloud backup](#vss-cloud-backup)
 - [Async payments (APay)](#async-payments-apay)
 - [Security model](#security-model)
+- [Testing and local development](#testing-and-local-development)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
 
@@ -341,6 +342,53 @@ the wallet's behalf. Against a production LSP this requires
 - **Plain `http://` is rejected by default** for VSS and LSP endpoints; opt
   in (`vssAllowHttp` / `LspClient({ allowHttp: true })`) only for loopback
   or development.
+
+## Testing and local development
+
+### Unit tests
+
+The host-side logic — recipient routing, fee estimation, typed-error
+wrapping, and binding config mapping — is covered by a jest suite that
+runs with no live node and no native binding (the addon is mocked):
+
+```sh
+npm install
+npm test            # jest, host-side units
+npm run test:coverage
+```
+
+### Integration / end-to-end
+
+End-to-end coverage (a real LDK node, RGB issuance, channels, payments,
+and a regtest stack via Docker Compose) lives in [utexo-rgb-wdk-demo]. To
+exercise a local build of this package instead of a published tag, check
+the demo out next to this repo so the relative paths resolve:
+
+```
+parent/
+  wdk-rgb-lightning/        # this repo
+  utexo-rgb-wdk-demo/
+```
+
+The Node E2E harness already links this repo by path —
+`utexo-rgb-wdk-demo/node-demo/package.json` declares
+`"@utexo/wdk-rgb-lightning": "file:../../wdk-rgb-lightning"` (and the Node
+binding via `file:../../packages/rgb-lightning-node-nodejs`). Installing
+the harness symlinks your working tree in; the dockerised LSP + regtest
+stack then runs the suite:
+
+```sh
+cd utexo-rgb-wdk-demo/node-demo
+npm install                                          # links file:../../wdk-rgb-lightning
+./lsp/up.sh                                           # docker compose up --build; waits on :8080/health
+LSP_BASE_URL=http://127.0.0.1:8080 npm run test:e2e  # tsx test-runner/run.ts
+./lsp/down.sh
+```
+
+The React Native app at the demo root instead pins a published tag
+(`github:UTEXO-Protocol/wdk-rgb-lightning#v<tag>`). To test local changes
+on device, repoint that dependency to `file:../wdk-rgb-lightning`, re-run
+`npm install`, and rebuild the worklet bundle.
 
 ## Troubleshooting
 
