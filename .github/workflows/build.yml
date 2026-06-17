@@ -1,8 +1,10 @@
 name: Build and Test
 
-# Mirrors UTEXO-Protocol/wdk-wallet-rgb/.github/workflows/build.yml. This
-# package is pure JS (the native bindings are optional peer deps), so the
-# PR check is lint only — there is no `test` script in package.json.
+# Mirrors UTEXO-Protocol/wdk-wallet-rgb/.github/workflows/build.yml. The
+# native bindings are optional peer deps, so CI runs without them: the
+# check is lint plus the jest unit suite, which exercises the host-side
+# JS logic (recipient routing, error wrapping, binding config mapping)
+# with the native addon mocked — no live node required.
 
 on:
   push:
@@ -32,3 +34,6 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Run tests
+        run: npm test
