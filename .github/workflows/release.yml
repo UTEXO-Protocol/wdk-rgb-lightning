@@ -121,6 +121,14 @@ jobs:
             "@utexo/rgb-lightning-node-nodejs": "${{ steps.pkg_version.outputs.nodejs }}"
             ```
           draft: false
-          prerelease: ${{ contains(steps.pkg_version.outputs.version, 'beta') || contains(steps.pkg_version.outputs.version, 'alpha') }}
+          # Mark each new release as GitHub's "Latest" so it tracks npm's
+          # `latest` dist-tag. GitHub refuses to flag a *prerelease* as
+          # Latest, so the newest release is published as a non-prerelease
+          # (the version string itself, e.g. 0.1.0-beta.11, still signals
+          # the beta line). Without this, betas were left as prereleases
+          # and the "Latest" badge stuck to an older release, drifting from
+          # npm.
+          prerelease: false
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
