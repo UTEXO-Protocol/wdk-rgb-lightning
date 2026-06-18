@@ -291,10 +291,6 @@ export class WalletAccountRgbLightning {
   getPayment(paymentHashHex: string, paymentType: 'sent' | 'received'): Promise<object>
 
   // RGB assets
-  issueAssetNia(request: object): Promise<object>
-  issueAssetUda(request: object): Promise<object>
-  issueAssetCfa(request: object): Promise<object>
-  issueAssetIfa(request: object): Promise<object>
   listAssets(filterAssetSchemas?: string[]): Promise<object>
   getAssetBalance(assetId: string): Promise<object>
   getAssetMetadata(assetId: string): Promise<object>
@@ -304,7 +300,6 @@ export class WalletAccountRgbLightning {
   createRgbInvoice(request: object): Promise<object>
   decodeRgbInvoice(invoice: string): Promise<object>
   sendRgbAsset(request: object): Promise<object>
-  inflate(request: object): Promise<object>
   getAssetMedia(digest: string): Promise<object>
   postAssetMedia(request: object): Promise<object>
 
