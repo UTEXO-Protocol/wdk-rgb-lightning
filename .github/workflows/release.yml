@@ -94,8 +94,13 @@ jobs:
           echo "bare=$(node -p "require('./package.json').peerDependencies['@utexo/rgb-lightning-node-bare']")" >> $GITHUB_OUTPUT
           echo "nodejs=$(node -p "require('./package.json').peerDependencies['@utexo/rgb-lightning-node-nodejs']")" >> $GITHUB_OUTPUT
 
+      # Create the GitHub Release for both trigger paths: the auto (RLN
+      # dispatch / workflow_dispatch) path AND the manual tag-push path.
+      # Previously this was gated on `auto == 'true'`, so a `v*` tag push
+      # published to npm but left no matching GitHub Release — the release
+      # had to be created by hand, which let npm and GitHub drift apart.
       - name: Create Release
-        if: steps.rln.outputs.auto == 'true'
+        if: steps.rln.outputs.auto == 'true' || github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.pkg_version.outputs.version }}
@@ -104,8 +109,6 @@ jobs:
             ## wdk-rgb-lightning ${{ steps.pkg_version.outputs.version }}
 
             WDK module for RGB Lightning — channels, invoices, payments, RGB-over-LN.
-
-            Built with RGB Lightning Node v${{ steps.rln.outputs.version }}
 
             ### Installation
             ```bash
