@@ -1,5 +1,7 @@
 # @utexo/wdk-rgb-lightning
 
+[![Built with WDK](./assets/built-with-wdk.png)](https://github.com/tetherto/wdk)
+
 WDK module for RGB-over-Lightning, built on
 [`rgb-lightning-node`][rgb-lightning-node] (RLN). It runs a full LDK +
 `rgb-lib` Lightning node behind WDK's wallet-manager/account contract and
