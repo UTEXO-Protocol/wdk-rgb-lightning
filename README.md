@@ -22,9 +22,9 @@ exclusive lock on a wallet directory, and the Lightning node derives a
 different wallet fingerprint (it signs in-process via VLS from a 32-byte
 entropy) than the on-chain module (standard BIP-32 from the full seed), so
 even a shared `dataDir` resolves to different `<fingerprint>/` subfolders.
-RLN can itself issue and hold RGB assets for its channels and invoices
-(see [issuance below](#account-api)); use `wdk-wallet-rgb` when you also
-need a standalone on-chain RGB wallet.
+RLN holds and transfers RGB assets for its channels and invoices. For RGB
+asset **issuance**, use [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], the
+on-chain RGB wallet module — issuance is not part of this module's API.
 
 > Status: pre-1.0 beta (`0.1.0-beta` line).
 
@@ -141,8 +141,8 @@ await account.sendPayment({ invoice: '<bolt11>' })
 await manager.dispose()
 ```
 
-A complete end-to-end example — LSP wiring, RGB asset issuance over
-Lightning, and a regtest stack via Docker Compose — lives in
+A complete end-to-end example — LSP wiring, RGB-over-Lightning transfers,
+and a regtest stack via Docker Compose — lives in
 [utexo-rgb-wdk-demo].
 
 ### Manager configuration
@@ -174,7 +174,6 @@ are async and forward to the active binding.
 | Invoices | `createInvoice(request)`, `createLightningInvoice(request)`, `decodeInvoice(invoice)`, `getInvoiceStatus(invoice)` |
 | HODL invoices | `createHodlInvoice({ paymentHash, ... })`, `cancelHodlInvoice(request)`, `claimHodlInvoice(request)` |
 | Payments | `sendPayment(request)`, `keysend(request)`, `listPayments()`, `getPayment(hash, type)` |
-| RGB issuance | `issueAssetNia/Uda/Cfa/Ifa(request)`, `inflate(request)` |
 | RGB assets | `listAssets(filter?)`, `getAssetBalance(id)`, `getAssetMetadata(id)`, `listTransfers(id?)`, `refreshTransfers(req)`, `failTransfers(req)` |
 | RGB invoices/transfers | `createRgbInvoice(request)`, `decodeRgbInvoice(invoice)`, `sendRgbAsset(request)`, `getAssetMedia(digest)`, `postAssetMedia(request)` |
 | BTC | `getBalance(skipSync?)`, `getBalanceDetails(skipSync?)`, `getAddress()`, `sendTransaction(request)`, `getTransactions(skipSync?)`, `listUnspents(skipSync?)`, `createUtxos(request)`, `estimateFee(blocks)` |
@@ -194,11 +193,11 @@ Notes:
   invoice) and dispatches to the right primitive. `options.token` is an RGB
   `asset_id` when present. Amounts are msats for LN flows and sats for
   on-chain flows.
-- RGB asset **issuance is available here** and operates on the Lightning
-  node's own `rgb-lib` wallet, so you can issue and immediately use assets
-  for channels and invoices. For a standalone on-chain RGB wallet, use
-  [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb] with its own `dataDir` — it
-  maintains a separate wallet and does not share these asset records.
+- **RGB asset issuance is not part of this module.** To issue RGB assets,
+  use [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], the on-chain RGB wallet
+  module. This module holds and transfers assets that already exist — in
+  channels, invoices, and on-chain — and keeps its own separate `rgb-lib`
+  wallet (give each module its own `dataDir`).
 - Atomic swaps (`makerInit` / `taker` / ...) are reachable on the binding
   but intentionally **not surfaced** on the WDK account.
 - `verify` and `signTransaction` throw `NotImplementedError` — the C-FFI
@@ -361,7 +360,7 @@ npm run test:coverage
 
 ### Integration / end-to-end
 
-End-to-end coverage (a real LDK node, RGB issuance, channels, payments,
+End-to-end coverage (a real LDK node, RGB assets, channels, payments,
 and a regtest stack via Docker Compose) lives in [utexo-rgb-wdk-demo]. To
 exercise a local build of this package instead of a published tag, check
 the demo out next to this repo so the relative paths resolve:
