@@ -128,6 +128,52 @@ export interface OpenChannelRequest {
 }
 
 // ───────────────────────────────────────────────────────────────────
+// RGB / payment vocabulary (mirrors rgb-lightning-node's C-FFI enums)
+// ───────────────────────────────────────────────────────────────────
+
+/**
+ * RLN payment-type discriminant for {@link WalletAccountRgbLightning.getPayment}.
+ * The C-FFI deserialises this into its `Outbound | InboundAutoClaim |
+ * InboundHodl` enum and errors on any other value (the pre-1.0 HTTP API's
+ * `sent`/`received` are gone).
+ */
+export type RgbPaymentType = 'Outbound' | 'InboundAutoClaim' | 'InboundHodl'
+
+/** RGB assignment discriminant accepted by RLN's `parse_assignment_kind`. */
+export type RgbAssignmentKind = 'Fungible' | 'NonFungible' | 'InflationRight' | 'ReplaceRight' | 'Any'
+
+export interface RgbSendRecipient {
+  /** Recipient id (blinded UTXO or witness) — from `decodeRgbInvoice`. */
+  recipient_id: string
+  assignment_kind: RgbAssignmentKind
+  assignment_amount?: number
+  /** Consignment transport endpoints — from `decodeRgbInvoice`. */
+  transport_endpoints: string[]
+  witness_data?: { amount_sat: number; blinding?: number }
+}
+
+/** Native `JsonSendRgbRequest` shape forwarded to RLN by `sendRgbAsset`. */
+export interface SendRgbAssetRequest {
+  donation: boolean
+  /** sat/vB. */
+  fee_rate: number
+  min_confirmations: number
+  recipient_groups: Array<{ asset_id: string; recipients: RgbSendRecipient[] }>
+}
+
+/** Native `JsonRgbInvoiceRequest` shape for `createRgbInvoice`. */
+export interface CreateRgbInvoiceRequest {
+  /** REQUIRED — RLN rejects the request on deserialise if omitted. */
+  min_confirmations: number
+  /** REQUIRED — true = witness (on-chain) receive, false = blinded. */
+  witness: boolean
+  asset_id?: string
+  assignment_kind?: RgbAssignmentKind
+  assignment_amount?: number
+  duration_seconds?: number
+}
+
+// ───────────────────────────────────────────────────────────────────
 // Config
 // ───────────────────────────────────────────────────────────────────
 
@@ -203,6 +249,8 @@ export class NodeRgbLightningBinding implements IRgbLightningBinding {
   shutdown(): void
   static healthcheck(): unknown
   static isInitialized(): boolean
+  static initialize(request: object): void
+  static shutdownGlobal(): void
 }
 
 export class BareRgbLightningBinding implements IRgbLightningBinding {
@@ -217,6 +265,10 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
   shutdown(): void
+  static healthcheck(): unknown
+  static isInitialized(): boolean
+  static initialize(request: object): void
+  static shutdownGlobal(): void
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -288,7 +340,7 @@ export class WalletAccountRgbLightning {
   sendPayment(request: object): Promise<object>
   keysend(request: object): Promise<object>
   listPayments(): Promise<object>
-  getPayment(paymentHashHex: string, paymentType: 'sent' | 'received'): Promise<object>
+  getPayment(paymentHashHex: string, paymentType: RgbPaymentType): Promise<object>
 
   // RGB assets
   listAssets(filterAssetSchemas?: string[]): Promise<object>
@@ -297,9 +349,9 @@ export class WalletAccountRgbLightning {
   listTransfers(assetId?: string): Promise<object>
   refreshTransfers(request: object): Promise<{ ok: true }>
   failTransfers(request: object): Promise<object>
-  createRgbInvoice(request: object): Promise<object>
+  createRgbInvoice(request: CreateRgbInvoiceRequest | object): Promise<object>
   decodeRgbInvoice(invoice: string): Promise<object>
-  sendRgbAsset(request: object): Promise<object>
+  sendRgbAsset(request: SendRgbAssetRequest | object): Promise<object>
   getAssetMedia(digest: string): Promise<object>
   postAssetMedia(request: object): Promise<object>
 
@@ -402,7 +454,12 @@ export interface LnurlPayDiscovery {
 export interface LspBridgeResult {
   lnInvoice: string
   rgbInvoice: string
-  mappingId: string
+  /**
+   * The LSP's bridge mapping id. The raw `LspClient` / helper paths return
+   * it as the LSP sends it (a number); the composed `UtexoLsp` flows coerce
+   * it to a string. Typed as the union to reflect both call paths.
+   */
+  mappingId: string | number
 }
 
 export class LspClient {
@@ -422,18 +479,20 @@ export class LspClient {
   }): Promise<LspBridgeResult>
   lightningReceive(params: {
     lnInvoice: string
-    rgb: { assetId: string; assignment?: unknown; durationSeconds?: number; minConfirmations?: number; witness?: boolean }
+    rgb: { assetId: string; assignment?: string; durationSeconds?: number; minConfirmations?: number; witness?: boolean }
     timeoutMs?: number
   }): Promise<LspBridgeResult>
 }
 
 export class LspError extends Error {
+  constructor(endpoint: string, status: number, body: string, cause?: unknown)
   endpoint: string
   status: number
   body: string
   errorBody: object | null
   errorCode: number | string | null
   errorTag: string | null
+  cause?: unknown
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -596,5 +655,6 @@ export class LspChannelTimeoutError extends Error {
 
 export class LspSettlementError extends Error {
   step: 'ln_invoice'
-  status: ReceiveStatus
+  /** Only the terminal-failure states ever reach this error. */
+  status: 'Failed' | 'Expired'
 }
