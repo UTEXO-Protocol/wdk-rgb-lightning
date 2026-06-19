@@ -636,10 +636,10 @@ export default class WalletAccountRgbLightning {
   // Payments — ✅ wired
   // ==========================================================================
 
-  /** @param {Object} request - JsonSendPaymentRequest (invoice, amount_msat, ...) */
+  /** @param {Object} request - JsonSendPaymentRequest (invoice, amt_msat?, asset_id?, ...) */
   async sendPayment (request) { return this._node.sendPayment(request) }
 
-  /** @param {Object} request - JsonKeysendRequest (dest_pubkey, amount_msat, asset_id, ...) */
+  /** @param {Object} request - JsonKeysendRequest (dest_pubkey, amt_msat, asset_id?, ...) */
   async keysend (request) { return this._node.keysend(request) }
 
   async listPayments () { return this._node.listPayments() }
@@ -692,13 +692,46 @@ export default class WalletAccountRgbLightning {
   /** @param {Object} request */
   async failTransfers (request) { return this._node.failTransfers(request) }
 
-  /** @param {Object} request - JsonRgbInvoiceRequest */
+  /**
+   * Create an RGB invoice. Forwarded verbatim to RLN's `rgbInvoice`
+   * (`JsonRgbInvoiceRequest`). REQUIRED fields — RLN rejects the request on
+   * deserialise if either is omitted:
+   *   - `min_confirmations` {number}
+   *   - `witness` {boolean}  true = witness (on-chain) receive, false = blinded
+   * Optional: `asset_id`, `assignment_kind`
+   * (`'Fungible'|'NonFungible'|'InflationRight'|'ReplaceRight'|'Any'`),
+   * `assignment_amount`, `duration_seconds`.
+   * @param {Object} request - JsonRgbInvoiceRequest (see above).
+   */
   async createRgbInvoice (request) { return this._node.rgbInvoice(request) }
 
   /** @param {string} invoice */
   async decodeRgbInvoice (invoice) { return this._node.decodeRgbInvoice(invoice) }
 
-  /** @param {Object} request - JsonSendAssetRequest */
+  /**
+   * Send an RGB asset. Forwarded verbatim to RLN's `sendRgb`
+   * (`JsonSendRgbRequest`):
+   *   {
+   *     donation: boolean,
+   *     fee_rate: number,            // sat/vB
+   *     min_confirmations: number,
+   *     recipient_groups: [{
+   *       asset_id: string,
+   *       recipients: [{
+   *         recipient_id: string,           // from decodeRgbInvoice
+   *         assignment_kind: 'Fungible' | 'NonFungible' | 'InflationRight' | 'ReplaceRight' | 'Any',
+   *         assignment_amount?: number,
+   *         transport_endpoints: string[],  // from decodeRgbInvoice
+   *         witness_data?: { amount_sat: number, blinding?: number }
+   *       }]
+   *     }]
+   *   }
+   * RLN rejects the old flat `{ recipient_id, amount, asset_id }` shape on
+   * deserialise. For a simple amount-based fungible send, prefer the generic
+   * `transfer({ recipient: <rgbInvoice>, amount, token })`, which decodes the
+   * invoice and assembles this request for you.
+   * @param {Object} request - JsonSendRgbRequest (see above).
+   */
   async sendRgbAsset (request) { return this._node.sendRgb(request) }
 
   /** @param {Object} request - JsonInflateRequest */
@@ -927,12 +960,53 @@ export default class WalletAccountRgbLightning {
         return { hash: r?.txid ?? '', fee }
       }
       case 'rgb-invoice': {
-        // RGB on-chain transfer: recipient IS the rgb invoice. Asset id
-        // is encoded in it; RLN parses it server-side.
-        const req = { recipient_id: recipient }
-        if (amount !== undefined && amount !== null) req.amount = Number(amount)
-        if (assetId) req.asset_id = assetId
+        // RGB send. The recipient IS the rgb invoice, which encodes the
+        // recipient_id, the asset, and — crucially — the receiver's
+        // consignment transport endpoints. RLN's `sendRgb` does NOT
+        // re-derive any of these: it requires a nested `recipient_groups`
+        // request with explicit `transport_endpoints` (the flat
+        // `{ recipient_id, amount, asset_id }` shape this used to build is
+        // rejected on deserialise). So decode the invoice and assemble the
+        // request from it, mirroring the working rgb-sdk-rn / wdk-wallet-rgb
+        // sends. transfer() assumes a Fungible assignment (the natural case
+        // for an amount-based transfer); non-fungible or multi-recipient
+        // sends should call sendRgbAsset() with a full SendRgbAssetRequest.
+        if (amount === undefined || amount === null) {
+          throw new Error('transfer(rgb): amount (asset units) is required')
+        }
+        const decoded = await this.decodeRgbInvoice(recipient)
+        const recipientId = decoded?.recipient_id
+        if (!recipientId) {
+          throw new Error('transfer(rgb): could not decode a recipient_id from the RGB invoice')
+        }
+        const contractId = assetId ?? decoded?.asset_id
+        if (!contractId) {
+          throw new Error('transfer(rgb): asset_id missing — pass options.token or use an invoice that encodes the asset')
+        }
+        const endpoints = (Array.isArray(decoded?.transport_endpoints) && decoded.transport_endpoints.length > 0)
+          ? decoded.transport_endpoints
+          : this._defaultTransportEndpoints()
+        if (endpoints.length === 0) {
+          throw new Error('transfer(rgb): the RGB invoice carries no transport endpoints and the wallet has no proxyEndpoint configured')
+        }
+        const feeRate = options.feeRate ?? await this._defaultFeeRate(6)
+        const req = {
+          donation: false,
+          fee_rate: Number(feeRate),
+          min_confirmations: 1,
+          recipient_groups: [{
+            asset_id: contractId,
+            recipients: [{
+              recipient_id: recipientId,
+              assignment_kind: 'Fungible',
+              assignment_amount: Number(amount),
+              transport_endpoints: endpoints
+            }]
+          }]
+        }
         const r = await this.sendRgbAsset(req)
+        // RLN's send response carries the txid; the on-chain fee for an RGB
+        // transfer isn't surfaced separately, so report 0 (unchanged).
         return { hash: r?.txid ?? '', fee: BigInt(0) }
       }
       default:
@@ -1062,6 +1136,20 @@ export default class WalletAccountRgbLightning {
     } catch (_e) {
       return DEFAULT_FEE_RATE_SAT_PER_VB
     }
+  }
+
+  /**
+   * Wallet's configured RGB consignment proxy as a single-element
+   * `transport_endpoints` list — the fallback `transfer()` uses for an RGB
+   * send when the decoded invoice carries no endpoints of its own (a
+   * well-formed invoice always does, so this is defensive). Returns `[]`
+   * when no `proxyEndpoint` was set at construction.
+   * @private
+   * @returns {string[]}
+   */
+  _defaultTransportEndpoints () {
+    const cfg = (this._binding && this._binding._config) || {}
+    return cfg.proxyEndpoint ? [cfg.proxyEndpoint] : []
   }
 
   // ==========================================================================
