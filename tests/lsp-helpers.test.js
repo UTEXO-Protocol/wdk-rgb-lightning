@@ -53,6 +53,19 @@ function makeLspClient (body) {
   return { client, fetch }
 }
 
+// A *real* LspClient (so it survives `asLspClient`'s `instanceof LspClient`
+// gate) whose bridge method is stubbed to return an EXACT raw response
+// object. This is the only way to feed the helper a shape the real
+// `camelCaseLspResponse` would never emit — e.g. snake_case-ONLY (no
+// camelCase synthesized alongside it), or a dual-keyed object whose
+// snake/camel values intentionally DIFFER — which is what actually
+// exercises the `res.lnInvoice ?? res.ln_invoice` fallback/precedence.
+function makeStubbedLspClient (method, raw) {
+  const client = new LspClient({ baseUrl: 'https://lsp.example', fetch: jest.fn() })
+  const spy = jest.spyOn(client, method).mockResolvedValue(raw)
+  return { client, spy }
+}
+
 describe('payLightningAddress', () => {
   it('throws when account is null or lacks sendPayment', async () => {
     await expect(payLightningAddress(null, 'a@host', 1000)).rejects.toThrow(TypeError)
@@ -117,6 +130,20 @@ describe('payLightningAddress', () => {
     expect(account.sendPayment).toHaveBeenCalledWith({ invoice: BOLT11, amt_msat: huge.toString() })
   })
 
+  it('coerces a bigint EXACTLY equal to MAX_SAFE_INTEGER to a Number (inclusive boundary)', async () => {
+    // toUint64 uses `v <= MAX_SAFE_INTEGER ? Number(v) : String(v)`. The
+    // boundary value itself must still become a Number. If the comparison
+    // were `<` (exclusive), MAX_SAFE_INTEGER would fall to the string arm
+    // and amt_msat would be '9007199254740991' instead of the number.
+    const boundary = BigInt(Number.MAX_SAFE_INTEGER)
+    const fetch = makeLnurlFetch({ maxSendable: (boundary + 1n).toString() })
+    const account = { sendPayment: jest.fn(async () => ({})) }
+    await payLightningAddress(account, 'maxsafe@host.example', boundary, { fetch })
+    const req = account.sendPayment.mock.calls[0][0]
+    expect(req.amt_msat).toBe(Number.MAX_SAFE_INTEGER)
+    expect(typeof req.amt_msat).toBe('number')
+  })
+
   it('passes through a numeric-string amount unchanged for amt_msat', async () => {
     const fetch = makeLnurlFetch()
     const account = { sendPayment: jest.fn(async () => ({})) }
@@ -152,8 +179,12 @@ describe('requestLspRgbDeposit', () => {
       .rejects.toThrow('rgb params required')
   })
 
-  it('uses a supplied lnInvoice and forwards it to lightningReceive (camelCase result)', async () => {
-    const { client, fetch } = makeLspClient({ lnInvoice: BOLT11, rgbInvoice: 'rgb:zzz', mappingId: 42 })
+  it('uses a supplied lnInvoice and forwards it to lightningReceive', async () => {
+    // Wire shape is snake_case in BOTH directions (the real utexo-lsp
+    // returns { ln_invoice, rgb_invoice, mapping_id }); the real LspClient
+    // synthesizes the camelCase the helper consumes. Body is asserted
+    // snake_case too.
+    const { client, fetch } = makeLspClient({ ln_invoice: BOLT11, rgb_invoice: 'rgb:zzz', mapping_id: 42 })
     const account = {}
     const out = await requestLspRgbDeposit(account, { lsp: client, lnInvoice: BOLT11, rgb })
 
@@ -163,14 +194,43 @@ describe('requestLspRgbDeposit', () => {
     expect(out).toEqual({ lnInvoice: BOLT11, rgbInvoice: 'rgb:zzz', mappingId: 42 })
   })
 
-  it('falls back to snake_case fields from the LSP response', async () => {
-    const { client } = makeLspClient({ ln_invoice: BOLT11, rgb_invoice: 'rgb:snake', mapping_id: 7 })
+  it('falls back to snake_case fields when the response is snake_case-ONLY', async () => {
+    // The REAL utexo-lsp returns snake_case JSON; the helper must read it
+    // even if (hypothetically) no camelCase alias is present. Feeding a
+    // snake-ONLY raw object forces the `?? res.ln_invoice` fallback arm to
+    // be the one taken — dropping those fallbacks makes every field
+    // undefined and this assertion fails.
+    const { client, spy } = makeStubbedLspClient('lightningReceive', {
+      ln_invoice: BOLT11,
+      rgb_invoice: 'rgb:snake',
+      mapping_id: 7
+    })
     const out = await requestLspRgbDeposit({}, { lsp: client, lnInvoice: BOLT11, rgb })
     expect(out).toEqual({ lnInvoice: BOLT11, rgbInvoice: 'rgb:snake', mappingId: 7 })
+    spy.mockRestore()
+  })
+
+  it('prefers camelCase over snake_case on a realistic dual-keyed response', async () => {
+    // The real LspClient.camelCaseLspResponse spreads the raw snake_case
+    // body AND adds camelCase aliases, so the helper sees BOTH keys. Pin
+    // the precedence: when they DIFFER, camelCase wins. Reordering the
+    // operands to `res.ln_invoice ?? res.lnInvoice` would pick the WRONG_*
+    // snake values and fail every assertion below.
+    const { client, spy } = makeStubbedLspClient('lightningReceive', {
+      ln_invoice: 'WRONG_LN',
+      rgb_invoice: 'WRONG_RGB',
+      mapping_id: -1,
+      lnInvoice: BOLT11,
+      rgbInvoice: 'rgb:right',
+      mappingId: 77
+    })
+    const out = await requestLspRgbDeposit({}, { lsp: client, lnInvoice: BOLT11, rgb })
+    expect(out).toEqual({ lnInvoice: BOLT11, rgbInvoice: 'rgb:right', mappingId: 77 })
+    spy.mockRestore()
   })
 
   it('mints an invoice via account.createInvoice when lnInvoice is omitted (string return)', async () => {
-    const { client, fetch } = makeLspClient({ lnInvoice: BOLT11, rgbInvoice: 'rgb:abc', mappingId: 1 })
+    const { client, fetch } = makeLspClient({ ln_invoice: BOLT11, rgb_invoice: 'rgb:abc', mapping_id: 1 })
     const account = { createInvoice: jest.fn(async () => BOLT11) }
     const lnInvoiceRequest = { amtMsat: 1000 }
 
@@ -181,12 +241,32 @@ describe('requestLspRgbDeposit', () => {
   })
 
   it('mints via account.lnInvoice when createInvoice is absent (object return with .invoice)', async () => {
-    const { client, fetch } = makeLspClient({ lnInvoice: BOLT11, rgbInvoice: 'rgb:abc', mappingId: 1 })
+    const { client, fetch } = makeLspClient({ ln_invoice: BOLT11, rgb_invoice: 'rgb:abc', mapping_id: 1 })
     const account = { lnInvoice: jest.fn(async () => ({ invoice: BOLT11 })) }
 
     await requestLspRgbDeposit(account, { lsp: client, lnInvoiceRequest: {}, rgb })
 
     expect(account.lnInvoice).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(fetch.mock.calls[0][1].body).ln_invoice).toBe(BOLT11)
+  })
+
+  it('prefers account.createInvoice over account.lnInvoice when both exist', async () => {
+    // pickInvoiceMinter must try createInvoice FIRST. With both present,
+    // swapping the precedence (checking lnInvoice first) would call the
+    // wrong minter — so we assert createInvoice ran and lnInvoice did not.
+    const { client, fetch } = makeLspClient({ ln_invoice: BOLT11, rgb_invoice: 'rgb:abc', mapping_id: 1 })
+    const account = {
+      createInvoice: jest.fn(async () => BOLT11),
+      lnInvoice: jest.fn(async () => ({ invoice: 'lnbcrt-from-lnInvoice' }))
+    }
+    const lnInvoiceRequest = { amtMsat: 1000 }
+
+    await requestLspRgbDeposit(account, { lsp: client, lnInvoiceRequest, rgb })
+
+    expect(account.createInvoice).toHaveBeenCalledWith(lnInvoiceRequest)
+    expect(account.lnInvoice).not.toHaveBeenCalled()
+    // The BOLT11 actually forwarded to the LSP must be createInvoice's,
+    // not lnInvoice's — guards against the wrong minter winning silently.
     expect(JSON.parse(fetch.mock.calls[0][1].body).ln_invoice).toBe(BOLT11)
   })
 
@@ -200,6 +280,28 @@ describe('requestLspRgbDeposit', () => {
   it('throws when the account minter returns no usable invoice', async () => {
     const { client } = makeLspClient({})
     const account = { createInvoice: jest.fn(async () => ({ noInvoiceHere: true })) }
+    await expect(requestLspRgbDeposit(account, { lsp: client, lnInvoiceRequest: {}, rgb }))
+      .rejects.toThrow('account invoice mint returned no invoice')
+  })
+
+  it('throws the clean mint error (not a TypeError) when the minter returns null', async () => {
+    // `invoice = typeof minted === 'string' ? minted : minted?.invoice`.
+    // The optional chain matters: if the guard were `minted.invoice`,
+    // a null return would throw "Cannot read properties of null". The
+    // helper must instead surface its own descriptive mint error. Pin
+    // that the optional-chaining branch produces undefined -> clean throw.
+    const { client } = makeLspClient({})
+    const account = { createInvoice: jest.fn(async () => null) }
+    await expect(requestLspRgbDeposit(account, { lsp: client, lnInvoiceRequest: {}, rgb }))
+      .rejects.toThrow('account invoice mint returned no invoice')
+  })
+
+  it('throws the clean mint error when the minter returns a number', async () => {
+    // A non-string, non-object primitive (number) also hits `minted?.invoice`
+    // -> undefined -> the descriptive throw. Differentiates a number from
+    // the `{ noInvoiceHere: true }` object case so both branches are pinned.
+    const { client } = makeLspClient({})
+    const account = { createInvoice: jest.fn(async () => 42) }
     await expect(requestLspRgbDeposit(account, { lsp: client, lnInvoiceRequest: {}, rgb }))
       .rejects.toThrow('account invoice mint returned no invoice')
   })
@@ -268,8 +370,9 @@ describe('payRgbViaLsp', () => {
       .rejects.toThrow('ln params required')
   })
 
-  it('issues the BOLT11 via onchainSend then pays it, returning the DTO (camelCase)', async () => {
-    const { client, fetch } = makeLspClient({ lnInvoice: BOLT11, rgbInvoice: 'rgb:out', mappingId: 11 })
+  it('issues the BOLT11 via onchainSend then pays it, returning the DTO', async () => {
+    // Real wire shape: snake_case response; client normalizes to camelCase.
+    const { client, fetch } = makeLspClient({ ln_invoice: BOLT11, rgb_invoice: 'rgb:out', mapping_id: 11 })
     const account = { sendPayment: jest.fn(async () => ({ payment_hash: 'ph2' })) }
 
     const out = await payRgbViaLsp(account, { lsp: client, rgbInvoice: 'rgb:in', ln })
@@ -286,18 +389,56 @@ describe('payRgbViaLsp', () => {
     })
   })
 
-  it('falls back to snake_case fields from the onchainSend response', async () => {
-    const { client } = makeLspClient({ ln_invoice: BOLT11, rgb_invoice: 'rgb:snk', mapping_id: 3 })
+  it('falls back to snake_case fields when onchainSend returns snake-ONLY', async () => {
+    // Snake-ONLY raw forces the `issued.ln_invoice` / `issued.rgb_invoice`
+    // / `issued.mapping_id` fallback arms to be the ones taken. Dropping
+    // them leaves lnInvoice undefined (so sendPayment gets undefined and
+    // the DTO mismatches), which this assertion catches.
+    const { client, spy } = makeStubbedLspClient('onchainSend', {
+      ln_invoice: BOLT11,
+      rgb_invoice: 'rgb:snk',
+      mapping_id: 3
+    })
     const account = { sendPayment: jest.fn(async () => ({ ok: true })) }
 
     const out = await payRgbViaLsp(account, { lsp: client, rgbInvoice: 'rgb:in', ln })
 
+    expect(account.sendPayment).toHaveBeenCalledWith({ invoice: BOLT11 })
     expect(out).toEqual({
       lnInvoice: BOLT11,
       rgbInvoice: 'rgb:snk',
       mappingId: 3,
       sendResult: { ok: true }
     })
+    spy.mockRestore()
+  })
+
+  it('prefers camelCase over snake_case on a dual-keyed onchainSend response', async () => {
+    // Realistic post-normalization response carries BOTH keys. Pin the
+    // precedence in `issued.lnInvoice ?? issued.ln_invoice`: reordering to
+    // `ln_invoice ?? lnInvoice` would pay WRONG_LN instead of BOLT11 and
+    // emit the WRONG_* fields in the DTO. Differing values prove which arm
+    // is taken; the sendPayment arg pins the exact invoice handed onward.
+    const { client, spy } = makeStubbedLspClient('onchainSend', {
+      ln_invoice: 'WRONG_LN',
+      rgb_invoice: 'WRONG_RGB',
+      mapping_id: -1,
+      lnInvoice: BOLT11,
+      rgbInvoice: 'rgb:right',
+      mappingId: 55
+    })
+    const account = { sendPayment: jest.fn(async () => ({ ok: true })) }
+
+    const out = await payRgbViaLsp(account, { lsp: client, rgbInvoice: 'rgb:in', ln })
+
+    expect(account.sendPayment).toHaveBeenCalledWith({ invoice: BOLT11 })
+    expect(out).toEqual({
+      lnInvoice: BOLT11,
+      rgbInvoice: 'rgb:right',
+      mappingId: 55,
+      sendResult: { ok: true }
+    })
+    spy.mockRestore()
   })
 
   it('drives a base-URL string + injected fetch through to sendPayment', async () => {

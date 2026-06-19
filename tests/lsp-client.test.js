@@ -100,6 +100,20 @@ describe('LspError', () => {
     // message stays the raw-body form since there was no `error` field.
     expect(err.message).toBe('LSP /x → HTTP 400: {"foo":"bar"}')
   })
+
+  it('does not rewrite the message when the structured `error` field is non-string', () => {
+    // Guard: `if (typeof parsed.error === 'string')`. A numeric `error`
+    // must leave the message as the raw-body form. Dropping that guard
+    // would interpolate `123` into the message, which this catches.
+    const body = JSON.stringify({ error: 123, code: 7, name: 'Weird' })
+    const err = new LspError('/x', 400, body)
+    expect(err.errorBody).toEqual({ error: 123, code: 7, name: 'Weird' })
+    // code/name are still parsed; only the message-rewrite is suppressed.
+    expect(err.errorCode).toBe(7)
+    expect(err.errorTag).toBe('Weird')
+    expect(err.message).toBe(`LSP /x → HTTP 400: ${body}`)
+    expect(err.message).not.toContain('→ HTTP 400: 123')
+  })
 })
 
 describe('LspClient constructor', () => {
@@ -234,6 +248,26 @@ describe('GET endpoint methods', () => {
     expect(url).toContain('amount=5000')
     expect(url).toContain('asset_id=rgb%3Aasset')
     expect(url).toContain('asset_amount=7')
+  })
+
+  it('lnurlCallback() URL-encodes a username with special characters', async () => {
+    // Source path uses encodeURIComponent(username). A username with a
+    // space must appear percent-encoded in the callback path; dropping
+    // the encoding would leave a raw space, which this assertion catches.
+    const { client, fetchImpl } = makeClient({ fetch: fetchReturning(makeRes({ json: { pr: 'lnbc' } })) })
+    await client.lnurlCallback('al ice', 1000)
+    const url = fetchImpl.mock.calls[0][0]
+    expect(url).toBe('https://lsp.utexo.io/pay/callback/al%20ice?amount=1000')
+    expect(url).not.toContain('callback/al ice')
+  })
+
+  it('lnurlCallback() String()-coerces a non-string assetId into the query', async () => {
+    // `params.set('asset_id', String(opts.assetId))` — a numeric assetId
+    // must be stringified, not dropped or passed as-is.
+    const { client, fetchImpl } = makeClient({ fetch: fetchReturning(makeRes({ json: {} })) })
+    await client.lnurlCallback('alice', 1000, { assetId: 12345 })
+    const url = fetchImpl.mock.calls[0][0]
+    expect(url).toContain('asset_id=12345')
   })
 
   it('lnurlCallback() requires a username', () => {
@@ -394,6 +428,33 @@ describe('POST endpoint methods', () => {
     })
   })
 
+  it('lightningReceive() coerces a truthy non-boolean witness to true', async () => {
+    // Source uses `witness: !!rgb.witness`. A truthy non-boolean (1) must
+    // become the boolean `true`. A `rgb.witness === true` mutation would
+    // turn 1 into false here, so assert the exact boolean.
+    const fetchImpl = fetchReturning(makeRes({ json: {} }))
+    const { client } = makeClient({ fetch: fetchImpl })
+    await client.lightningReceive({
+      lnInvoice: 'lnbc',
+      rgb: { assetId: 'rgb:a', witness: 1 }
+    })
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
+    expect(body.rgb_invoice.witness).toBe(true)
+  })
+
+  it('lightningReceive() coerces a falsy non-boolean witness to false', async () => {
+    // Symmetric guard: `!!0` is false and `0 === true` is also false, but
+    // pinning the exact boolean keeps the witness contract precise.
+    const fetchImpl = fetchReturning(makeRes({ json: {} }))
+    const { client } = makeClient({ fetch: fetchImpl })
+    await client.lightningReceive({
+      lnInvoice: 'lnbc',
+      rgb: { assetId: 'rgb:a', witness: 0 }
+    })
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
+    expect(body.rgb_invoice.witness).toBe(false)
+  })
+
   it('lightningReceive() validates lnInvoice and rgb params', async () => {
     const { client } = makeClient()
     await expect(client.lightningReceive({})).rejects.toThrow(/lnInvoice required/)
@@ -435,6 +496,21 @@ describe('_req error and edge handling', () => {
     await expect(client.health()).rejects.toThrow(/response too large/)
   })
 
+  it('accepts a response of exactly the 1 MiB cap (boundary is > not >=)', async () => {
+    // Build valid JSON whose total length is EXACTLY MAX_RESPONSE_BYTES.
+    // `text.length > MAX_RESPONSE_BYTES` must be false here, so the body is
+    // parsed and returned. A `>=` mutation would reject this exact-size
+    // body, which this test catches.
+    const MAX = 1 << 20
+    const wrapper = '{"a":"' + '"}' // {"a":"...." }
+    const pad = 'b'.repeat(MAX - wrapper.length)
+    const atLimit = '{"a":"' + pad + '"}'
+    expect(atLimit.length).toBe(MAX)
+    const { client } = makeClient({ fetch: fetchReturning(makeRes({ ok: true, status: 200, text: atLimit })) })
+    const out = await client.health()
+    expect(out).toEqual({ a: pad })
+  })
+
   it('wraps a transport-level fetch rejection in an LspError with status 0', async () => {
     const cause = new Error('ECONNRESET')
     const fetchImpl = jest.fn(async () => { throw cause })
@@ -444,10 +520,29 @@ describe('_req error and edge handling', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
-  it('honours a per-call timeoutMs override (no throw, request still issued)', async () => {
-    const { client, fetchImpl } = makeClient({ fetch: fetchReturning(makeRes({ json: {} })) })
+  it('honours a per-call timeoutMs override (resolves the override, not the constructor default)', async () => {
+    // Constructor default is 15000; the per-call override is 2000. Assert
+    // the resolved call timeout is exactly 2000 so a mutation that ignores
+    // the override (callTimeoutMs = this._timeoutMs) is caught.
+    const { client, fetchImpl } = makeClient({ fetch: fetchReturning(makeRes({ json: {} })), timeoutMs: 15000 })
+    const sigSpy = jest.spyOn(client, '_timeoutSignal')
     await client.getInfo({ timeoutMs: 2000 })
     expect(fetchImpl.mock.calls[0][1].signal).toBeDefined()
+    // _req computes callTimeoutMs then passes it to _timeoutSignal.
+    expect(sigSpy).toHaveBeenCalledWith(2000)
+    expect(sigSpy).not.toHaveBeenCalledWith(15000)
+    sigSpy.mockRestore()
+  })
+
+  it('falls back to the constructor timeout when no per-call override is given', async () => {
+    // The other arm of the ternary: with no opts.timeoutMs, _timeoutSignal
+    // must receive the constructor value (5000), proving the override
+    // branch is genuinely conditional and not hard-wired.
+    const { client } = makeClient({ fetch: fetchReturning(makeRes({ json: {} })), timeoutMs: 5000 })
+    const sigSpy = jest.spyOn(client, '_timeoutSignal')
+    await client.getInfo()
+    expect(sigSpy).toHaveBeenCalledWith(5000)
+    sigSpy.mockRestore()
   })
 })
 
@@ -477,6 +572,37 @@ describe('_req retry behaviour', () => {
     await expect(client.health()).rejects.toMatchObject({ status: 502 })
     // original + 2 retries = 3 calls.
     expect(fetchImpl).toHaveBeenCalledTimes(3)
+  })
+
+  it('waits the exact exponential backoff (250ms, 500ms) between retryable 503s', async () => {
+    // AbortSignal.timeout (used by _timeoutSignal) does not schedule a JS
+    // setTimeout, so every setTimeout we observe here is a backoff wait.
+    // We assert the precise delays so a constant-backoff mutation
+    // (RETRY_BASE_MS * 2^attempt -> RETRY_BASE_MS) is caught: attempt 0
+    // must wait 250ms and attempt 1 must wait 500ms, not 250/250.
+    expect(typeof AbortSignal.timeout).toBe('function')
+    const delays = []
+    const realSetTimeout = global.setTimeout
+    const stSpy = jest.spyOn(global, 'setTimeout').mockImplementation((cb, ms, ...rest) => {
+      delays.push(ms)
+      // Fire the backoff callback immediately so the test does not actually
+      // sleep; we only care about the requested delay value.
+      return realSetTimeout(cb, 0, ...rest)
+    })
+    try {
+      const fetchImpl = jest.fn()
+        .mockResolvedValueOnce(makeRes({ ok: false, status: 503, text: 'unavailable' }))
+        .mockResolvedValueOnce(makeRes({ ok: false, status: 503, text: 'unavailable' }))
+        .mockResolvedValueOnce(makeRes({ json: { status: 'ok' } }))
+      const { client } = makeClient({ fetch: fetchImpl, maxRetries: 3 })
+      const out = await client.health()
+      expect(out).toEqual({ status: 'ok' })
+      expect(fetchImpl).toHaveBeenCalledTimes(3)
+      // Exactly two backoff waits, doubling each time.
+      expect(delays).toEqual([250, 500])
+    } finally {
+      stSpy.mockRestore()
+    }
   })
 
   it('does not retry a non-retryable status (e.g. 404)', async () => {
@@ -522,6 +648,24 @@ describe('numeric coercion edge cases (via public API)', () => {
     await client.onchainSend({ rgbInvoice: 'rgb:x', ln: { amtMsat: big } })
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
     expect(body.lninvoice.amt_msat).toBe(big.toString())
+  })
+
+  it('emits a bigint of exactly MAX_SAFE_INTEGER as a JSON number, not a string', async () => {
+    // The boundary is `v <= MAX_SAFE_INTEGER ? Number(v) : v.toString()`.
+    // At exactly MAX_SAFE_INTEGER the `<=` keeps it on the number path.
+    // A `<` mutation would push it onto the string path, so assert the
+    // serialized value is the bare number (no quotes) AND a JS number.
+    const fetchImpl = fetchReturning(makeRes({ json: {} }))
+    const { client } = makeClient({ fetch: fetchImpl })
+    const boundary = BigInt(Number.MAX_SAFE_INTEGER) // 9007199254740991n
+    await client.onchainSend({ rgbInvoice: 'rgb:x', ln: { amtMsat: boundary } })
+    const rawBody = fetchImpl.mock.calls[0][1].body
+    // Number path -> unquoted in the serialized JSON.
+    expect(rawBody).toContain('"amt_msat":9007199254740991')
+    expect(rawBody).not.toContain('"amt_msat":"9007199254740991"')
+    const body = JSON.parse(rawBody)
+    expect(body.lninvoice.amt_msat).toBe(Number.MAX_SAFE_INTEGER)
+    expect(typeof body.lninvoice.amt_msat).toBe('number')
   })
 
   it('accepts a numeric-string amount in lnurlCallback', async () => {

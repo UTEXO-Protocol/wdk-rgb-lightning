@@ -12,10 +12,39 @@
 // node-binding-config.test.js and are not re-tested here.
 
 import { jest } from '@jest/globals'
+import rln from '@utexo/rgb-lightning-node-nodejs'
 import { NodeRgbLightningBinding } from '../src/node-binding.js'
 
 function makeBinding (overrides = {}) {
   return new NodeRgbLightningBinding({ network: 'regtest', dataDir: '/d', ...overrides })
+}
+
+// Real RLN AsyncOrderNewResponse shape (snake_case) — see
+// utexo-rgb-wdk-demo node-demo LnExt.ts getApayNew + testCases t113.
+// `apayNew` must passthrough this exact object reference unchanged.
+function realAsyncOrderNewResponse () {
+  return {
+    request_id: 'req-7f3a',
+    host_node_id: '02hostid',
+    accepted_through_index: 4,
+    order_id: 'order-9c21',
+    status: 'pending',
+    next_index_expected: 5,
+    unused_hashes: ['aa11', 'bb22'],
+    refill_batch_size: 16,
+    first_hash_index: 0
+  }
+}
+
+// Real signer bootstrap payload — see LnExt.ts getBootstrap /
+// binding-interface.js ('node_id, xpubs, master_fp'). NOT `{ booted }`.
+function realBootstrapPayload () {
+  return {
+    node_id: '03beef',
+    account_xpub_vanilla: 'tpubVanilla',
+    account_xpub_colored: 'tpubColored',
+    master_fingerprint: 'a1b2c3d4'
+  }
 }
 
 function fakeNode () {
@@ -24,14 +53,14 @@ function fakeNode () {
     unlockWithNativeExternalSigner: jest.fn(),
     vssClearFence: jest.fn(),
     vssBackup: jest.fn(() => ({ version: 7 })),
-    apayNew: jest.fn(() => ({ order: 'x' })),
+    apayNew: jest.fn(() => realAsyncOrderNewResponse()),
     shutdown: jest.fn()
   }
 }
 
 function fakeSigner () {
   return {
-    bootstrap: jest.fn(() => ({ booted: true })),
+    bootstrap: jest.fn(() => realBootstrapPayload()),
     destroy: jest.fn()
   }
 }
@@ -76,6 +105,37 @@ describe('attachExternalSigner', () => {
     expect(b._seedHex).toBe('seed-a')
   })
 
+  // Kills the mutant that hardcodes NativeExternalSigner.create(seedHex,
+  // 'mainnet', false): asserts the seed, the CONFIGURED network ('regtest')
+  // and the permissive-policy `?? true` DEFAULT are passed through verbatim.
+  it('passes the seed, configured network and permissive-policy default to NativeExternalSigner.create', () => {
+    const created = { bootstrap: jest.fn(), destroy: jest.fn() }
+    const spy = jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(created)
+    try {
+      const b = makeBinding()
+      b.attachExternalSigner('seed-a')
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(spy).toHaveBeenCalledWith('seed-a', 'regtest', true)
+      expect(b._signer).toBe(created)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  // Differentiates the `permissiveSignerPolicy ?? true` default from an
+  // explicit override: an explicit `false` must reach create as the 3rd arg.
+  it('forwards an explicit permissiveSignerPolicy=false instead of the default', () => {
+    const spy = jest.spyOn(rln.NativeExternalSigner, 'create')
+      .mockReturnValue({ bootstrap: jest.fn(), destroy: jest.fn() })
+    try {
+      const b = makeBinding({ permissiveSignerPolicy: false })
+      b.attachExternalSigner('seed-a')
+      expect(spy).toHaveBeenCalledWith('seed-a', 'regtest', false)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('is an idempotent no-op when the same seed is already attached', () => {
     const b = makeBinding()
     b.attachExternalSigner('seed-a')
@@ -88,6 +148,22 @@ describe('attachExternalSigner', () => {
     const b = makeBinding()
     b.attachExternalSigner('seed-a')
     expect(() => b.attachExternalSigner('seed-b')).toThrow('a different signer is already attached')
+  })
+
+  // Kills the mutant that drops the `this._seedHex &&` short-circuit
+  // (`if (this._seedHex !== seedHex)`). When a signer is attached
+  // out-of-band with NO _seedHex recorded, re-attaching must return
+  // silently (the falsy guard wins). Dropping the short-circuit would
+  // make `undefined !== 'seed-x'` true and wrongly throw.
+  it('returns silently when a signer is attached but _seedHex is falsy', () => {
+    const b = makeBinding()
+    const preexisting = fakeSigner()
+    b._signer = preexisting
+    expect(b._seedHex).toBeUndefined()
+    expect(() => b.attachExternalSigner('seed-x')).not.toThrow()
+    // No new signer created and the seed is NOT recorded by the no-op path.
+    expect(b._signer).toBe(preexisting)
+    expect(b._seedHex).toBeUndefined()
   })
 })
 
@@ -143,6 +219,35 @@ describe('unlock', () => {
     expect(node.initWithNativeExternalSigner).toHaveBeenCalledTimes(1)
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(2)
   })
+
+  // Exercises the false arm of `e && e.message ? e.message : e`: a thrown
+  // string has no `.message`, so the message is `String(e)` itself. A
+  // thrown 'Conflict' string must still be swallowed via includes('Conflict').
+  it('swallows a thrown string containing Conflict (no .message) and proceeds', () => {
+    const b = makeBinding()
+    const node = fakeNode()
+    // eslint-disable-next-line no-throw-literal
+    node.initWithNativeExternalSigner.mockImplementation(() => { throw 'Conflict: already initialized' })
+    b._node = node
+    b._signer = fakeSigner()
+    expect(() => b.unlock({})).not.toThrow()
+    expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
+    expect(b._sdkInitDone).toBe(true)
+  })
+
+  // Counterpart: a thrown string WITHOUT 'Conflict' (still no .message)
+  // must be rethrown and must not reach unlock.
+  it('rethrows a thrown string without Conflict (no .message) and does not unlock', () => {
+    const b = makeBinding()
+    const node = fakeNode()
+    // eslint-disable-next-line no-throw-literal
+    node.initWithNativeExternalSigner.mockImplementation(() => { throw 'plain boom' })
+    b._node = node
+    b._signer = fakeSigner()
+    expect(() => b.unlock({})).toThrow('plain boom')
+    expect(node.unlockWithNativeExternalSigner).not.toHaveBeenCalled()
+    expect(b._sdkInitDone).toBe(false)
+  })
 })
 
 describe('bootstrap', () => {
@@ -151,11 +256,23 @@ describe('bootstrap', () => {
     expect(() => b.bootstrap()).toThrow('attachExternalSigner')
   })
 
-  it('delegates to signer.bootstrap and returns its result', () => {
+  // Kills the mutant that discards the signer's payload and returns a
+  // hardcoded object: asserts the EXACT real bootstrap payload reference
+  // (node_id / xpubs / master_fingerprint) is returned unchanged.
+  it('returns the signer bootstrap payload unchanged (same reference)', () => {
     const b = makeBinding()
     const signer = fakeSigner()
+    const payload = realBootstrapPayload()
+    signer.bootstrap.mockReturnValue(payload)
     b._signer = signer
-    expect(b.bootstrap()).toEqual({ booted: true })
+    const result = b.bootstrap()
+    expect(result).toBe(payload)
+    expect(result).toEqual({
+      node_id: '03beef',
+      account_xpub_vanilla: 'tpubVanilla',
+      account_xpub_colored: 'tpubColored',
+      master_fingerprint: 'a1b2c3d4'
+    })
     expect(signer.bootstrap).toHaveBeenCalledTimes(1)
   })
 })
@@ -198,6 +315,18 @@ describe('vssBackup', () => {
     expect(b._lastVssVersion).toBeNull()
   })
 
+  // Covers the falsy-`r` arm of `if (r && typeof r.version === 'number')`:
+  // a null node result must short-circuit on `r &&` (no version read), leave
+  // _lastVssVersion untouched, and be returned verbatim.
+  it('returns null and leaves _lastVssVersion untouched when the node returns null', () => {
+    const b = makeBinding()
+    const node = fakeNode()
+    node.vssBackup.mockReturnValue(null)
+    b._node = node
+    expect(b.vssBackup()).toBeNull()
+    expect(b._lastVssVersion).toBeNull()
+  })
+
   it('throws via the node getter when no node has been created', () => {
     const b = makeBinding()
     expect(() => b.vssBackup()).toThrow('SdkNode not created')
@@ -205,11 +334,29 @@ describe('vssBackup', () => {
 })
 
 describe('apayNew', () => {
-  it('ensures the node then forwards the host node id', () => {
+  // Kills the mutant that ignores the node result and returns a hardcoded
+  // object: asserts the EXACT real AsyncOrderNewResponse reference (with
+  // request_id / order_id / status / unused_hashes ...) is passed through
+  // unchanged, plus the host node id is forwarded.
+  it('forwards the host node id and returns the node AsyncOrderNewResponse unchanged', () => {
     const b = makeBinding()
     const node = fakeNode()
+    const resp = realAsyncOrderNewResponse()
+    node.apayNew.mockReturnValue(resp)
     b._node = node
-    expect(b.apayNew('02hostid')).toEqual({ order: 'x' })
+    const result = b.apayNew('02hostid')
+    expect(result).toBe(resp)
+    expect(result).toEqual({
+      request_id: 'req-7f3a',
+      host_node_id: '02hostid',
+      accepted_through_index: 4,
+      order_id: 'order-9c21',
+      status: 'pending',
+      next_index_expected: 5,
+      unused_hashes: ['aa11', 'bb22'],
+      refill_batch_size: 16,
+      first_hash_index: 0
+    })
     expect(node.apayNew).toHaveBeenCalledWith('02hostid')
   })
 

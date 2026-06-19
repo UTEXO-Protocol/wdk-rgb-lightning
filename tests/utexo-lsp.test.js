@@ -240,6 +240,43 @@ describe('waitForChannel', () => {
     await expect(lsp.waitForChannel('wanted', { timeoutMs: 5, pollIntervalMs: 1 }))
       .rejects.toBeInstanceOf(LspChannelTimeoutError)
   })
+
+  it("reports the no-match progress message ('RGB usable: no') when nothing matches", async () => {
+    // Channel count is reported and the match flag is 'no' (not 'yes') for an
+    // asset that does not match. Pins the false arm of the onProgress ternary.
+    const account = makeAccount({ listChannels: jest.fn(async () => [{ assetId: 'other', isUsable: true }, { assetId: 'x' }]) })
+    const lsp = makeLsp(account)
+    const onProgress = jest.fn()
+    await expect(lsp.waitForChannel('wanted', { timeoutMs: 5, pollIntervalMs: 1, onProgress }))
+      .rejects.toBeInstanceOf(LspChannelTimeoutError)
+    expect(onProgress).toHaveBeenCalledWith('channels: 2 — RGB usable: no')
+    expect(onProgress).not.toHaveBeenCalledWith(expect.stringContaining('usable: yes'))
+  })
+
+  it('treats isUsable:false as NOT usable even when ready is true (nullish-coalescing precedence)', async () => {
+    // `isUsable ?? ready`: false is NOT nullish, so the explicit false wins and
+    // `ready:true` must NOT rescue the channel. If `??` were `||`, ready:true
+    // would (wrongly) make it usable and the wait would resolve instead of
+    // timing out.
+    const channel = { assetId: 'wanted', isUsable: false, ready: true, channelId: 'c-false' }
+    const account = makeAccount({ listChannels: jest.fn(async () => [channel]) })
+    const lsp = makeLsp(account)
+    await expect(lsp.waitForChannel('wanted', { timeoutMs: 5, pollIntervalMs: 1 }))
+      .rejects.toBeInstanceOf(LspChannelTimeoutError)
+  })
+
+  it('reads the localBalanceMsat (camelCase) middle rung and defaults inbound to 0', async () => {
+    // _outboundMsat: outboundBalanceMsat is absent, so the camelCase
+    // localBalanceMsat fallback rung supplies the value; inbound is absent so
+    // the `?? 0` default applies.
+    const channel = { assetId: 'wanted', isUsable: true, channelId: 'c-local', localBalanceMsat: 4242 }
+    const account = makeAccount({ listChannels: jest.fn(async () => [channel]) })
+    const lsp = makeLsp(account)
+    const info = await lsp.waitForChannel('wanted', { timeoutMs: 1000 })
+    expect(info.outboundBalanceMsat).toBe(4242)
+    expect(info.inboundBalanceMsat).toBe(0)
+    expect(info.capacitySat).toBe(0)
+  })
 })
 
 // ── receiveAsset ───────────────────────────────────────────────────────────
@@ -263,11 +300,63 @@ describe('receiveAsset', () => {
       assetId: 'assetX',
       assetAmount: 5
     })
+    // No measurable elapsed time in a fast unit test, so the remaining
+    // lifetime equals the full expiry. Pins the exact forwarded value so a
+    // sign flip / doubling / drop of the elapsed-subtraction is caught even
+    // before the elapsed-aware tests below.
     expect(lsp.http.lightningReceive).toHaveBeenCalledWith({
       lnInvoice: 'lnbcrt-mine',
-      rgb: { assetId: 'assetX', durationSeconds: expect.any(Number) }
+      rgb: { assetId: 'assetX', durationSeconds: 600 }
     })
     expect(out).toEqual({ lnInvoice: 'lnbcrt-mine', rgbInvoice: 'rgb:abc', mappingId: '1' })
+  })
+
+  it('forwards the LN invoice REMAINING lifetime (expiry minus elapsed) as durationSeconds', async () => {
+    // Drive Date.now() deterministically: the source reads it once before
+    // createLightningInvoice (createdAtMs) and once after (to derive
+    // elapsedSeconds). We make invoice creation "take" 7000ms of wall clock
+    // so elapsedSeconds === 7, and durationSeconds === expiry - 7.
+    const nowSpy = jest.spyOn(Date, 'now')
+    nowSpy.mockReturnValueOnce(1_000_000) // createdAtMs
+    const account = makeAccount({
+      createLightningInvoice: jest.fn(async () => {
+        nowSpy.mockReturnValue(1_007_000) // +7000ms elapsed during creation
+        return { invoice: 'lnbcrt-mine' }
+      })
+    })
+    const lsp = makeLsp(account)
+    try {
+      await lsp.receiveAsset({ assetId: 'assetX', expirySeconds: 600 })
+    } finally {
+      nowSpy.mockRestore()
+    }
+    expect(lsp.http.lightningReceive).toHaveBeenCalledWith({
+      lnInvoice: 'lnbcrt-mine',
+      rgb: { assetId: 'assetX', durationSeconds: 593 } // 600 - 7, NOT 600 and NOT 607
+    })
+  })
+
+  it('floors durationSeconds at 1 when invoice creation outlasts the expiry', async () => {
+    // elapsedSeconds (50) exceeds expiry (10): expiry - elapsed = -40, so the
+    // Math.max(1, …) floor must clamp to exactly 1.
+    const nowSpy = jest.spyOn(Date, 'now')
+    nowSpy.mockReturnValueOnce(2_000_000) // createdAtMs
+    const account = makeAccount({
+      createLightningInvoice: jest.fn(async () => {
+        nowSpy.mockReturnValue(2_050_000) // +50_000ms elapsed
+        return { invoice: 'lnbcrt-slow' }
+      })
+    })
+    const lsp = makeLsp(account)
+    try {
+      await lsp.receiveAsset({ assetId: 'assetX', expirySeconds: 10 })
+    } finally {
+      nowSpy.mockRestore()
+    }
+    expect(lsp.http.lightningReceive).toHaveBeenCalledWith({
+      lnInvoice: 'lnbcrt-slow',
+      rgb: { assetId: 'assetX', durationSeconds: 1 }
+    })
   })
 
   it('omits amountMsat for an amountless invoice and defaults expiry to 3600', async () => {
@@ -316,6 +405,26 @@ describe('awaitReceiveSettlement', () => {
     expect(err.step).toBe('ln_invoice')
   })
 
+  it('keeps polling through Pending and settles on a later Succeeded (multi-iteration)', async () => {
+    const getInvoiceStatus = jest.fn()
+      .mockResolvedValueOnce({ status: 'Pending' })
+      .mockResolvedValueOnce({ status: 'Pending' })
+      .mockResolvedValueOnce({ status: 'Succeeded' })
+    const account = makeAccount({ getInvoiceStatus })
+    const lsp = makeLsp(account)
+    const onProgress = jest.fn()
+    await expect(lsp.awaitReceiveSettlement('ln', { timeoutMs: 1000, pollIntervalMs: 1, onProgress }))
+      .resolves.toBe('settled')
+    // Three polls: Pending, Pending, then Succeeded — proves the loop iterates
+    // across the sleep instead of resolving on the first read.
+    expect(getInvoiceStatus).toHaveBeenCalledTimes(3)
+    expect(account.sync).toHaveBeenCalledTimes(3)
+    expect(onProgress).toHaveBeenNthCalledWith(1, 'Pending')
+    expect(onProgress).toHaveBeenNthCalledWith(2, 'Pending')
+    expect(onProgress).toHaveBeenNthCalledWith(3, 'Succeeded')
+    expect(onProgress).not.toHaveBeenCalledWith('timeout')
+  })
+
   it('throws LspSettlementError on an Expired status', async () => {
     const account = makeAccount({ getInvoiceStatus: jest.fn(async () => ({ status: 'Expired' })) })
     const lsp = makeLsp(account)
@@ -358,7 +467,12 @@ describe('waitForOutboundLiquidity', () => {
     const channel = { peer_pubkey: PEER.peerPubkey, is_usable: true, outbound_balance_msat: 9000 }
     const account = makeAccount({ listChannels: jest.fn(async () => [channel]) })
     const lsp = makeLsp(account)
-    await expect(lsp.waitForOutboundLiquidity(1, { timeoutMs: 1000 })).resolves.toBeUndefined()
+    const onProgress = jest.fn()
+    await expect(lsp.waitForOutboundLiquidity(1, { timeoutMs: 1000, onProgress })).resolves.toBeUndefined()
+    // Resolution on the FIRST poll (not a timeout): proves the snake_case
+    // channel was selected and its outbound (9000) was read, meeting need=1.
+    expect(onProgress).toHaveBeenCalledTimes(1)
+    expect(onProgress).toHaveBeenCalledWith('outbound: 9000 msat (need 1)')
   })
 
   it('keeps polling and returns (without throwing) when liquidity never arrives', async () => {
@@ -366,6 +480,33 @@ describe('waitForOutboundLiquidity', () => {
     const lsp = makeLsp(account)
     await expect(lsp.waitForOutboundLiquidity(10000, { timeoutMs: 5, pollIntervalMs: 1 }))
       .resolves.toBeUndefined()
+  })
+
+  it('IGNORES a peer-matching channel that is not usable (the is_usable conjunct)', async () => {
+    // Right peer, ample outbound, but is_usable=false: the AND-guard must
+    // reject it so no channel is selected and outbound reads 0 (need 5000 ->
+    // never met). If the is_usable conjunct were dropped, this channel would
+    // be selected and onProgress would report 9999 msat. We assert the EXACT
+    // reported outbound to pin the distinct outcome.
+    const channel = { peerPubkey: PEER.peerPubkey, isUsable: false, outboundBalanceMsat: 9999 }
+    const account = makeAccount({ listChannels: jest.fn(async () => [channel]) })
+    const lsp = makeLsp(account)
+    const onProgress = jest.fn()
+    await lsp.waitForOutboundLiquidity(5000, { timeoutMs: 5, pollIntervalMs: 1, onProgress })
+    expect(onProgress).toHaveBeenCalledWith('outbound: 0 msat (need 5000)')
+    expect(onProgress).not.toHaveBeenCalledWith(expect.stringContaining('9999'))
+  })
+
+  it('IGNORES a usable channel on the WRONG peer (the peerPubkey conjunct)', async () => {
+    // Usable, ample outbound, but a different peer: must not satisfy the
+    // liquidity wait. Pins the peerPubkey side of the AND.
+    const channel = { peerPubkey: '03' + 'f'.repeat(64), isUsable: true, outboundBalanceMsat: 9999 }
+    const account = makeAccount({ listChannels: jest.fn(async () => [channel]) })
+    const lsp = makeLsp(account)
+    const onProgress = jest.fn()
+    await lsp.waitForOutboundLiquidity(5000, { timeoutMs: 5, pollIntervalMs: 1, onProgress })
+    expect(onProgress).toHaveBeenCalledWith('outbound: 0 msat (need 5000)')
+    expect(onProgress).not.toHaveBeenCalledWith(expect.stringContaining('9999'))
   })
 
   it('aborts on an already-aborted signal', async () => {
@@ -551,6 +692,29 @@ describe('claimPendingPayments', () => {
     const lsp = makeLsp(account)
     await lsp.claimPendingPayments()
     expect(account.claimHodlInvoice).toHaveBeenCalledWith({ payment_hash: 'h1', payment_preimage: 'img-preimage' })
+  })
+
+  it('reads a snake_case-only payment_preimage (camel paymentPreimage absent)', async () => {
+    // First rung `paymentPreimage` is undefined, so the `_raw` snake fallback
+    // must supply `payment_preimage`. payment_hash also via snake fallback.
+    const payments = [{ status: 'CLAIMING', payment_hash: 'snakeH', payment_preimage: 'snakeP' }]
+    const account = makeAccount({ listPayments: jest.fn(async () => payments) })
+    const lsp = makeLsp(account)
+    const results = await lsp.claimPendingPayments()
+    expect(account.claimHodlInvoice).toHaveBeenCalledWith({ payment_hash: 'snakeH', payment_preimage: 'snakeP' })
+    expect(results).toEqual([{ paymentHash: 'snakeH', claimed: true }])
+  })
+
+  it("defaults the preimage to '' when no preimage key is present", async () => {
+    // No paymentPreimage / payment_preimage / paymentImage at all: the final
+    // `?? ''` default must produce an empty-string preimage (still attempts
+    // the claim with the hash). Pins the terminal default of the chain.
+    const payments = [{ status: 'CLAIMABLE', paymentHash: 'noPreimage' }]
+    const account = makeAccount({ listPayments: jest.fn(async () => payments) })
+    const lsp = makeLsp(account)
+    const results = await lsp.claimPendingPayments()
+    expect(account.claimHodlInvoice).toHaveBeenCalledWith({ payment_hash: 'noPreimage', payment_preimage: '' })
+    expect(results).toEqual([{ paymentHash: 'noPreimage', claimed: true }])
   })
 
   it('records a failed claim with its error message and keeps going', async () => {

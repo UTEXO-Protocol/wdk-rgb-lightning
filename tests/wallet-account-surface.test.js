@@ -19,6 +19,8 @@ import WalletAccountRgbLightning, {
   PENDING_ADDRESS
 } from '../src/wallet-account-rgb-lightning.js'
 import { UnlockError, ApayError, NotImplementedError } from '../src/errors.js'
+import { LspClient } from '../src/lsp-client.js'
+import { UtexoLsp } from '../src/utexo-lsp.js'
 
 // Build a fake RLN node whose methods are jest.fn returning canned
 // values. Every method the account forwards to is present so we can
@@ -128,10 +130,20 @@ describe('lifecycle', () => {
     expect(err.code).toBe('UNLOCK_FAILED')
   })
 
-  it('getBootstrap returns the binding bootstrap dictionary', async () => {
-    const boot = { node_id: 'bb', account_xpubs: [] }
+  it('getBootstrap returns the binding bootstrap dictionary verbatim', async () => {
+    // Real bootstrap dict (external-signer): node_id + per-keychain xpubs +
+    // master_fingerprint. The account must return it unchanged (identity).
+    const boot = {
+      node_id: 'aa'.repeat(33),
+      account_xpub_vanilla: 'tpubVanilla',
+      account_xpub_colored: 'tpubColored',
+      master_fingerprint: 'deadbeef'
+    }
     const account = makeAccount({ bootstrap: () => boot })
-    await expect(account.getBootstrap()).resolves.toBe(boot)
+    const out = await account.getBootstrap()
+    expect(out).toBe(boot)
+    expect(out.account_xpub_vanilla).toBe('tpubVanilla')
+    expect(out.master_fingerprint).toBe('deadbeef')
   })
 
   it('shutdown calls the binding and returns { ok: true }', async () => {
@@ -143,10 +155,29 @@ describe('lifecycle', () => {
 })
 
 describe('apayNew', () => {
-  it('forwards to the binding and returns the order response', async () => {
-    const apayNew = jest.fn(() => ({ order_id: 'X' }))
+  it('forwards to the binding and returns the AsyncOrderNewResponse verbatim', async () => {
+    // Real apay_new (rgb-lightning-node PR #51) returns an
+    // AsyncOrderNewResponse with snake_case fields. Assert the account is a
+    // transparent passthrough that neither remaps nor drops fields.
+    const orderResp = {
+      request_id: 'req-1',
+      host_node_id: 'bb'.repeat(33),
+      protocol_version: 1,
+      order_id: 'order-9',
+      status: 'created',
+      accepted_through_index: 0,
+      next_index_expected: 1,
+      unused_hashes: ['h0', 'h1'],
+      refill_batch_size: 64,
+      first_hash_index: 0
+    }
+    const apayNew = jest.fn(() => orderResp)
     const account = makeAccount({ apayNew })
-    await expect(account.apayNew('host')).resolves.toEqual({ order_id: 'X' })
+    const out = await account.apayNew('host')
+    expect(out).toBe(orderResp)
+    expect(out.order_id).toBe('order-9')
+    expect(out.request_id).toBe('req-1')
+    expect(out.status).toBe('created')
     expect(apayNew).toHaveBeenCalledWith('host')
   })
 
@@ -366,6 +397,30 @@ describe('invoices', () => {
       .resolves.toEqual({ bolt11: 'fromBolt11', paymentHash: 'mine' })
   })
 
+  it('createHodlInvoice prefers res.invoice over res.bolt11 when BOTH are present', async () => {
+    // Precedence guard: `res?.invoice ?? res?.bolt11`. RLN's real lnInvoice
+    // returns `invoice`; a defensive `bolt11` fallback exists. With BOTH keys
+    // present the `invoice` value MUST win — swapping the operands
+    // (`bolt11 ?? invoice`) would yield 'fromBolt11' and fail this.
+    const node = makeNode({
+      lnInvoice: () => ({ invoice: 'fromInvoice', bolt11: 'fromBolt11', payment_hash: 'h' })
+    })
+    const account = makeAccount({ node })
+    await expect(account.createHodlInvoice({ paymentHash: 'mine', expirySec: 60 }))
+      .resolves.toEqual({ bolt11: 'fromInvoice', paymentHash: 'h' })
+  })
+
+  it('createHodlInvoice prefers res.payment_hash over the supplied hash', async () => {
+    // `res?.payment_hash ?? params.paymentHash`: RLN echoes back the real hash.
+    // When present it must win over the caller-supplied one.
+    const node = makeNode({
+      lnInvoice: () => ({ invoice: 'lnbc-x', payment_hash: 'rlnHash' })
+    })
+    const account = makeAccount({ node })
+    await expect(account.createHodlInvoice({ paymentHash: 'mine', expirySec: 60 }))
+      .resolves.toEqual({ bolt11: 'lnbc-x', paymentHash: 'rlnHash' })
+  })
+
   it('createHodlInvoice yields empty bolt11 when neither invoice nor bolt11 present', async () => {
     const node = makeNode({ lnInvoice: () => ({}) })
     const account = makeAccount({ node })
@@ -414,8 +469,8 @@ describe('payments', () => {
   it('getPayment forwards the hash + type', async () => {
     const node = makeNode()
     const account = makeAccount({ node })
-    await expect(account.getPayment('h', 'sent')).resolves.toEqual({ payment_hash: 'h', type: 'sent' })
-    expect(node.getPayment).toHaveBeenCalledWith('h', 'sent')
+    await expect(account.getPayment('h', 'Outbound')).resolves.toEqual({ payment_hash: 'h', type: 'Outbound' })
+    expect(node.getPayment).toHaveBeenCalledWith('h', 'Outbound')
   })
 })
 
@@ -544,11 +599,53 @@ describe('BTC ops', () => {
     expect(btcBalance).toHaveBeenCalledWith(true)
   })
 
+  it('getBalance coerces a truthy non-boolean skipSync to a real boolean', async () => {
+    // Passing the literal `true` cannot distinguish `btcBalance(!!skipSync)`
+    // from `btcBalance(skipSync)`. Pass a truthy *non-boolean* (1): under the
+    // documented `!!` coercion the node must receive the boolean `true`, NOT 1.
+    const btcBalance = jest.fn(() => ({ vanilla: { spendable: 1 } }))
+    const account = makeAccount({ node: makeNode({ btcBalance }) })
+    await account.getBalance(1)
+    expect(btcBalance).toHaveBeenCalledWith(true)
+    // Strict identity: the argument is the primitive boolean true, not 1.
+    const arg = btcBalance.mock.calls[0][0]
+    expect(arg).toBe(true)
+    expect(typeof arg).toBe('boolean')
+  })
+
+  it('getBalance coerces a falsy non-boolean skipSync to false', async () => {
+    const btcBalance = jest.fn(() => ({ vanilla: { spendable: 1 } }))
+    const account = makeAccount({ node: makeNode({ btcBalance }) })
+    await account.getBalance(0)
+    const arg = btcBalance.mock.calls[0][0]
+    expect(arg).toBe(false)
+    expect(typeof arg).toBe('boolean')
+  })
+
+  it('getBalance returns "0" via the absent-vanilla path (not the catch)', async () => {
+    // btcBalance succeeds but the result has no `vanilla` at all → the
+    // `?? 0` final default fires (String(0)='0'), a DIFFERENT code path than
+    // the catch-block '0'. Spy proves btcBalance was actually invoked.
+    const btcBalance = jest.fn(() => ({}))
+    const account = makeAccount({ node: makeNode({ btcBalance }) })
+    await expect(account.getBalance()).resolves.toBe('0')
+    expect(btcBalance).toHaveBeenCalledTimes(1)
+  })
+
   it('getBalanceDetails forwards to node.btcBalance with coerced skipSync', async () => {
     const btcBalance = jest.fn(() => ({ vanilla: { spendable: 5 } }))
     const account = makeAccount({ node: makeNode({ btcBalance }) })
     await expect(account.getBalanceDetails(true)).resolves.toEqual({ vanilla: { spendable: 5 } })
     expect(btcBalance).toHaveBeenCalledWith(true)
+  })
+
+  it('getBalanceDetails coerces a truthy non-boolean skipSync to a real boolean', async () => {
+    const btcBalance = jest.fn(() => ({ vanilla: { spendable: 5 } }))
+    const account = makeAccount({ node: makeNode({ btcBalance }) })
+    await account.getBalanceDetails(1)
+    const arg = btcBalance.mock.calls[0][0]
+    expect(arg).toBe(true)
+    expect(typeof arg).toBe('boolean')
   })
 
   it('sendTransaction forwards to node.sendBtc', async () => {
@@ -566,11 +663,32 @@ describe('BTC ops', () => {
     expect(listTransactions).toHaveBeenCalledWith(true)
   })
 
+  it('getTransactions forwards skipSync RAW (no boolean coercion)', async () => {
+    // Unlike getBalance/getBalanceDetails, getTransactions passes skipSync
+    // through verbatim. A non-boolean truthy (1) must reach the node AS 1,
+    // not coerced to `true` — this catches an accidental `!!` being added.
+    const listTransactions = jest.fn(() => ({ transactions: [] }))
+    const account = makeAccount({ node: makeNode({ listTransactions }) })
+    await account.getTransactions(1)
+    const arg = listTransactions.mock.calls[0][0]
+    expect(arg).toBe(1)
+    expect(typeof arg).toBe('number')
+  })
+
   it('listUnspents forwards to node.listUnspents', async () => {
     const listUnspents = jest.fn(() => ({ unspents: [] }))
     const account = makeAccount({ node: makeNode({ listUnspents }) })
     await expect(account.listUnspents(false)).resolves.toEqual({ unspents: [] })
     expect(listUnspents).toHaveBeenCalledWith(false)
+  })
+
+  it('listUnspents forwards skipSync RAW (no boolean coercion)', async () => {
+    const listUnspents = jest.fn(() => ({ unspents: [] }))
+    const account = makeAccount({ node: makeNode({ listUnspents }) })
+    await account.listUnspents(1)
+    const arg = listUnspents.mock.calls[0][0]
+    expect(arg).toBe(1)
+    expect(typeof arg).toBe('number')
   })
 
   it('createUtxos forwards and returns { ok: true }', async () => {
@@ -605,10 +723,17 @@ describe('diagnostics / onion / signing', () => {
     expect(node.signMessage).toHaveBeenCalledWith('hello')
   })
 
-  it('checkIndexerUrl forwards the url', async () => {
-    const node = makeNode()
-    const account = makeAccount({ node })
-    await expect(account.checkIndexerUrl('http://idx')).resolves.toEqual({ ok: true, url: 'http://idx' })
+  it('checkIndexerUrl forwards the url and returns the indexer response verbatim', async () => {
+    // Pure passthrough: the account must forward the url and return whatever
+    // the node returns (the indexer's own response), not synthesise a shape.
+    // Use a realistic indexer payload and assert object identity to pin the
+    // passthrough — a mutant that wrapped/remapped the result would fail.
+    const indexerResp = { indexer_protocol: 'Electrum', block_height: 102 }
+    const checkIndexerUrl = jest.fn(() => indexerResp)
+    const account = makeAccount({ node: makeNode({ checkIndexerUrl }) })
+    const out = await account.checkIndexerUrl('http://idx')
+    expect(out).toBe(indexerResp)
+    expect(checkIndexerUrl).toHaveBeenCalledWith('http://idx')
   })
 
   it('checkProxyEndpoint forwards and returns { ok: true }', async () => {
@@ -629,19 +754,38 @@ describe('quoteSendTransaction', () => {
 })
 
 describe('_defaultFeeRate', () => {
-  it('reads fee_rate from estimateFee', async () => {
+  it('reads fee_rate from estimateFee (the real RLN shape)', async () => {
+    // Real estimateFee contract: Promise<{ fee_rate?: number }>.
     const account = makeAccount({ node: makeNode({ estimateFee: () => ({ fee_rate: 9 }) }) })
     await expect(account._defaultFeeRate(6)).resolves.toBe(9)
   })
 
-  it('reads feerate alias', async () => {
+  it('prefers fee_rate over the feerate alias when BOTH are present', async () => {
+    // Precedence in `r?.fee_rate ?? r?.feerate ?? r`: the canonical
+    // snake_case `fee_rate` must win. Reordering the operands would
+    // surface the alias (8) instead of the real field (9) and fail here.
+    const account = makeAccount({
+      node: makeNode({ estimateFee: () => ({ fee_rate: 9, feerate: 8 }) })
+    })
+    await expect(account._defaultFeeRate(6)).resolves.toBe(9)
+  })
+
+  it('reads feerate alias (defensive fallback when fee_rate absent)', async () => {
     const account = makeAccount({ node: makeNode({ estimateFee: () => ({ feerate: 8 }) }) })
     await expect(account._defaultFeeRate(6)).resolves.toBe(8)
   })
 
-  it('accepts a bare numeric estimateFee result', async () => {
+  it('accepts a bare numeric estimateFee result (final fallback arm)', async () => {
     const account = makeAccount({ node: makeNode({ estimateFee: () => 3 }) })
     await expect(account._defaultFeeRate(6)).resolves.toBe(3)
+  })
+
+  it('forwards the blocks target to estimateFee', async () => {
+    // Guards against dropping/altering the `blocks` argument in the source.
+    const estimateFee = jest.fn(() => ({ fee_rate: 9 }))
+    const account = makeAccount({ node: makeNode({ estimateFee }) })
+    await account._defaultFeeRate(6)
+    expect(estimateFee).toHaveBeenCalledWith(6)
   })
 
   it('falls back to the default rate when estimateFee returns a non-positive value', async () => {
@@ -678,39 +822,84 @@ describe('getTransactionReceipt', () => {
     await expect(account.getTransactionReceipt('def')).resolves.toBe(hit)
   })
 
-  it('falls back to a sent LN payment when not found on-chain', async () => {
+  it('falls back to an Outbound LN payment when not found on-chain', async () => {
     const sent = { payment_hash: 'ph1', amt_msat: 1 }
+    const getPayment = jest.fn((h, t) => (t === 'Outbound' ? sent : null))
     const account = makeAccount({
-      node: makeNode({
-        listTransactions: () => ({ transactions: [] }),
-        getPayment: (h, t) => (t === 'sent' ? sent : null)
-      })
+      node: makeNode({ listTransactions: () => ({ transactions: [] }), getPayment })
     })
     await expect(account.getTransactionReceipt('ph1')).resolves.toBe(sent)
+    // Must use RLN's real payment-type enum, not the old HTTP 'sent' string —
+    // the C-FFI errors on any value outside Outbound/InboundAutoClaim/InboundHodl.
+    expect(getPayment).toHaveBeenCalledWith('ph1', 'Outbound')
   })
 
-  it('falls back to a received LN payment when not sent', async () => {
+  it('falls back to an InboundAutoClaim payment when not Outbound', async () => {
     const recv = { payment_hash: 'ph2' }
+    const getPayment = jest.fn((h, t) => {
+      if (t === 'Outbound') throw new Error('not an outbound payment')
+      return t === 'InboundAutoClaim' ? recv : null
+    })
     const account = makeAccount({
-      node: makeNode({
-        listTransactions: () => ({ transactions: [] }),
-        getPayment: (h, t) => {
-          if (t === 'sent') throw new Error('not a sent payment')
-          return recv
-        }
-      })
+      node: makeNode({ listTransactions: () => ({ transactions: [] }), getPayment })
     })
     await expect(account.getTransactionReceipt('ph2')).resolves.toBe(recv)
+    expect(getPayment).toHaveBeenCalledWith('ph2', 'InboundAutoClaim')
   })
 
-  it('returns null when found nowhere', async () => {
+  it('falls back to an InboundHodl payment when neither Outbound nor InboundAutoClaim', async () => {
+    const hodl = { payment_hash: 'ph2b' }
+    const getPayment = jest.fn((h, t) => (t === 'InboundHodl' ? hodl : null))
     const account = makeAccount({
-      node: makeNode({
-        listTransactions: () => ({ transactions: [] }),
-        getPayment: () => { throw new Error('not found') }
-      })
+      node: makeNode({ listTransactions: () => ({ transactions: [] }), getPayment })
+    })
+    await expect(account.getTransactionReceipt('ph2b')).resolves.toBe(hodl)
+    expect(getPayment).toHaveBeenCalledWith('ph2b', 'InboundHodl')
+  })
+
+  it('ignores a payment object lacking a payment_hash', async () => {
+    const getPayment = jest.fn((h, t) => (t === 'Outbound' ? { amt_msat: 5 } : null))
+    const account = makeAccount({
+      node: makeNode({ listTransactions: () => ({ transactions: [] }), getPayment })
+    })
+    await expect(account.getTransactionReceipt('ph4')).resolves.toBeNull()
+  })
+
+  it('skips a hash-less InboundAutoClaim hit and continues to InboundHodl', async () => {
+    // The `recv && recv.payment_hash` guard's FALSE branch: an
+    // InboundAutoClaim object WITHOUT payment_hash must NOT be returned —
+    // the lookup keeps going and returns the InboundHodl match instead.
+    const hodl = { payment_hash: 'ph5', amt_msat: 9 }
+    const getPayment = jest.fn((h, t) => {
+      if (t === 'Outbound') return null
+      if (t === 'InboundAutoClaim') return { amt_msat: 5 } // truthy but no payment_hash
+      return t === 'InboundHodl' ? hodl : null
+    })
+    const account = makeAccount({
+      node: makeNode({ listTransactions: () => ({ transactions: [] }), getPayment })
+    })
+    await expect(account.getTransactionReceipt('ph5')).resolves.toBe(hodl)
+    expect(getPayment.mock.calls.map((c) => c[1])).toEqual(['Outbound', 'InboundAutoClaim', 'InboundHodl'])
+  })
+
+  it('returns null when every payment hit lacks a payment_hash', async () => {
+    // All three guard FALSE branches: truthy objects with no payment_hash
+    // for all payment types → must end at `return null`.
+    const getPayment = jest.fn(() => ({ amt_msat: 1 }))
+    const account = makeAccount({
+      node: makeNode({ listTransactions: () => ({ transactions: [] }), getPayment })
+    })
+    await expect(account.getTransactionReceipt('ph6')).resolves.toBeNull()
+    expect(getPayment.mock.calls.map((c) => c[1])).toEqual(['Outbound', 'InboundAutoClaim', 'InboundHodl'])
+  })
+
+  it('returns null when found nowhere, after trying every payment type in order', async () => {
+    const getPayment = jest.fn(() => { throw new Error('not found') })
+    const account = makeAccount({
+      node: makeNode({ listTransactions: () => ({ transactions: [] }), getPayment })
     })
     await expect(account.getTransactionReceipt('nope')).resolves.toBeNull()
+    expect(getPayment.mock.calls.map((c) => c[1])).toEqual(['Outbound', 'InboundAutoClaim', 'InboundHodl'])
   })
 
   it('continues to LN lookup when getTransactions itself throws', async () => {
@@ -718,7 +907,7 @@ describe('getTransactionReceipt', () => {
     const account = makeAccount({
       node: makeNode({
         listTransactions: () => { throw new Error('boom') },
-        getPayment: (h, t) => (t === 'sent' ? sent : null)
+        getPayment: (h, t) => (t === 'Outbound' ? sent : null)
       })
     })
     await expect(account.getTransactionReceipt('ph3')).resolves.toBe(sent)
@@ -780,6 +969,59 @@ describe('createLsp', () => {
     const account = makeAccount()
     await expect(account.createLsp()).rejects.toThrow(/lspBaseUrl not set/)
   })
+
+  it('auto-discovers the peer from lspBaseUrl via GET /get_info', async () => {
+    // No-arg form: pubkey from /get_info, host from the base URL hostname,
+    // port from the peerPort default (9735). Real LSP /get_info returns the
+    // node pubkey (hex 33-byte compressed key); stub getInfo so no network.
+    const getInfoSpy = jest.spyOn(LspClient.prototype, 'getInfo')
+      .mockResolvedValue({ pubkey: 'ab'.repeat(33), num_channels: 4 })
+    try {
+      const account = makeAccount({
+        _config: { lspBaseUrl: 'https://lsp.example:8443/api', lspBearerToken: 'tok' }
+      })
+      const lsp = await account.createLsp()
+      expect(lsp).toBeInstanceOf(UtexoLsp)
+      expect(lsp.account).toBe(account)
+      // peer must be assembled from /get_info + base URL hostname + default port.
+      expect(lsp.peer).toEqual({
+        baseUrl: 'https://lsp.example:8443/api',
+        peerPubkey: 'ab'.repeat(33),
+        peerHost: 'lsp.example',
+        peerPort: 9735,
+        bearerToken: 'tok'
+      })
+      expect(getInfoSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      getInfoSpy.mockRestore()
+    }
+  })
+
+  it('honours an explicit peerPort override in the no-arg form', async () => {
+    const getInfoSpy = jest.spyOn(LspClient.prototype, 'getInfo')
+      .mockResolvedValue({ pubkey: 'cd'.repeat(33) })
+    try {
+      const account = makeAccount({ _config: { lspBaseUrl: 'https://lsp.example' } })
+      const lsp = await account.createLsp(undefined, 9999)
+      expect(lsp.peer.peerPort).toBe(9999)
+      expect(lsp.peer.peerHost).toBe('lsp.example')
+      // No bearer token configured → undefined, not null/'' .
+      expect(lsp.peer.bearerToken).toBeUndefined()
+    } finally {
+      getInfoSpy.mockRestore()
+    }
+  })
+
+  it('throws when /get_info returns no pubkey', async () => {
+    const getInfoSpy = jest.spyOn(LspClient.prototype, 'getInfo')
+      .mockResolvedValue({ num_channels: 0 })
+    try {
+      const account = makeAccount({ _config: { lspBaseUrl: 'https://lsp.example' } })
+      await expect(account.createLsp()).rejects.toThrow(/returned no pubkey/)
+    } finally {
+      getInfoSpy.mockRestore()
+    }
+  })
 })
 
 describe('bootstrapLsp', () => {
@@ -803,6 +1045,25 @@ describe('bootstrapLsp', () => {
     const res = await account.bootstrapLsp({ peerPubkeyAndAddr: 'BAREPUBKEY', waitForPeerMs: 0 })
     expect(res).toEqual({ connect: { ok: true }, peerVisible: false })
     expect(account.connectPeer).toHaveBeenCalledWith('BAREPUBKEY')
+  })
+
+  it('treats a leading-@ string as a full pubkey (atIdx>0, not >=0) without throwing', async () => {
+    // '@host' → indexOf('@') === 0. The guard is `atIdx > 0`, so the
+    // condition is FALSE and peerPubkey becomes the FULL string '@host'
+    // (non-empty → no TypeError). If the guard were `atIdx >= 0`, the
+    // slice(0,0) would yield '' and trip the second `length === 0` guard,
+    // throwing 'must be in pubkey@host:port form'. So this must NOT throw,
+    // and the empty matcher means no peer is ever found.
+    const account = makeAccount()
+    account.connectPeer = jest.fn(async () => ({ ok: true }))
+    const listPeers = jest.fn(async () => ({ peers: [{ pubkey: '@host' }] }))
+    account.listPeers = listPeers
+    const res = await account.bootstrapLsp({ peerPubkeyAndAddr: '@host', waitForPeerMs: 1000 })
+    // peerVisible true confirms the matcher compared against the full
+    // '@host' pubkey — only possible if peerPubkey === '@host', i.e. the
+    // `atIdx > 0` (false) branch was taken.
+    expect(res).toEqual({ connect: { ok: true }, peerVisible: true })
+    expect(account.connectPeer).toHaveBeenCalledWith('@host')
   })
 
   it('connects and reports peerVisible when listPeers shows the peer immediately', async () => {
@@ -877,6 +1138,42 @@ describe('bootstrapLsp', () => {
     })
     expect(res.peerVisible).toBe(true)
     expect(calls).toBeGreaterThanOrEqual(2)
+  })
+
+  it('clamps the poll interval to a 100ms floor for sub-floor pollIntervalMs', async () => {
+    // The source clamps: pollMs = Math.max(100, Number(pollIntervalMs) || 1000).
+    // Passing pollIntervalMs:1 (below the floor) must produce a 100ms gap
+    // between polls. Under a lowered floor (e.g. Math.max(10, …)) the second
+    // poll would already have fired by t=50ms — so we pin the exact 100ms.
+    jest.useFakeTimers()
+    try {
+      const account = makeAccount()
+      account.connectPeer = jest.fn(async () => ({ ok: true }))
+      // Never returns the peer → polling continues for the whole window.
+      account.listPeers = jest.fn(async () => ({ peers: [] }))
+      const p = account.bootstrapLsp({
+        peerPubkeyAndAddr: 'PK@host:9735',
+        waitForPeerMs: 1000,
+        pollIntervalMs: 1
+      })
+      // Let the first (immediate, t=0) poll run.
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(account.listPeers).toHaveBeenCalledTimes(1)
+      // Advance well past a 10ms floor but short of the real 100ms floor:
+      // with the correct floor NO new poll has fired yet.
+      await jest.advanceTimersByTimeAsync(50)
+      expect(account.listPeers).toHaveBeenCalledTimes(1)
+      // Reaching exactly 100ms triggers the second poll.
+      await jest.advanceTimersByTimeAsync(50)
+      expect(account.listPeers).toHaveBeenCalledTimes(2)
+      // Drain the remaining window so the promise settles cleanly.
+      await jest.advanceTimersByTimeAsync(1000)
+      const res = await p
+      expect(res.peerVisible).toBe(false)
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it('tolerates a listPeers rejection during polling', async () => {
@@ -978,11 +1275,48 @@ describe('toReadOnlyAccount / ReadOnlyRgbLightningAccount', () => {
     await expect(ro.quoteSendTransaction({})).resolves.toEqual({ fee: BigInt(4 * 141) })
   })
 
-  it('quoteTransfer proxies to the account quote (LN form)', async () => {
+  it('quoteTransfer proxies to the account quote (LN bolt11 form)', async () => {
     const account = makeAccount()
     const ro = await account.toReadOnlyAccount()
     const res = await ro.quoteTransfer({ recipient: 'lnbc1abc', amount: 1000000 })
-    expect(res).toEqual({ fee: BigInt(Math.max(1, Math.ceil(1000000 * 50 / 10000))) })
+    // LN_FEE_BPS = 50 → ceil(1_000_000 * 50 / 10000) = 5000.
+    expect(res).toEqual({ fee: 5000n })
+  })
+
+  it('quoteTransfer LN ln-pubkey form also uses the bps fee, not the on-chain rate', async () => {
+    // 66-hex → classified ln-pubkey → same LN bps branch (not on-chain).
+    const account = makeAccount()
+    const ro = await account.toReadOnlyAccount()
+    const res = await ro.quoteTransfer({ recipient: 'ab'.repeat(33), amount: 2000000 })
+    // ceil(2_000_000 * 50 / 10000) = 10000.
+    expect(res).toEqual({ fee: 10000n })
+  })
+
+  it('quoteTransfer LN form floors the fee at 1 for tiny amounts', async () => {
+    // Math.max(1, …): amount 1 → ceil(1*50/10000)=ceil(0.005)=1 already, but
+    // amount 0 → ceil(0)=0 → floored to 1. Pins the Math.max(1, …) guard.
+    const account = makeAccount()
+    const ro = await account.toReadOnlyAccount()
+    const res = await ro.quoteTransfer({ recipient: 'lnbc1abc', amount: 0 })
+    expect(res).toEqual({ fee: 1n })
+  })
+
+  it('quoteTransfer on-chain (btc-address) uses estimateFee rate × 141 vbytes', async () => {
+    // btc-address branch (lines 964-966): rate × APPROX_BTC_TX_VBYTES.
+    const account = makeAccount()
+    account._defaultFeeRate = async () => 7
+    const ro = await account.toReadOnlyAccount()
+    const res = await ro.quoteTransfer({ recipient: 'tb1qsomeaddress', amount: 50000 })
+    expect(res).toEqual({ fee: BigInt(7 * 141) })
+  })
+
+  it('quoteTransfer RGB invoice routes through the on-chain quote', async () => {
+    // RGB invoices settle on-chain → same rate × 141 path, NOT the LN bps.
+    const account = makeAccount()
+    account._defaultFeeRate = async () => 3
+    const ro = await account.toReadOnlyAccount()
+    const res = await ro.quoteTransfer({ recipient: 'rgb:abc123', amount: 50000 })
+    expect(res).toEqual({ fee: BigInt(3 * 141) })
   })
 
   it('getTransactionReceipt proxies to the account lookup', async () => {
