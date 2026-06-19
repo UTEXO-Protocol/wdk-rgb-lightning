@@ -1,6 +1,6 @@
 {
   "name": "@utexo/wdk-rgb-lightning",
-  "version": "0.1.0-beta.13",
+  "version": "0.1.0-beta.14",
   "description": "WDK module for RGB Lightning (rgb-lightning-node) — channels, invoices, payments, hodl, RGB-over-LN.",
   "keywords": [
     "wdk",
