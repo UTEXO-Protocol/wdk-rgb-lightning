@@ -23,8 +23,10 @@ different wallet fingerprint (it signs in-process via VLS from a 32-byte
 entropy) than the on-chain module (standard BIP-32 from the full seed), so
 even a shared `dataDir` resolves to different `<fingerprint>/` subfolders.
 RLN holds and transfers RGB assets for its channels and invoices. For RGB
-asset **issuance**, use [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], the
-on-chain RGB wallet module — issuance is not part of this module's API.
+asset **issuance**, prefer [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], the
+on-chain RGB wallet module. The node-level issuance calls are also forwarded
+on the account (see the Account API table), but `wdk-wallet-rgb` is the
+supported path for issuance flows.
 
 > Status: pre-1.0 beta (`0.1.0-beta` line).
 
@@ -176,6 +178,7 @@ are async and forward to the active binding.
 | Payments | `sendPayment(request)`, `keysend(request)`, `listPayments()`, `getPayment(hash, type)` |
 | RGB assets | `listAssets(filter?)`, `getAssetBalance(id)`, `getAssetMetadata(id)`, `listTransfers(id?)`, `refreshTransfers(req)`, `failTransfers(req)` |
 | RGB invoices/transfers | `createRgbInvoice(request)`, `decodeRgbInvoice(invoice)`, `sendRgbAsset(request)`, `getAssetMedia(digest)`, `postAssetMedia(request)` |
+| RGB issuance (forwarded) | `issueAssetNia(request)`, `issueAssetUda(request)`, `issueAssetCfa(request)`, `issueAssetIfa(request)`, `inflate(request)` — forward to the binding; `@utexo/wdk-wallet-rgb` is the supported path (see note) |
 | BTC | `getBalance(skipSync?)`, `getBalanceDetails(skipSync?)`, `getAddress()`, `sendTransaction(request)`, `getTransactions(skipSync?)`, `listUnspents(skipSync?)`, `createUtxos(request)`, `estimateFee(blocks)` |
 | WDK-standard | `transfer(options)`, `quoteTransfer(options)`, `getTransactionReceipt(hash)`, `getKeyPair()`, `toReadOnlyAccount()` |
 | Diagnostics | `sign(message)`, `sendOnionMessage(request)`, `checkIndexerUrl(url)`, `checkProxyEndpoint(endpoint)` |
@@ -193,11 +196,15 @@ Notes:
   invoice) and dispatches to the right primitive. `options.token` is an RGB
   `asset_id` when present. Amounts are msats for LN flows and sats for
   on-chain flows.
-- **RGB asset issuance is not part of this module.** To issue RGB assets,
-  use [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], the on-chain RGB wallet
-  module. This module holds and transfers assets that already exist — in
-  channels, invoices, and on-chain — and keeps its own separate `rgb-lib`
-  wallet (give each module its own `dataDir`).
+- **RGB asset issuance is forwarded, but `@utexo/wdk-wallet-rgb` is the
+  supported path.** The node-level issuance calls (`issueAssetNia` /
+  `issueAssetUda` / `issueAssetCfa` / `issueAssetIfa`, plus `inflate`) are
+  exposed on the account and forward straight to the binding. For
+  issuance-centric flows prefer [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb],
+  the on-chain RGB wallet module. This module primarily holds and transfers
+  assets that already exist — in channels, invoices, and on-chain — and
+  keeps its own separate `rgb-lib` wallet (give each module its own
+  `dataDir`).
 - Atomic swaps (`makerInit` / `taker` / ...) are reachable on the binding
   but intentionally **not surfaced** on the WDK account.
 - `verify` and `signTransaction` throw `NotImplementedError` — the C-FFI
