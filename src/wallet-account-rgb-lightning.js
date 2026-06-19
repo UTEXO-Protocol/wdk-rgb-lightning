@@ -645,7 +645,10 @@ export default class WalletAccountRgbLightning {
   async listPayments () { return this._node.listPayments() }
 
   /** @param {string} paymentHashHex
-   *  @param {'sent'|'received'} paymentType */
+   *  @param {'Outbound'|'InboundAutoClaim'|'InboundHodl'} paymentType
+   *    RLN's payment-type discriminant. The C-FFI deserialises this into
+   *    its `Outbound | InboundAutoClaim | InboundHodl` enum and errors on
+   *    any other value (the pre-1.0 HTTP API's `sent`/`received` are gone). */
   async getPayment (paymentHashHex, paymentType) {
     return this._node.getPayment(paymentHashHex, paymentType)
   }
@@ -997,14 +1000,16 @@ export default class WalletAccountRgbLightning {
       const hit = onchain.find((t) => t?.txid === hash)
       if (hit) return hit
     } catch (_e) { /* fall through to LN lookup */ }
-    try {
-      const sent = await this.getPayment(hash, 'sent')
-      if (sent && sent.payment_hash) return sent
-    } catch (_e) { /* not a sent payment */ }
-    try {
-      const recv = await this.getPayment(hash, 'received')
-      if (recv && recv.payment_hash) return recv
-    } catch (_e) { /* not a received payment either */ }
+    // RLN's get_payment requires a payment-type discriminant — one of
+    // 'Outbound' / 'InboundAutoClaim' / 'InboundHodl'. The C-FFI rejects
+    // any other value (the old HTTP API's 'sent'/'received' no longer
+    // parse), so try each known type until the hash matches a payment.
+    for (const paymentType of ['Outbound', 'InboundAutoClaim', 'InboundHodl']) {
+      try {
+        const p = await this.getPayment(hash, paymentType)
+        if (p && p.payment_hash) return p
+      } catch (_e) { /* not this payment type — try the next */ }
+    }
     return null
   }
 
