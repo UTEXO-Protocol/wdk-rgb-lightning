@@ -158,6 +158,7 @@ and a regtest stack via Docker Compose — lives in
 | `enableVirtualChannelsV0` | `false` | Enable virtual-channels-v0 (required for APay against a production LSP). |
 | `virtualPeerPubkeys` | — | Trust list of peer node_ids allowed to open `trusted_no_broadcast` virtual channels (the LSP's node_id for APay). |
 | `permissiveSignerPolicy` | `true` | Loosen the VLS policy filter for in-process single-user use. |
+| `nodeSeedDerivation` | `auto` | New nodes use WDK's normalized BIP-39 seed directly; existing beta nodes retry the legacy identity only on an exact persisted-identity mismatch. Use `wdk-seed-v2` or `legacy-v1` to disable auto-detection. |
 | `vssUrl` / `vssAllowHttp` / `vssAllowEmptyRestore` | — | VSS cloud backup; see [below](#vss-cloud-backup). |
 | `lspBaseUrl` / `lspBearerToken` | — | LSP wiring for APay and the LSP client; see [below](#lsp-integration). |
 
@@ -170,18 +171,18 @@ are async and forward to the active binding.
 | Group | Methods |
 |-------|---------|
 | Lifecycle | `unlock(request)`, `getBootstrap()`, `shutdown()`, `dispose()` |
-| Node info | `getNodeInfo()`, `getNetworkInfo()`, `sync()`, `getAddress()` |
+| Node info | `getNodeInfo()`, `getNetworkInfo()`, `sync()`, `getAddress()`, `getAddressState()`, `rotateAddress()` |
 | Peers | `connectPeer(pubkey@host:port)`, `disconnectPeer(request)`, `listPeers()` |
 | Channels | `openChannel(request)`, `closeChannel(request)`, `listChannels()`, `getChannelId(tempIdHex)` |
 | Invoices | `createInvoice(request)`, `createLightningInvoice(request)`, `decodeInvoice(invoice)`, `getInvoiceStatus(invoice)` |
 | HODL invoices | `createHodlInvoice({ paymentHash, ... })`, `cancelHodlInvoice(request)`, `claimHodlInvoice(request)` |
 | Payments | `sendPayment(request)`, `keysend(request)`, `listPayments()`, `getPayment(hash, type)` |
-| RGB assets | `listAssets(filter?)`, `getAssetBalance(id)`, `getAssetMetadata(id)`, `listTransfers(id?)`, `refreshTransfers(req)`, `failTransfers(req)` |
+| RGB assets | `listAssets(filter?)`, `getAssetBalance(id)`, `getAssetMetadata(id)`, `listTransfers(id)`, `listTransfersByTxid(txid)`, `refreshTransfers(req)`, `failTransfers(req)` |
 | RGB invoices/transfers | `createRgbInvoice(request)`, `decodeRgbInvoice(invoice)`, `sendRgbAsset(request)`, `getAssetMedia(digest)`, `postAssetMedia(request)` |
 | RGB issuance (forwarded) | `issueAssetNia(request)`, `issueAssetUda(request)`, `issueAssetCfa(request)`, `issueAssetIfa(request)`, `inflate(request)` — forward to the binding; `@utexo/wdk-wallet-rgb` is the supported path (see note) |
-| BTC | `getBalance(skipSync?)`, `getBalanceDetails(skipSync?)`, `getAddress()`, `sendTransaction(request)`, `getTransactions(skipSync?)`, `listUnspents(skipSync?)`, `createUtxos(request)`, `estimateFee(blocks)` |
-| WDK-standard | `transfer(options)`, `quoteTransfer(options)`, `getTransactionReceipt(hash)`, `getKeyPair()`, `toReadOnlyAccount()` |
-| Diagnostics | `sign(message)`, `sendOnionMessage(request)`, `checkIndexerUrl(url)`, `checkProxyEndpoint(endpoint)` |
+| BTC | `getBalance(skipSync?)`, `getBalanceDetails(skipSync?)`, `sendTransaction({ to, value, ... })`, `sendBtc(nativeRequest)`, `getTransactions(skipSync?)`, `getTransactionsByTxid(txid)`, `listUnspents(skipSync?)`, `createUtxos(request)`, `estimateFee(blocks)` |
+| WDK-standard | `index`, `path`, `keyPair`, `sign(message)`, `verify(message, signature)`, `transfer(options)`, `quoteTransfer(options)`, `quoteSendTransaction(tx)`, `getTransactionReceipt(hash)`, `toReadOnlyAccount()` |
+| Diagnostics | `sendOnionMessage(request)`, `checkIndexerUrl(url)`, `checkProxyEndpoint(endpoint)` |
 | VSS | `vssStatus()`, `vssBackup()`, `clearVssFence(password)` |
 | APay / LSP | `apayNew(hostNodeId)`, `bootstrapLsp({ peerPubkeyAndAddr, hostNodeId? })`, `getLspConfig()`, `createLsp(peer?)` |
 
@@ -196,6 +197,17 @@ Notes:
   invoice) and dispatches to the right primitive. `options.token` is an RGB
   `asset_id` when present. Amounts are msats for LN flows and sats for
   on-chain flows.
+- **`getBalance()` returns `bigint` satoshis**, matching WDK's account
+  contract. `getTokenBalance(assetId)` returns the spendable RGB amount as a
+  `bigint` and falls back to the settled amount when needed.
+- **`getAddress()` never returns a fabricated spend address.** Before unlock
+  it rejects with `AccountLockedError`; UI loaders can call
+  `getAddressState()` for `{ status: 'locked', address: null }`. The WDK
+  bindings initialize RLN with address reuse enabled so reads stay stable;
+  `rotateAddress()` is the explicit mutating operation for advancing it.
+- **`sendTransaction()` uses WDK's `{ to, value, feeRate?,
+  confirmationTarget? }` input and `{ hash, fee }` result.** `sendBtc()` is
+  the explicit low-level escape hatch for RLN's native request format.
 - **RGB asset issuance is forwarded, but `@utexo/wdk-wallet-rgb` is the
   supported path.** The node-level issuance calls (`issueAssetNia` /
   `issueAssetUda` / `issueAssetCfa` / `issueAssetIfa`, plus `inflate`) are
@@ -207,8 +219,26 @@ Notes:
   `dataDir`).
 - Atomic swaps (`makerInit` / `taker` / ...) are reachable on the binding
   but intentionally **not surfaced** on the WDK account.
-- `verify` and `signTransaction` throw `NotImplementedError` — the C-FFI
-  doesn't expose them.
+- `verify` uses RLN's canonical Lightning message verifier. Only raw
+  `signTransaction` remains unsupported; use the operation-specific send
+  methods, which sign through VLS policy checks.
+
+### Read-only accounts
+
+`WalletAccountReadOnlyRgbLightning` is exported from the package root and
+extends WDK's `WalletAccountReadOnly`. `account.toReadOnlyAccount()` returns a
+cached instance backed by an immutable query-only adapter. It includes the
+seven WDK read methods plus RLN query extensions for node/network state,
+channels, peers, invoices, payments, RGB assets and transfers, BTC history,
+fee estimates, media, and endpoint checks.
+
+The adapter uses the same manager-owned native query transport, so dispose
+the read-only account with its originating manager rather than retaining it
+after `manager.dispose()`.
+
+The read-only object has no full-account backreference and no signing,
+broadcasting, channel mutation, lifecycle, VSS recovery, or LSP credential
+methods. Address rotation is also full-account-only.
 
 ## Error handling
 
@@ -222,6 +252,7 @@ verbatim and the underlying error is attached as `cause`; each error has a
 ```
 RgbLightningError            code: RGB_LIGHTNING_ERROR
 ├── UnlockError              code: UNLOCK_FAILED
+├── AccountLockedError       code: ACCOUNT_LOCKED
 ├── VssError                 code: VSS_ERROR
 │   └── VssNotConfiguredError code: VSS_NOT_CONFIGURED
 ├── ApayError                code: APAY_ERROR (e.g. APAY_PEER_NOT_VISIBLE)
@@ -232,7 +263,7 @@ All are exported from the package root:
 
 ```js
 import {
-  RgbLightningError, UnlockError, VssError,
+  RgbLightningError, UnlockError, AccountLockedError, VssError,
   VssNotConfiguredError, ApayError, NotImplementedError
 } from '@utexo/wdk-rgb-lightning'
 
@@ -360,7 +391,7 @@ wrapping, and binding config mapping — is covered by a jest suite that
 runs with no live node and no native binding (the addon is mocked):
 
 ```sh
-npm install
+npm ci
 npm test            # jest, host-side units
 npm run test:coverage
 ```

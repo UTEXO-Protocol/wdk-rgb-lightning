@@ -105,6 +105,20 @@ describe('attachExternalSigner', () => {
     expect(b._seedHex).toBe('seed-a')
   })
 
+  it('records an optional legacy fallback seed without constructing it eagerly', () => {
+    const spy = jest.spyOn(rln.NativeExternalSigner, 'create')
+      .mockReturnValue({ bootstrap: jest.fn(), destroy: jest.fn() })
+    try {
+      const b = makeBinding()
+      b.attachExternalSigner('seed-v2', 'seed-v1')
+      expect(b._fallbackSeedHex).toBe('seed-v1')
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(spy).toHaveBeenCalledWith('seed-v2', 'regtest', true)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   // Kills the mutant that hardcodes NativeExternalSigner.create(seedHex,
   // 'mainnet', false): asserts the seed, the CONFIGURED network ('regtest')
   // and the permissive-policy `?? true` DEFAULT are passed through verbatim.
@@ -180,11 +194,13 @@ describe('unlock', () => {
     const signer = fakeSigner()
     b._node = node
     b._signer = signer
+    b._fallbackSeedHex = 'seed-v1'
     const req = { mnemonic: 'm' }
     b.unlock(req)
     expect(node.initWithNativeExternalSigner).toHaveBeenCalledWith(signer)
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledWith(signer, req)
     expect(b._sdkInitDone).toBe(true)
+    expect(b._fallbackSeedHex).toBeUndefined()
   })
 
   it('swallows a Conflict init error and still proceeds to unlock', () => {
@@ -218,6 +234,44 @@ describe('unlock', () => {
     b.unlock({})
     expect(node.initWithNativeExternalSigner).toHaveBeenCalledTimes(1)
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries with the legacy signer only for a persisted identity mismatch', () => {
+    const b = makeBinding()
+    const node = fakeNode()
+    const primarySigner = fakeSigner()
+    const fallbackSigner = fakeSigner()
+    node.unlockWithNativeExternalSigner
+      .mockImplementationOnce(() => {
+        throw new Error('Rln(ExternalSignerMismatch): External signer identity does not match persisted node identity')
+      })
+      .mockImplementationOnce(() => undefined)
+    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(fallbackSigner)
+    b._node = node
+    b._signer = primarySigner
+    b._seedHex = 'seed-v2'
+    b._fallbackSeedHex = 'seed-v1'
+    try {
+      expect(() => b.unlock({ rpc: true })).not.toThrow()
+      expect(primarySigner.destroy).toHaveBeenCalledTimes(1)
+      expect(createSpy).toHaveBeenCalledWith('seed-v1', 'regtest', true)
+      expect(node.unlockWithNativeExternalSigner).toHaveBeenLastCalledWith(fallbackSigner, { rpc: true })
+      expect(b._seedHex).toBe('seed-v1')
+      expect(b._fallbackSeedHex).toBeUndefined()
+    } finally {
+      createSpy.mockRestore()
+    }
+  })
+
+  it('does not retry a generic unlock failure with the legacy signer', () => {
+    const b = makeBinding()
+    const node = fakeNode()
+    node.unlockWithNativeExternalSigner.mockImplementation(() => { throw new Error('backend unavailable') })
+    b._node = node
+    b._signer = fakeSigner()
+    b._fallbackSeedHex = 'seed-v1'
+    expect(() => b.unlock({})).toThrow('backend unavailable')
+    expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
   })
 
   // Exercises the false arm of `e && e.message ? e.message : e`: a thrown
@@ -378,12 +432,16 @@ describe('shutdown', () => {
     b._node = node
     b._signer = signer
     b._sdkInitDone = true
+    b._seedHex = 'seed-v2'
+    b._fallbackSeedHex = 'seed-v1'
     b.shutdown()
     expect(node.shutdown).toHaveBeenCalledTimes(1)
     expect(signer.destroy).toHaveBeenCalledTimes(1)
     expect(b._node).toBeNull()
     expect(b._signer).toBeNull()
     expect(b._sdkInitDone).toBe(false)
+    expect(b._seedHex).toBeUndefined()
+    expect(b._fallbackSeedHex).toBeUndefined()
   })
 
   it('is idempotent when nothing is attached', () => {

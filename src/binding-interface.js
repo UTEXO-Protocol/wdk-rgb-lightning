@@ -57,13 +57,18 @@
  *   Bearer token sent on requests to the LSP's `/internal/*` endpoints.
  *   Must match the LSP's `APAY_BEARER_TOKEN` config. Omit if the LSP
  *   doesn't require auth (some dev setups).
+ *
+ * Concrete WDK bindings always send RLN `reuse_addresses: true`. This keeps
+ * inherited read-only `getAddress()` calls pinned to the current address;
+ * callers use the full account's explicit `rotateAddress()` command when
+ * needed.
  */
 
 /**
  * @typedef {Object} IRgbLightningBinding
  * @property {() => unknown}                            ensureNode
  *   Construct (or return cached) `SdkNode` handle.
- * @property {(seedHex: string) => void}                attachExternalSigner
+ * @property {(seedHex: string, fallbackSeedHex?: string) => void} attachExternalSigner
  *   Build the in-process VLS signer from a host-supplied 32-byte seed.
  *   Must be called before `unlock()`.
  * @property {(unlockRequest: object) => void}          unlock

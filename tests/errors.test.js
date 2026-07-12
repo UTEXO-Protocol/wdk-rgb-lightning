@@ -9,6 +9,7 @@
 import {
   RgbLightningError,
   UnlockError,
+  AccountLockedError,
   VssError,
   VssNotConfiguredError,
   ApayError,
@@ -20,6 +21,7 @@ describe('error hierarchy', () => {
   it('assigns a stable name + code to each subclass', () => {
     expect(new RgbLightningError('m')).toMatchObject({ name: 'RgbLightningError', code: 'RGB_LIGHTNING_ERROR' })
     expect(new UnlockError('m')).toMatchObject({ name: 'UnlockError', code: 'UNLOCK_FAILED' })
+    expect(new AccountLockedError()).toMatchObject({ name: 'AccountLockedError', code: 'ACCOUNT_LOCKED' })
     expect(new VssError('m')).toMatchObject({ name: 'VssError', code: 'VSS_ERROR' })
     expect(new VssNotConfiguredError()).toMatchObject({ name: 'VssNotConfiguredError', code: 'VSS_NOT_CONFIGURED' })
     expect(new ApayError('m')).toMatchObject({ name: 'ApayError', code: 'APAY_ERROR' })
@@ -27,7 +29,7 @@ describe('error hierarchy', () => {
   })
 
   it('keeps every subclass an instanceof the base (and Error)', () => {
-    for (const E of [UnlockError, VssError, ApayError, NotImplementedError]) {
+    for (const E of [UnlockError, AccountLockedError, VssError, ApayError, NotImplementedError]) {
       const e = new E('x')
       expect(e).toBeInstanceOf(Error)
       expect(e).toBeInstanceOf(RgbLightningError)

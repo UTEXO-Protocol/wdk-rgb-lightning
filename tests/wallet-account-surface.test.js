@@ -15,10 +15,10 @@
 // are NOT re-tested here.
 
 import { jest } from '@jest/globals'
-import WalletAccountRgbLightning, {
-  PENDING_ADDRESS
-} from '../src/wallet-account-rgb-lightning.js'
-import { UnlockError, ApayError, NotImplementedError } from '../src/errors.js'
+import { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
+import WalletAccountRgbLightning from '../src/wallet-account-rgb-lightning.js'
+import WalletAccountReadOnlyRgbLightning from '../src/wallet-account-read-only-rgb-lightning.js'
+import { UnlockError, AccountLockedError, ApayError } from '../src/errors.js'
 import { LspClient } from '../src/lsp-client.js'
 import { UtexoLsp } from '../src/utexo-lsp.js'
 
@@ -31,6 +31,7 @@ function makeNode (overrides = {}) {
     networkInfo: jest.fn(() => ({ height: 100 })),
     sync: jest.fn(() => undefined),
     address: jest.fn(() => ({ address: 'tb1qreal' })),
+    rotateAddress: jest.fn(() => ({ address: 'tb1qrotated' })),
     openChannel: jest.fn((r) => ({ opened: r })),
     closeChannel: jest.fn(() => undefined),
     listChannels: jest.fn(() => [{ id: 'c1' }]),
@@ -55,6 +56,7 @@ function makeNode (overrides = {}) {
     assetBalance: jest.fn((id) => ({ settled: 7, asset: id })),
     assetMetadata: jest.fn((id) => ({ meta: id })),
     listTransfers: jest.fn((id) => ({ transfers: id })),
+    listTransfersByTxid: jest.fn(() => []),
     refreshTransfers: jest.fn(() => undefined),
     failTransfers: jest.fn((r) => ({ failed: r })),
     rgbInvoice: jest.fn((r) => ({ rgbinv: r })),
@@ -66,11 +68,13 @@ function makeNode (overrides = {}) {
     btcBalance: jest.fn(() => ({ vanilla: { spendable: 1234, settled: 1000 } })),
     sendBtc: jest.fn((r) => ({ txid: 'btctx', echo: r })),
     listTransactions: jest.fn(() => ({ transactions: [] })),
+    listTransactionsByTxid: jest.fn(() => []),
     listUnspents: jest.fn(() => ({ unspents: [] })),
     createUtxos: jest.fn(() => undefined),
     estimateFee: jest.fn(() => ({ fee_rate: 12 })),
     sendOnionMessage: jest.fn(() => undefined),
     signMessage: jest.fn((m) => ({ signature: 'sig:' + m })),
+    verifyMessage: jest.fn(() => ({ valid: true })),
     checkIndexerUrl: jest.fn((u) => ({ ok: true, url: u })),
     checkProxyEndpoint: jest.fn(() => undefined),
     ...overrides
@@ -86,6 +90,7 @@ function makeBinding (overrides = {}) {
     bootstrap: jest.fn(() => ({ node_id: 'aa'.repeat(33) })),
     shutdown: jest.fn(() => undefined),
     apayNew: jest.fn(() => ({ order_id: 'o1' })),
+    vssStatus: jest.fn(() => ({ configured: false, url: null, allowHttp: false, lastBackupVersion: null })),
     ...overrides
   }
   // Ensure the binding's `node` getter target is the resolved node even
@@ -108,6 +113,12 @@ describe('construction', () => {
     const node = makeNode()
     const account = makeAccount({ node })
     expect(account._node).toBe(node)
+  })
+
+  it('follows the current WDK inheritance chain through the concrete read-only account', () => {
+    const account = makeAccount()
+    expect(account).toBeInstanceOf(WalletAccountReadOnlyRgbLightning)
+    expect(account).toBeInstanceOf(WalletAccountReadOnly)
   })
 })
 
@@ -213,29 +224,44 @@ describe('node info / network / sync', () => {
 })
 
 describe('getAddress', () => {
-  it('returns the .address field when node.address returns an object', () => {
+  it('returns the .address field when node.address returns an object', async () => {
     const account = makeAccount({ node: makeNode({ address: () => ({ address: 'tb1qabc' }) }) })
-    expect(account.getAddress()).toBe('tb1qabc')
+    await expect(account.getAddress()).resolves.toBe('tb1qabc')
   })
 
-  it('returns the string directly when node.address returns a string', () => {
+  it('returns the string directly when node.address returns a string', async () => {
     const account = makeAccount({ node: makeNode({ address: () => 'tb1qstr' }) })
-    expect(account.getAddress()).toBe('tb1qstr')
+    await expect(account.getAddress()).resolves.toBe('tb1qstr')
   })
 
-  it('returns PENDING_ADDRESS when node.address throws', () => {
+  it('throws AccountLockedError instead of returning a synthetic address', async () => {
     const account = makeAccount({ node: makeNode({ address: () => { throw new Error('NotInitialized') } }) })
-    expect(account.getAddress()).toBe(PENDING_ADDRESS)
+    await expect(account.getAddress()).rejects.toBeInstanceOf(AccountLockedError)
   })
 
-  it('returns PENDING_ADDRESS when node.address returns an empty string', () => {
+  it('returns a non-throwing locked state for pre-unlock UI loaders', async () => {
+    const account = makeAccount({ node: makeNode({ address: () => { throw new Error('LockedNode') } }) })
+    await expect(account.getAddressState()).resolves.toEqual({ status: 'locked', address: null })
+  })
+
+  it('classifies an uncreated native node as locked', async () => {
+    const binding = makeBinding()
+    Object.defineProperty(binding, 'node', {
+      get: () => { throw new Error('SdkNode not created — call unlock() first') }
+    })
+    const account = new WalletAccountRgbLightning({ binding })
+    await expect(account.getAddress()).rejects.toBeInstanceOf(AccountLockedError)
+    await expect(account.getBalance()).resolves.toBe(0n)
+  })
+
+  it('rejects an empty address response', async () => {
     const account = makeAccount({ node: makeNode({ address: () => '' }) })
-    expect(account.getAddress()).toBe(PENDING_ADDRESS)
+    await expect(account.getAddress()).rejects.toThrow('invalid receive address')
   })
 
-  it('returns PENDING_ADDRESS when node.address returns an object without .address', () => {
+  it('rejects an object without an address', async () => {
     const account = makeAccount({ node: makeNode({ address: () => ({}) }) })
-    expect(account.getAddress()).toBe(PENDING_ADDRESS)
+    await expect(account.getAddress()).rejects.toThrow('invalid receive address')
   })
 })
 
@@ -571,25 +597,30 @@ describe('RGB invoices / transfers / media', () => {
 })
 
 describe('BTC ops', () => {
-  it('getBalance parses vanilla.spendable to a string', async () => {
+  it('getBalance parses vanilla.spendable to a bigint', async () => {
     const account = makeAccount({
       node: makeNode({ btcBalance: () => ({ vanilla: { spendable: 4242, settled: 100 } }) })
     })
-    await expect(account.getBalance()).resolves.toBe('4242')
+    await expect(account.getBalance()).resolves.toBe(4242n)
   })
 
   it('getBalance falls back to vanilla.settled when spendable is absent', async () => {
     const account = makeAccount({
       node: makeNode({ btcBalance: () => ({ vanilla: { settled: 77 } }) })
     })
-    await expect(account.getBalance()).resolves.toBe('77')
+    await expect(account.getBalance()).resolves.toBe(77n)
   })
 
-  it('getBalance returns "0" when node.btcBalance throws', async () => {
+  it('getBalance returns 0n for a locked node', async () => {
     const account = makeAccount({
       node: makeNode({ btcBalance: () => { throw new Error('NotInitialized') } })
     })
-    await expect(account.getBalance()).resolves.toBe('0')
+    await expect(account.getBalance()).resolves.toBe(0n)
+  })
+
+  it('getBalance does not hide non-locking backend failures', async () => {
+    const account = makeAccount({ node: makeNode({ btcBalance: () => { throw new Error('indexer unavailable') } }) })
+    await expect(account.getBalance()).rejects.toThrow('indexer unavailable')
   })
 
   it('getBalance forwards the skipSync flag', async () => {
@@ -622,13 +653,13 @@ describe('BTC ops', () => {
     expect(typeof arg).toBe('boolean')
   })
 
-  it('getBalance returns "0" via the absent-vanilla path (not the catch)', async () => {
+  it('getBalance returns 0n via the absent-vanilla path (not the catch)', async () => {
     // btcBalance succeeds but the result has no `vanilla` at all → the
     // `?? 0` final default fires (String(0)='0'), a DIFFERENT code path than
     // the catch-block '0'. Spy proves btcBalance was actually invoked.
     const btcBalance = jest.fn(() => ({}))
     const account = makeAccount({ node: makeNode({ btcBalance }) })
-    await expect(account.getBalance()).resolves.toBe('0')
+    await expect(account.getBalance()).resolves.toBe(0n)
     expect(btcBalance).toHaveBeenCalledTimes(1)
   })
 
@@ -648,12 +679,19 @@ describe('BTC ops', () => {
     expect(typeof arg).toBe('boolean')
   })
 
-  it('sendTransaction forwards to node.sendBtc', async () => {
+  it('sendTransaction maps the WDK transaction and result shapes', async () => {
     const node = makeNode()
     const account = makeAccount({ node })
-    const req = { address: 'tb1q', amount: 1000 }
-    await expect(account.sendTransaction(req)).resolves.toMatchObject({ txid: 'btctx' })
-    expect(node.sendBtc).toHaveBeenCalledWith(req)
+    await expect(account.sendTransaction({ to: 'tb1q', value: 1000, feeRate: 2 })).resolves.toEqual({
+      hash: 'btctx',
+      fee: 282n
+    })
+    expect(node.sendBtc).toHaveBeenCalledWith({
+      address: 'tb1q',
+      amount: 1000,
+      fee_rate: 2,
+      skip_sync: false
+    })
   })
 
   it('getTransactions forwards to node.listTransactions with coerced skipSync', async () => {
@@ -663,7 +701,7 @@ describe('BTC ops', () => {
     expect(listTransactions).toHaveBeenCalledWith(true)
   })
 
-  it('getTransactions forwards skipSync RAW (no boolean coercion)', async () => {
+  it('getTransactions normalizes skipSync to boolean', async () => {
     // Unlike getBalance/getBalanceDetails, getTransactions passes skipSync
     // through verbatim. A non-boolean truthy (1) must reach the node AS 1,
     // not coerced to `true` — this catches an accidental `!!` being added.
@@ -671,8 +709,8 @@ describe('BTC ops', () => {
     const account = makeAccount({ node: makeNode({ listTransactions }) })
     await account.getTransactions(1)
     const arg = listTransactions.mock.calls[0][0]
-    expect(arg).toBe(1)
-    expect(typeof arg).toBe('number')
+    expect(arg).toBe(true)
+    expect(typeof arg).toBe('boolean')
   })
 
   it('listUnspents forwards to node.listUnspents', async () => {
@@ -682,13 +720,13 @@ describe('BTC ops', () => {
     expect(listUnspents).toHaveBeenCalledWith(false)
   })
 
-  it('listUnspents forwards skipSync RAW (no boolean coercion)', async () => {
+  it('listUnspents normalizes skipSync to boolean', async () => {
     const listUnspents = jest.fn(() => ({ unspents: [] }))
     const account = makeAccount({ node: makeNode({ listUnspents }) })
     await account.listUnspents(1)
     const arg = listUnspents.mock.calls[0][0]
-    expect(arg).toBe(1)
-    expect(typeof arg).toBe('number')
+    expect(arg).toBe(true)
+    expect(typeof arg).toBe('boolean')
   })
 
   it('createUtxos forwards and returns { ok: true }', async () => {
@@ -719,7 +757,7 @@ describe('diagnostics / onion / signing', () => {
   it('sign forwards to node.signMessage', async () => {
     const node = makeNode()
     const account = makeAccount({ node })
-    await expect(account.sign('hello')).resolves.toEqual({ signature: 'sig:hello' })
+    await expect(account.sign('hello')).resolves.toBe('sig:hello')
     expect(node.signMessage).toHaveBeenCalledWith('hello')
   })
 
@@ -806,120 +844,62 @@ describe('getTransactionReceipt', () => {
     await expect(account.getTransactionReceipt(undefined)).rejects.toThrow(/hash is required/)
   })
 
-  it('finds an on-chain tx via getTransactions ({ transactions })', async () => {
-    const hit = { txid: 'abc', confirmations: 3 }
-    const account = makeAccount({
-      node: makeNode({ listTransactions: () => ({ transactions: [{ txid: 'zzz' }, hit] }) })
-    })
+  it('returns a confirmed on-chain transaction from the txid-filtered query', async () => {
+    const hit = { txid: 'abc', confirmation_time: { height: 10, timestamp: 20 } }
+    const listTransactionsByTxid = jest.fn(() => [hit])
+    const account = makeAccount({ node: makeNode({ listTransactionsByTxid }) })
     await expect(account.getTransactionReceipt('abc')).resolves.toBe(hit)
+    expect(listTransactionsByTxid).toHaveBeenCalledWith('abc', false)
   })
 
-  it('finds an on-chain tx when getTransactions returns a bare array', async () => {
-    const hit = { txid: 'def' }
+  it('returns null for an unconfirmed on-chain transaction', async () => {
     const account = makeAccount({
-      node: makeNode({ listTransactions: () => [hit] })
+      node: makeNode({ listTransactionsByTxid: () => [{ txid: 'abc', confirmation_time: null }] })
     })
-    await expect(account.getTransactionReceipt('def')).resolves.toBe(hit)
+    await expect(account.getTransactionReceipt('abc')).resolves.toBeNull()
   })
 
-  it('falls back to an Outbound LN payment when not found on-chain', async () => {
-    const sent = { payment_hash: 'ph1', amt_msat: 1 }
-    const getPayment = jest.fn((h, t) => (t === 'Outbound' ? sent : null))
+  it('returns a settled RGB transfer', async () => {
+    const transfer = { txid: 'rgbtx', status: 'Settled' }
     const account = makeAccount({
-      node: makeNode({ listTransactions: () => ({ transactions: [] }), getPayment })
+      node: makeNode({ listTransfersByTxid: () => ({ transfers: [transfer] }) })
     })
-    await expect(account.getTransactionReceipt('ph1')).resolves.toBe(sent)
-    // Must use RLN's real payment-type enum, not the old HTTP 'sent' string —
-    // the C-FFI errors on any value outside Outbound/InboundAutoClaim/InboundHodl.
-    expect(getPayment).toHaveBeenCalledWith('ph1', 'Outbound')
+    await expect(account.getTransactionReceipt('rgbtx')).resolves.toBe(transfer)
   })
 
-  it('falls back to an InboundAutoClaim payment when not Outbound', async () => {
-    const recv = { payment_hash: 'ph2' }
-    const getPayment = jest.fn((h, t) => {
-      if (t === 'Outbound') throw new Error('not an outbound payment')
-      return t === 'InboundAutoClaim' ? recv : null
-    })
-    const account = makeAccount({
-      node: makeNode({ listTransactions: () => ({ transactions: [] }), getPayment })
-    })
-    await expect(account.getTransactionReceipt('ph2')).resolves.toBe(recv)
-    expect(getPayment).toHaveBeenCalledWith('ph2', 'InboundAutoClaim')
+  it('returns a completed Lightning payment and hides pending payments', async () => {
+    const completed = { payment_hash: 'done', status: 'Succeeded' }
+    const pending = { payment_hash: 'wait', status: 'Pending' }
+    const claimable = { payment_hash: 'claimable', status: 'Claimable' }
+    const claiming = { payment_hash: 'claiming', status: 'Claiming' }
+    const account = makeAccount({ node: makeNode({ listPayments: () => [completed, pending, claimable, claiming] }) })
+    await expect(account.getTransactionReceipt('done')).resolves.toBe(completed)
+    await expect(account.getTransactionReceipt('wait')).resolves.toBeNull()
+    await expect(account.getTransactionReceipt('claimable')).resolves.toBeNull()
+    await expect(account.getTransactionReceipt('claiming')).resolves.toBeNull()
   })
 
-  it('falls back to an InboundHodl payment when neither Outbound nor InboundAutoClaim', async () => {
-    const hodl = { payment_hash: 'ph2b' }
-    const getPayment = jest.fn((h, t) => (t === 'InboundHodl' ? hodl : null))
-    const account = makeAccount({
-      node: makeNode({ listTransactions: () => ({ transactions: [] }), getPayment })
-    })
-    await expect(account.getTransactionReceipt('ph2b')).resolves.toBe(hodl)
-    expect(getPayment).toHaveBeenCalledWith('ph2b', 'InboundHodl')
+  it('returns null when the hash is absent from every read model', async () => {
+    await expect(makeAccount().getTransactionReceipt('nope')).resolves.toBeNull()
   })
 
-  it('ignores a payment object lacking a payment_hash', async () => {
-    const getPayment = jest.fn((h, t) => (t === 'Outbound' ? { amt_msat: 5 } : null))
+  it('does not hide transaction-query failures', async () => {
     const account = makeAccount({
-      node: makeNode({ listTransactions: () => ({ transactions: [] }), getPayment })
+      node: makeNode({ listTransactionsByTxid: () => { throw new Error('indexer unavailable') } })
     })
-    await expect(account.getTransactionReceipt('ph4')).resolves.toBeNull()
-  })
-
-  it('skips a hash-less InboundAutoClaim hit and continues to InboundHodl', async () => {
-    // The `recv && recv.payment_hash` guard's FALSE branch: an
-    // InboundAutoClaim object WITHOUT payment_hash must NOT be returned —
-    // the lookup keeps going and returns the InboundHodl match instead.
-    const hodl = { payment_hash: 'ph5', amt_msat: 9 }
-    const getPayment = jest.fn((h, t) => {
-      if (t === 'Outbound') return null
-      if (t === 'InboundAutoClaim') return { amt_msat: 5 } // truthy but no payment_hash
-      return t === 'InboundHodl' ? hodl : null
-    })
-    const account = makeAccount({
-      node: makeNode({ listTransactions: () => ({ transactions: [] }), getPayment })
-    })
-    await expect(account.getTransactionReceipt('ph5')).resolves.toBe(hodl)
-    expect(getPayment.mock.calls.map((c) => c[1])).toEqual(['Outbound', 'InboundAutoClaim', 'InboundHodl'])
-  })
-
-  it('returns null when every payment hit lacks a payment_hash', async () => {
-    // All three guard FALSE branches: truthy objects with no payment_hash
-    // for all payment types → must end at `return null`.
-    const getPayment = jest.fn(() => ({ amt_msat: 1 }))
-    const account = makeAccount({
-      node: makeNode({ listTransactions: () => ({ transactions: [] }), getPayment })
-    })
-    await expect(account.getTransactionReceipt('ph6')).resolves.toBeNull()
-    expect(getPayment.mock.calls.map((c) => c[1])).toEqual(['Outbound', 'InboundAutoClaim', 'InboundHodl'])
-  })
-
-  it('returns null when found nowhere, after trying every payment type in order', async () => {
-    const getPayment = jest.fn(() => { throw new Error('not found') })
-    const account = makeAccount({
-      node: makeNode({ listTransactions: () => ({ transactions: [] }), getPayment })
-    })
-    await expect(account.getTransactionReceipt('nope')).resolves.toBeNull()
-    expect(getPayment.mock.calls.map((c) => c[1])).toEqual(['Outbound', 'InboundAutoClaim', 'InboundHodl'])
-  })
-
-  it('continues to LN lookup when getTransactions itself throws', async () => {
-    const sent = { payment_hash: 'ph3' }
-    const account = makeAccount({
-      node: makeNode({
-        listTransactions: () => { throw new Error('boom') },
-        getPayment: (h, t) => (t === 'Outbound' ? sent : null)
-      })
-    })
-    await expect(account.getTransactionReceipt('ph3')).resolves.toBe(sent)
+    await expect(account.getTransactionReceipt('abc')).rejects.toThrow('indexer unavailable')
   })
 })
 
-describe('getKeyPair', () => {
-  it('returns the node_id as a Buffer publicKey with null privateKey', () => {
+describe('WDK account properties', () => {
+  it('returns index, path, and the node id as a Uint8Array keyPair', () => {
     const account = makeAccount({ bootstrap: () => ({ node_id: 'aabbcc' }) })
-    const kp = account.getKeyPair()
-    expect(kp.publicKey).toEqual(Buffer.from('aabbcc', 'hex'))
+    expect(account.index).toBe(0)
+    expect(account.path).toBe('m')
+    const kp = account.keyPair
+    expect(kp.publicKey).toEqual(Uint8Array.from([0xaa, 0xbb, 0xcc]))
     expect(kp.privateKey).toBeNull()
+    expect(account.getKeyPair()).toEqual(kp)
   })
 
   it('throws when bootstrap has no node_id', () => {
@@ -1220,9 +1200,16 @@ describe('dispose', () => {
 })
 
 describe('toReadOnlyAccount / ReadOnlyRgbLightningAccount', () => {
-  it('returns a façade whose getAddress proxies the account', async () => {
+  it('returns a cached WDK read-only account with no mutating capability', async () => {
     const account = makeAccount({ node: makeNode({ address: () => ({ address: 'tb1qro' }) }) })
     const ro = await account.toReadOnlyAccount()
+    expect(ro).toBeInstanceOf(WalletAccountReadOnlyRgbLightning)
+    expect(ro).toBeInstanceOf(WalletAccountReadOnly)
+    expect(await account.toReadOnlyAccount()).toBe(ro)
+    expect(ro).not.toHaveProperty('_account')
+    for (const method of ['sign', 'sendTransaction', 'sendBtc', 'transfer', 'unlock', 'shutdown', 'openChannel', 'connectPeer', 'clearVssFence', 'getLspConfig']) {
+      expect(ro[method]).toBeUndefined()
+    }
     await expect(ro.getAddress()).resolves.toBe('tb1qro')
   })
 
@@ -1234,10 +1221,20 @@ describe('toReadOnlyAccount / ReadOnlyRgbLightningAccount', () => {
     await expect(p).resolves.toBe('tb1qsync')
   })
 
-  it('verify rejects with NotImplementedError', async () => {
-    const account = makeAccount()
+  it('verify forwards to the native verifier and returns its boolean', async () => {
+    const verifyMessage = jest.fn(() => ({ valid: false }))
+    const account = makeAccount({ node: makeNode({ verifyMessage }) })
     const ro = await account.toReadOnlyAccount()
-    await expect(ro.verify('m', 's')).rejects.toBeInstanceOf(NotImplementedError)
+    await expect(ro.verify('m', 's')).resolves.toBe(false)
+    expect(verifyMessage).toHaveBeenCalledWith('m', 's')
+  })
+
+  it('verify reports the pre-unlock state with AccountLockedError', async () => {
+    const account = makeAccount({
+      node: makeNode({ verifyMessage: () => { throw new Error('SdkNode not created — call unlock() first') } })
+    })
+    const ro = await account.toReadOnlyAccount()
+    await expect(ro.verify('m', 's')).rejects.toBeInstanceOf(AccountLockedError)
   })
 
   it('getBalance returns a BigInt of the account satoshi string', async () => {
@@ -1250,14 +1247,14 @@ describe('toReadOnlyAccount / ReadOnlyRgbLightningAccount', () => {
     expect(typeof bal).toBe('bigint')
   })
 
-  it('getTokenBalance returns a BigInt from settled', async () => {
-    const account = makeAccount({ node: makeNode({ assetBalance: () => ({ settled: 9 }) }) })
+  it('getTokenBalance prefers spendable and returns a bigint', async () => {
+    const account = makeAccount({ node: makeNode({ assetBalance: () => ({ spendable: 8, settled: 9 }) }) })
     const ro = await account.toReadOnlyAccount()
-    await expect(ro.getTokenBalance('aid')).resolves.toBe(9n)
+    await expect(ro.getTokenBalance('aid')).resolves.toBe(8n)
   })
 
-  it('getTokenBalance falls back to spendable when settled absent', async () => {
-    const account = makeAccount({ node: makeNode({ assetBalance: () => ({ spendable: 4 }) }) })
+  it('getTokenBalance falls back to settled when spendable is absent', async () => {
+    const account = makeAccount({ node: makeNode({ assetBalance: () => ({ settled: 4 }) }) })
     const ro = await account.toReadOnlyAccount()
     await expect(ro.getTokenBalance('aid')).resolves.toBe(4n)
   })
@@ -1268,9 +1265,8 @@ describe('toReadOnlyAccount / ReadOnlyRgbLightningAccount', () => {
     await expect(ro.getTokenBalance('aid')).resolves.toBe(0n)
   })
 
-  it('quoteSendTransaction proxies to the account quote', async () => {
-    const account = makeAccount()
-    account._defaultFeeRate = async () => 4
+  it('quoteSendTransaction operates independently through the read adapter', async () => {
+    const account = makeAccount({ node: makeNode({ estimateFee: () => ({ fee_rate: 4 }) }) })
     const ro = await account.toReadOnlyAccount()
     await expect(ro.quoteSendTransaction({})).resolves.toEqual({ fee: BigInt(4 * 141) })
   })
@@ -1303,8 +1299,7 @@ describe('toReadOnlyAccount / ReadOnlyRgbLightningAccount', () => {
 
   it('quoteTransfer on-chain (btc-address) uses estimateFee rate × 141 vbytes', async () => {
     // btc-address branch (lines 964-966): rate × APPROX_BTC_TX_VBYTES.
-    const account = makeAccount()
-    account._defaultFeeRate = async () => 7
+    const account = makeAccount({ node: makeNode({ estimateFee: () => ({ fee_rate: 7 }) }) })
     const ro = await account.toReadOnlyAccount()
     const res = await ro.quoteTransfer({ recipient: 'tb1qsomeaddress', amount: 50000 })
     expect(res).toEqual({ fee: BigInt(7 * 141) })
@@ -1312,17 +1307,16 @@ describe('toReadOnlyAccount / ReadOnlyRgbLightningAccount', () => {
 
   it('quoteTransfer RGB invoice routes through the on-chain quote', async () => {
     // RGB invoices settle on-chain → same rate × 141 path, NOT the LN bps.
-    const account = makeAccount()
-    account._defaultFeeRate = async () => 3
+    const account = makeAccount({ node: makeNode({ estimateFee: () => ({ fee_rate: 3 }) }) })
     const ro = await account.toReadOnlyAccount()
     const res = await ro.quoteTransfer({ recipient: 'rgb:abc123', amount: 50000 })
     expect(res).toEqual({ fee: BigInt(3 * 141) })
   })
 
-  it('getTransactionReceipt proxies to the account lookup', async () => {
-    const hit = { txid: 'roTx' }
+  it('getTransactionReceipt uses the read-only txid query', async () => {
+    const hit = { txid: 'roTx', confirmation_time: { height: 1, timestamp: 2 } }
     const account = makeAccount({
-      node: makeNode({ listTransactions: () => ({ transactions: [hit] }) })
+      node: makeNode({ listTransactionsByTxid: () => ({ transactions: [hit] }) })
     })
     const ro = await account.toReadOnlyAccount()
     await expect(ro.getTransactionReceipt('roTx')).resolves.toBe(hit)

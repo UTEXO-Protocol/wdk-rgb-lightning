@@ -13,14 +13,25 @@
 // shapes this module owns (config, results, errors, LSP DTOs) are
 // typed precisely.
 
+import WalletManager, { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
+
 // ───────────────────────────────────────────────────────────────────
 // Shared primitives
 // ───────────────────────────────────────────────────────────────────
 
 export type Network = 'mainnet' | 'testnet' | 'regtest' | 'signet'
 
-/** Placeholder address returned by `getAddress()` before `unlock()`. */
-export const PENDING_ADDRESS: string
+export interface Transaction {
+  to: string
+  value: number | bigint
+  feeRate?: number | bigint
+  confirmationTarget?: number
+}
+
+export interface TransactionResult {
+  hash: string
+  fee: bigint
+}
 
 export interface FeeRates {
   /** Economy rate (sat/vB), targets ~1 hour confirmation. */
@@ -45,6 +56,7 @@ export interface TransferOptions {
   token?: string
   /** sat/vB override for on-chain flows. */
   feeRate?: number
+  confirmationTarget?: number
 }
 
 export interface TransferResult {
@@ -208,6 +220,11 @@ export interface RgbLightningBindingConfig {
 }
 
 export interface RgbLightningWalletConfig extends RgbLightningBindingConfig {
+  /**
+   * `auto` uses the corrected WDK seed derivation for new nodes and retries
+   * the legacy beta derivation only for an existing signer-identity mismatch.
+   */
+  nodeSeedDerivation?: 'auto' | 'wdk-seed-v2' | 'legacy-v1'
   bitcoindRpcUsername?: string
   bitcoindRpcPassword?: string
   bitcoindRpcHost?: string
@@ -224,7 +241,7 @@ export interface RgbLightningWalletConfig extends RgbLightningBindingConfig {
 
 export interface IRgbLightningBinding {
   ensureNode(): unknown
-  attachExternalSigner(seedHex: string): void
+  attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
   unlock(unlockRequest: object): void
   readonly node: unknown
   bootstrap(): object
@@ -238,7 +255,7 @@ export interface IRgbLightningBinding {
 export class NodeRgbLightningBinding implements IRgbLightningBinding {
   constructor(config: RgbLightningBindingConfig)
   ensureNode(): unknown
-  attachExternalSigner(seedHex: string): void
+  attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
   unlock(unlockRequest: object): void
   readonly node: unknown
   bootstrap(): object
@@ -256,7 +273,7 @@ export class NodeRgbLightningBinding implements IRgbLightningBinding {
 export class BareRgbLightningBinding implements IRgbLightningBinding {
   constructor(config: RgbLightningBindingConfig)
   ensureNode(): unknown
-  attachExternalSigner(seedHex: string): void
+  attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
   unlock(unlockRequest: object): void
   readonly node: unknown
   bootstrap(): object
@@ -275,8 +292,49 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
 // Account
 // ───────────────────────────────────────────────────────────────────
 
-export class WalletAccountRgbLightning {
+export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
+  protected constructor(reader: object)
+  getBootstrap(): Promise<object>
+  vssStatus(): Promise<VssStatus>
+  getNodeInfo(): Promise<object>
+  getNetworkInfo(): Promise<object>
+  getAddress(): Promise<string>
+  getAddressState(): Promise<{ status: 'ready'; address: string } | { status: 'locked'; address: null }>
+  listChannels(): Promise<object>
+  getChannelId(temporaryChannelIdHex: string): Promise<object>
+  listPeers(): Promise<object>
+  decodeInvoice(invoice: string): Promise<object>
+  getInvoiceStatus(invoice: string): Promise<object>
+  listPayments(): Promise<object>
+  getPayment(paymentHashHex: string, paymentType: RgbPaymentType): Promise<object>
+  listAssets(filterAssetSchemas?: string[]): Promise<object>
+  getAssetBalance(assetId: string): Promise<object>
+  getAssetMetadata(assetId: string): Promise<object>
+  listTransfers(assetId: string): Promise<object>
+  listTransfersByTxid(txid: string): Promise<object>
+  decodeRgbInvoice(invoice: string): Promise<object>
+  getAssetMedia(digest: string): Promise<object>
+  getBalance(skipSync?: boolean): Promise<bigint>
+  getBalanceDetails(skipSync?: boolean): Promise<object>
+  getTokenBalance(assetId: string): Promise<bigint>
+  getTransactions(skipSync?: boolean): Promise<object>
+  getTransactionsByTxid(txid: string, skipSync?: boolean): Promise<object>
+  listUnspents(skipSync?: boolean): Promise<object>
+  estimateFee(blocks: number): Promise<object>
+  verify(message: string, signature: string): Promise<boolean>
+  checkIndexerUrl(indexerUrl: string): Promise<object>
+  checkProxyEndpoint(proxyEndpoint: string): Promise<object>
+  quoteTransfer(options: TransferOptions): Promise<QuoteResult>
+  quoteSendTransaction(tx: Transaction): Promise<QuoteResult>
+  getTransactionReceipt(hash: string): Promise<unknown | null>
+}
+
+export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning {
   constructor(bindings: { binding: IRgbLightningBinding })
+
+  readonly index: 0
+  readonly path: 'm'
+  readonly keyPair: KeyPair
 
   // Lifecycle
   unlock(unlockRequest: object): Promise<{ ok: true }>
@@ -312,25 +370,19 @@ export class WalletAccountRgbLightning {
   getNodeInfo(): Promise<object>
   getNetworkInfo(): Promise<object>
   sync(): Promise<{ ok: true }>
-  getAddress(): string
 
   // Channels
   openChannel(request: OpenChannelRequest | object): Promise<object>
   closeChannel(request: object): Promise<{ ok: true }>
-  listChannels(): Promise<object>
-  getChannelId(temporaryChannelIdHex: string): Promise<object>
 
   // Peers
   connectPeer(peerPubkeyAndAddr: string): Promise<{ ok: true }>
   disconnectPeer(request: object): Promise<{ ok: true }>
-  listPeers(): Promise<object>
 
   // BOLT11 invoices
   createInvoice(request: object): Promise<object>
   /** Cross-SDK alias for createInvoice; accepts native snake_case or camelCase. */
   createLightningInvoice(request: CreateLightningInvoiceRequest | object): Promise<object>
-  decodeInvoice(invoice: string): Promise<object>
-  getInvoiceStatus(invoice: string): Promise<object>
   /** Create a HODL invoice bound to a caller-supplied payment hash. */
   createHodlInvoice(params: CreateHodlInvoiceParams): Promise<{ bolt11: string; paymentHash: string }>
   cancelHodlInvoice(request: object): Promise<{ ok: true }>
@@ -339,46 +391,28 @@ export class WalletAccountRgbLightning {
   // Payments
   sendPayment(request: object): Promise<object>
   keysend(request: object): Promise<object>
-  listPayments(): Promise<object>
-  getPayment(paymentHashHex: string, paymentType: RgbPaymentType): Promise<object>
 
   // RGB assets
-  listAssets(filterAssetSchemas?: string[]): Promise<object>
-  getAssetBalance(assetId: string): Promise<object>
-  getAssetMetadata(assetId: string): Promise<object>
-  listTransfers(assetId?: string): Promise<object>
   refreshTransfers(request: object): Promise<{ ok: true }>
   failTransfers(request: object): Promise<object>
   createRgbInvoice(request: CreateRgbInvoiceRequest | object): Promise<object>
-  decodeRgbInvoice(invoice: string): Promise<object>
   sendRgbAsset(request: SendRgbAssetRequest | object): Promise<object>
-  getAssetMedia(digest: string): Promise<object>
   postAssetMedia(request: object): Promise<object>
 
   // BTC on-chain
-  getBalance(skipSync?: boolean): Promise<string>
-  getBalanceDetails(skipSync?: boolean): Promise<object>
-  sendTransaction(request: object): Promise<object>
-  getTransactions(skipSync?: boolean): Promise<object>
-  listUnspents(skipSync?: boolean): Promise<object>
+  sendBtc(request: object): Promise<object>
+  sendTransaction(tx: Transaction | object): Promise<TransactionResult>
+  rotateAddress(): Promise<string>
   createUtxos(request: object): Promise<{ ok: true }>
-  estimateFee(blocks: number): Promise<object>
 
   // Onion / signing / diagnostics
   sendOnionMessage(request: object): Promise<{ ok: true }>
-  sign(message: string): Promise<{ signature: string }>
-  checkIndexerUrl(indexerUrl: string): Promise<object>
-  checkProxyEndpoint(proxyEndpoint: string): Promise<{ ok: true }>
+  sign(message: string): Promise<string>
 
   // Generic IWalletAccount surface
   transfer(options: TransferOptions): Promise<TransferResult>
-  quoteTransfer(options: TransferOptions): Promise<QuoteResult>
-  quoteSendTransaction(tx: object): Promise<QuoteResult>
-  getTransactionReceipt(hash: string): Promise<unknown | null>
   getKeyPair(): KeyPair
-  toReadOnlyAccount(): Promise<IWalletAccountReadOnlyRgbLightning>
-  /** @throws {NotImplementedError} — upstream c-ffi lacks verify_message. */
-  verify(message: string, signature: string): Promise<boolean>
+  toReadOnlyAccount(): Promise<WalletAccountReadOnlyRgbLightning>
   /** @throws {NotImplementedError} — use sendTransaction/sendPayment/sendRgbAsset. */
   signTransaction(tx: object): Promise<never>
 
@@ -390,24 +424,17 @@ export class WalletAccountRgbLightning {
   dispose(): void
 }
 
-export interface IWalletAccountReadOnlyRgbLightning {
-  getAddress(): Promise<string>
-  verify(message: string, signature: string): Promise<boolean>
-  getBalance(): Promise<bigint>
-  getTokenBalance(assetId: string): Promise<bigint>
-  quoteSendTransaction(tx: object): Promise<QuoteResult>
-  quoteTransfer(options: TransferOptions): Promise<QuoteResult>
-  getTransactionReceipt(hash: string): Promise<unknown | null>
-}
+export type IWalletAccountReadOnlyRgbLightning = WalletAccountReadOnlyRgbLightning
 
 // ───────────────────────────────────────────────────────────────────
 // Manager (default export)
 // ───────────────────────────────────────────────────────────────────
 
-export default class WalletManagerRgbLightning {
+export default class WalletManagerRgbLightning extends WalletManager {
   constructor(seed: string | Uint8Array, config: RgbLightningWalletConfig)
-  getAccount(index?: number): Promise<WalletAccountRgbLightning>
-  getAccountByPath(path: string): Promise<never>
+  getAccount(index?: number, options?: { signerName?: string }): Promise<WalletAccountRgbLightning>
+  getAccount(signerName: string): Promise<WalletAccountRgbLightning>
+  getAccountByPath(path: string, options?: { signerName?: string }): Promise<WalletAccountRgbLightning>
   getFeeRates(): Promise<FeeRates>
   dispose(): void
   static readonly Binding: new (config: RgbLightningBindingConfig) => IRgbLightningBinding
@@ -424,6 +451,7 @@ export class RgbLightningError extends Error {
   toJSON(): { name: string; code: string; message: string; cause: unknown }
 }
 export class UnlockError extends RgbLightningError {}
+export class AccountLockedError extends RgbLightningError {}
 export class VssError extends RgbLightningError {}
 export class VssNotConfiguredError extends VssError {}
 export class ApayError extends RgbLightningError {}

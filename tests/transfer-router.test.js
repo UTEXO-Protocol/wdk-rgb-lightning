@@ -23,7 +23,7 @@ function makeAccount () {
   const account = new WalletAccountRgbLightning({ binding: { node: {} } })
   account.sendPayment = jest.fn(async () => ({ payment_hash: 'ph', fee_msat: 7 }))
   account.keysend = jest.fn(async () => ({ payment_hash: 'kh', fee_msat: 11 }))
-  account.sendTransaction = jest.fn(async () => ({ txid: 'btctxid' }))
+  account.sendTransaction = jest.fn(async () => ({ hash: 'btctxid', fee: 282n }))
   account.sendRgbAsset = jest.fn(async () => ({ txid: 'rgbtxid' }))
   // The RGB path decodes the invoice to source recipient_id / asset_id /
   // transport_endpoints before building the native sendRgb request.
@@ -72,10 +72,10 @@ describe('WalletAccountRgbLightning.transfer', () => {
     const account = makeAccount()
     const res = await account.transfer({ recipient: BTC_ADDR, amount: 50000, feeRate: 2 })
     expect(account.sendTransaction).toHaveBeenCalledWith({
-      address: BTC_ADDR,
-      amount: 50000,
-      fee_rate: 2,
-      skip_sync: false
+      to: BTC_ADDR,
+      value: 50000,
+      feeRate: 2,
+      confirmationTarget: 6
     })
     // fee = round(feeRate * APPROX_BTC_TX_VBYTES) = round(2 * 141) = 282
     expect(res).toEqual({ hash: 'btctxid', fee: 282n })
