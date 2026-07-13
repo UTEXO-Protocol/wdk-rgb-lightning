@@ -17,7 +17,9 @@
 import { jest } from '@jest/globals'
 import { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 import WalletAccountRgbLightning from '../src/wallet-account-rgb-lightning.js'
-import WalletAccountReadOnlyRgbLightning from '../src/wallet-account-read-only-rgb-lightning.js'
+import WalletAccountReadOnlyRgbLightning, {
+  createReadOnlyRgbLightningAdapter
+} from '../src/wallet-account-read-only-rgb-lightning.js'
 import { UnlockError, AccountLockedError, ApayError } from '../src/errors.js'
 import { LspClient } from '../src/lsp-client.js'
 import { UtexoLsp } from '../src/utexo-lsp.js'
@@ -120,6 +122,19 @@ describe('construction', () => {
     expect(account).toBeInstanceOf(WalletAccountReadOnlyRgbLightning)
     expect(account).toBeInstanceOf(WalletAccountReadOnly)
   })
+
+  it('validates the least-authority read-only adapter at construction time', () => {
+    expect(() => createReadOnlyRgbLightningAdapter()).toThrow('binding is required')
+    expect(() => new WalletAccountReadOnlyRgbLightning()).toThrow('requires a read-only adapter')
+    expect(() => new WalletAccountReadOnlyRgbLightning({ address: jest.fn() })).toThrow('missing assetBalance()')
+  })
+
+  it('fails clearly when an installed binding lacks a required read-only node method', async () => {
+    const node = makeNode({ verifyMessage: undefined })
+    const adapter = createReadOnlyRgbLightningAdapter(makeBinding({ node }))
+    const ro = new WalletAccountReadOnlyRgbLightning(adapter)
+    await expect(ro.verify('hello', 'sig')).rejects.toThrow('does not expose verifyMessage()')
+  })
 })
 
 describe('lifecycle', () => {
@@ -162,6 +177,16 @@ describe('lifecycle', () => {
     const account = makeAccount({ shutdown })
     await expect(account.shutdown()).resolves.toEqual({ ok: true })
     expect(shutdown).toHaveBeenCalledTimes(1)
+  })
+
+  it('vssBackup wraps binding failures in a typed VssError', async () => {
+    const account = makeAccount({
+      vssStatus: () => ({ configured: true }),
+      vssBackup: () => { throw new Error('vss unavailable') }
+    })
+    const err = await account.vssBackup().catch((e) => e)
+    expect(err.name).toBe('VssError')
+    expect(err.message).toBe('vss unavailable')
   })
 })
 
@@ -244,6 +269,16 @@ describe('getAddress', () => {
     await expect(account.getAddressState()).resolves.toEqual({ status: 'locked', address: null })
   })
 
+  it('classifies thrown-string locked errors as locked', async () => {
+    const account = makeAccount({
+      node: makeNode({
+        // eslint-disable-next-line no-throw-literal
+        address: () => { throw 'LockedNode' }
+      })
+    })
+    await expect(account.getAddress()).rejects.toBeInstanceOf(AccountLockedError)
+  })
+
   it('classifies an uncreated native node as locked', async () => {
     const binding = makeBinding()
     Object.defineProperty(binding, 'node', {
@@ -262,6 +297,12 @@ describe('getAddress', () => {
   it('rejects an object without an address', async () => {
     const account = makeAccount({ node: makeNode({ address: () => ({}) }) })
     await expect(account.getAddress()).rejects.toThrow('invalid receive address')
+  })
+
+  it('propagates non-lock address errors through getAddress and getAddressState', async () => {
+    const account = makeAccount({ node: makeNode({ address: () => { throw new Error('indexer offline') } }) })
+    await expect(account.getAddress()).rejects.toThrow('indexer offline')
+    await expect(account.getAddressState()).rejects.toThrow('indexer offline')
   })
 })
 
@@ -694,6 +735,45 @@ describe('BTC ops', () => {
     })
   })
 
+  it('sendTransaction accepts legacy RLN aliases and response hash fallback during beta migration', async () => {
+    const node = makeNode({ sendBtc: jest.fn(() => ({ hash: 'legacyhash' })) })
+    const account = makeAccount({ node })
+    await expect(account.sendTransaction({
+      address: 'tb1qlegacy',
+      amount: 2000,
+      fee_rate: 3,
+      skip_sync: true
+    })).resolves.toEqual({ hash: 'legacyhash', fee: 423n })
+    expect(node.sendBtc).toHaveBeenCalledWith({
+      address: 'tb1qlegacy',
+      amount: 2000,
+      fee_rate: 3,
+      skip_sync: true
+    })
+  })
+
+  it('sendTransaction validates the WDK transaction shape before touching the node', async () => {
+    const node = makeNode()
+    const account = makeAccount({ node })
+    await expect(account.sendTransaction()).rejects.toThrow('requires a transaction object')
+    await expect(account.sendTransaction({ value: 1 })).rejects.toThrow('requires a non-empty to address')
+    await expect(account.sendTransaction({ to: 'tb1q', value: Number.MAX_SAFE_INTEGER + 1 })).rejects.toThrow('non-negative safe integer')
+    expect(node.sendBtc).not.toHaveBeenCalled()
+  })
+
+  it('rotateAddress requires a compatible binding method and a concrete address response', async () => {
+    const missing = makeAccount({ node: makeNode({ rotateAddress: undefined }) })
+    await expect(missing.rotateAddress()).rejects.toThrow('does not expose rotateAddress()')
+
+    const invalid = makeAccount({ node: makeNode({ rotateAddress: () => ({}) }) })
+    await expect(invalid.rotateAddress()).rejects.toThrow('invalid rotated address')
+  })
+
+  it('rotateAddress accepts the native string response form', async () => {
+    const account = makeAccount({ node: makeNode({ rotateAddress: () => 'tb1qstringrotated' }) })
+    await expect(account.rotateAddress()).resolves.toBe('tb1qstringrotated')
+  })
+
   it('getTransactions forwards to node.listTransactions with coerced skipSync', async () => {
     const listTransactions = jest.fn(() => ({ transactions: [] }))
     const account = makeAccount({ node: makeNode({ listTransactions }) })
@@ -761,6 +841,16 @@ describe('diagnostics / onion / signing', () => {
     expect(node.signMessage).toHaveBeenCalledWith('hello')
   })
 
+  it('sign accepts the signed_message field used by native bindings', async () => {
+    const account = makeAccount({ node: makeNode({ signMessage: () => ({ signed_message: 'zbase32sig' }) }) })
+    await expect(account.sign('hello')).resolves.toBe('zbase32sig')
+  })
+
+  it('rejects an invalid native signature response', async () => {
+    const account = makeAccount({ node: makeNode({ signMessage: () => ({}) }) })
+    await expect(account.sign('hello')).rejects.toThrow('invalid message signature')
+  })
+
   it('checkIndexerUrl forwards the url and returns the indexer response verbatim', async () => {
     // Pure passthrough: the account must forward the url and return whatever
     // the node returns (the indexer's own response), not synthesise a shape.
@@ -788,6 +878,11 @@ describe('quoteSendTransaction', () => {
     // override _defaultFeeRate to avoid relying on node fee shape
     account._defaultFeeRate = async () => 10
     await expect(account.quoteSendTransaction({})).resolves.toEqual({ fee: BigInt(10 * 141) })
+  })
+
+  it('rejects non-positive fee rates', async () => {
+    const account = makeAccount()
+    await expect(account.quoteSendTransaction({ feeRate: 0 })).rejects.toThrow('feeRate must be a positive number')
   })
 })
 
@@ -870,13 +965,27 @@ describe('getTransactionReceipt', () => {
   it('returns a completed Lightning payment and hides pending payments', async () => {
     const completed = { payment_hash: 'done', status: 'Succeeded' }
     const pending = { payment_hash: 'wait', status: 'Pending' }
+    const inflight = { payment_hash: 'inflight', htlc_status: 'InFlight' }
     const claimable = { payment_hash: 'claimable', status: 'Claimable' }
     const claiming = { payment_hash: 'claiming', status: 'Claiming' }
-    const account = makeAccount({ node: makeNode({ listPayments: () => [completed, pending, claimable, claiming] }) })
+    const account = makeAccount({ node: makeNode({ listPayments: () => [completed, pending, inflight, claimable, claiming] }) })
     await expect(account.getTransactionReceipt('done')).resolves.toBe(completed)
     await expect(account.getTransactionReceipt('wait')).resolves.toBeNull()
+    await expect(account.getTransactionReceipt('inflight')).resolves.toBeNull()
     await expect(account.getTransactionReceipt('claimable')).resolves.toBeNull()
     await expect(account.getTransactionReceipt('claiming')).resolves.toBeNull()
+  })
+
+  it('handles absent receipt wrappers and unsettled transfer statuses as null', async () => {
+    const account = makeAccount({
+      node: makeNode({
+        listTransactionsByTxid: () => ({}),
+        listTransfersByTxid: () => ({ transfers: [{ txid: 'rgbtx' }] }),
+        listPayments: () => ({ payments: [] })
+      })
+    })
+    await expect(account.getTransactionReceipt('rgbtx')).resolves.toBeNull()
+    await expect(account.getTransactionReceipt('missing')).resolves.toBeNull()
   })
 
   it('returns null when the hash is absent from every read model', async () => {
@@ -1229,12 +1338,28 @@ describe('toReadOnlyAccount / ReadOnlyRgbLightningAccount', () => {
     expect(verifyMessage).toHaveBeenCalledWith('m', 's')
   })
 
+  it('verify accepts a bare boolean result from older native bindings', async () => {
+    const account = makeAccount({ node: makeNode({ verifyMessage: () => true }) })
+    const ro = await account.toReadOnlyAccount()
+    await expect(ro.verify('m', 's')).resolves.toBe(true)
+  })
+
   it('verify reports the pre-unlock state with AccountLockedError', async () => {
     const account = makeAccount({
       node: makeNode({ verifyMessage: () => { throw new Error('SdkNode not created — call unlock() first') } })
     })
     const ro = await account.toReadOnlyAccount()
     await expect(ro.verify('m', 's')).rejects.toBeInstanceOf(AccountLockedError)
+  })
+
+  it('verify validates inputs and propagates non-lock native verifier errors', async () => {
+    const ro = await makeAccount().toReadOnlyAccount()
+    await expect(ro.verify(123, 'sig')).rejects.toThrow('requires a string message')
+    await expect(ro.verify('m', '')).rejects.toThrow('requires a non-empty signature')
+
+    const account = makeAccount({ node: makeNode({ verifyMessage: () => { throw new Error('bad signature encoding') } }) })
+    const failingRo = await account.toReadOnlyAccount()
+    await expect(failingRo.verify('m', 'sig')).rejects.toThrow('bad signature encoding')
   })
 
   it('getBalance returns a BigInt of the account satoshi string', async () => {
@@ -1265,10 +1390,29 @@ describe('toReadOnlyAccount / ReadOnlyRgbLightningAccount', () => {
     await expect(ro.getTokenBalance('aid')).resolves.toBe(0n)
   })
 
+  it('read-only query methods apply their WDK default skipSync values', async () => {
+    const node = makeNode()
+    const ro = await makeAccount({ node }).toReadOnlyAccount()
+    await ro.getBalanceDetails()
+    await ro.getTransactions()
+    await ro.getTransactionsByTxid('txid')
+    await ro.listUnspents()
+    expect(node.btcBalance).toHaveBeenLastCalledWith(false)
+    expect(node.listTransactions).toHaveBeenLastCalledWith(false)
+    expect(node.listTransactionsByTxid).toHaveBeenLastCalledWith('txid', false)
+    expect(node.listUnspents).toHaveBeenLastCalledWith(false)
+  })
+
   it('quoteSendTransaction operates independently through the read adapter', async () => {
     const account = makeAccount({ node: makeNode({ estimateFee: () => ({ fee_rate: 4 }) }) })
     const ro = await account.toReadOnlyAccount()
     await expect(ro.quoteSendTransaction({})).resolves.toEqual({ fee: BigInt(4 * 141) })
+  })
+
+  it('quoteSendTransaction accepts its default transaction object', async () => {
+    const account = makeAccount({ node: makeNode({ estimateFee: () => ({ fee_rate: 4 }) }) })
+    const ro = await account.toReadOnlyAccount()
+    await expect(ro.quoteSendTransaction()).resolves.toEqual({ fee: BigInt(4 * 141) })
   })
 
   it('quoteTransfer proxies to the account quote (LN bolt11 form)', async () => {
@@ -1297,6 +1441,17 @@ describe('toReadOnlyAccount / ReadOnlyRgbLightningAccount', () => {
     expect(res).toEqual({ fee: 1n })
   })
 
+  it('quoteTransfer treats an omitted Lightning amount as zero and still returns the minimum fee', async () => {
+    const ro = await makeAccount().toReadOnlyAccount()
+    await expect(ro.quoteTransfer({ recipient: 'lnbc1abc' })).resolves.toEqual({ fee: 1n })
+  })
+
+  it('quoteTransfer treats an omitted on-chain amount as zero for fee estimation', async () => {
+    const account = makeAccount({ node: makeNode({ estimateFee: () => ({ fee_rate: 2 }) }) })
+    const ro = await account.toReadOnlyAccount()
+    await expect(ro.quoteTransfer({ recipient: 'tb1qsomeaddress' })).resolves.toEqual({ fee: BigInt(2 * 141) })
+  })
+
   it('quoteTransfer on-chain (btc-address) uses estimateFee rate × 141 vbytes', async () => {
     // btc-address branch (lines 964-966): rate × APPROX_BTC_TX_VBYTES.
     const account = makeAccount({ node: makeNode({ estimateFee: () => ({ fee_rate: 7 }) }) })
@@ -1311,6 +1466,17 @@ describe('toReadOnlyAccount / ReadOnlyRgbLightningAccount', () => {
     const ro = await account.toReadOnlyAccount()
     const res = await ro.quoteTransfer({ recipient: 'rgb:abc123', amount: 50000 })
     expect(res).toEqual({ fee: BigInt(3 * 141) })
+  })
+
+  it('quoteTransfer rejects invalid and negative amounts before quoting', async () => {
+    const ro = await makeAccount().toReadOnlyAccount()
+    await expect(ro.quoteTransfer({ recipient: 'lnbc1abc', amount: 'not-a-number' })).rejects.toThrow('amount must be an integer')
+    await expect(ro.quoteTransfer({ recipient: 'lnbc1abc', amount: -1 })).rejects.toThrow('amount must not be negative')
+  })
+
+  it('listTransfers requires a concrete RGB asset id', async () => {
+    const ro = await makeAccount().toReadOnlyAccount()
+    await expect(ro.listTransfers('')).rejects.toThrow('requires a non-empty RGB asset id')
   })
 
   it('getTransactionReceipt uses the read-only txid query', async () => {

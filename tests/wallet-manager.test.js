@@ -54,6 +54,12 @@ describe('node seed derivation', () => {
 })
 
 describe('WalletManagerRgbLightning', () => {
+  it('keeps the base manager abstract and requires a persistent dataDir', () => {
+    expect(() => WalletManagerRgbLightning.Binding).toThrow('abstract')
+    expect(() => new TestManager(MNEMONIC)).toThrow('network configuration is required')
+    expect(() => new TestManager(MNEMONIC, { network: 'regtest' })).toThrow('dataDir is required')
+  })
+
   it('uses v2 for fresh nodes and supplies v1 only as an automatic fallback', async () => {
     const manager = new TestManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
     const account = await manager.getAccount()
@@ -105,5 +111,25 @@ describe('WalletManagerRgbLightning', () => {
     expect(account.keyPair.privateKey).toBeNull()
     manager.dispose()
     expect(binding.shutdown).toHaveBeenCalledTimes(1)
+  })
+
+  it('dispose is a no-op before an account has created a binding', () => {
+    const manager = new TestManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
+    expect(() => manager.dispose()).not.toThrow()
+    expect(FakeBinding.instances).toHaveLength(0)
+  })
+
+  it('maps mempool fee recommendations to WDK bigint fee rates', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = jest.fn(async () => ({
+      json: async () => ({ fastestFee: 22, hourFee: 7 })
+    }))
+    try {
+      const manager = new TestManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
+      await expect(manager.getFeeRates()).resolves.toEqual({ normal: 7n, fast: 22n })
+      expect(globalThis.fetch).toHaveBeenCalledWith('https://mempool.space/api/v1/fees/recommended')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })

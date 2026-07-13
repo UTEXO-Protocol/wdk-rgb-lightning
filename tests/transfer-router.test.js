@@ -139,6 +139,14 @@ describe('WalletAccountRgbLightning.transfer', () => {
     expect(account.sendRgbAsset).not.toHaveBeenCalled()
   })
 
+  it('throws when neither token nor decoded RGB invoice supplies an asset_id', async () => {
+    const account = makeAccount()
+    account.decodeRgbInvoice = jest.fn(async () => ({ recipient_id: 'r', transport_endpoints: ['rpc://x'] }))
+    await expect(account.transfer({ recipient: RGB_INVOICE, amount: 5, feeRate: 1 }))
+      .rejects.toThrow('asset_id missing')
+    expect(account.sendRgbAsset).not.toHaveBeenCalled()
+  })
+
   it('throws when there are no transport endpoints and no proxy is configured', async () => {
     const account = makeAccount()
     account.decodeRgbInvoice = jest.fn(async () => ({ recipient_id: 'r', asset_id: 'a', transport_endpoints: [] }))

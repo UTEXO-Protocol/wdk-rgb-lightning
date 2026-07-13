@@ -158,6 +158,15 @@ describe('attachExternalSigner', () => {
     expect(b._signer).toBe(signer)
   })
 
+  it('records a newly supplied fallback seed on the idempotent same-seed path', () => {
+    const b = makeBinding()
+    b.attachExternalSigner('seed-v2')
+    const signer = b._signer
+    b.attachExternalSigner('seed-v2', 'seed-v1')
+    expect(b._signer).toBe(signer)
+    expect(b._fallbackSeedHex).toBe('seed-v1')
+  })
+
   it('throws when a different seed is already attached', () => {
     const b = makeBinding()
     b.attachExternalSigner('seed-a')
@@ -267,6 +276,30 @@ describe('unlock', () => {
     const b = makeBinding()
     const node = fakeNode()
     node.unlockWithNativeExternalSigner.mockImplementation(() => { throw new Error('backend unavailable') })
+    b._node = node
+    b._signer = fakeSigner()
+    b._fallbackSeedHex = 'seed-v1'
+    expect(() => b.unlock({})).toThrow('backend unavailable')
+    expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not retry an identity mismatch when no fallback seed is available', () => {
+    const b = makeBinding()
+    const node = fakeNode()
+    node.unlockWithNativeExternalSigner.mockImplementation(() => {
+      throw new Error('Rln(ExternalSignerMismatch): External signer identity does not match persisted node identity')
+    })
+    b._node = node
+    b._signer = fakeSigner()
+    expect(() => b.unlock({})).toThrow('ExternalSignerMismatch')
+    expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not retry a thrown-string unlock failure with the legacy signer', () => {
+    const b = makeBinding()
+    const node = fakeNode()
+    // eslint-disable-next-line no-throw-literal
+    node.unlockWithNativeExternalSigner.mockImplementation(() => { throw 'backend unavailable' })
     b._node = node
     b._signer = fakeSigner()
     b._fallbackSeedHex = 'seed-v1'
