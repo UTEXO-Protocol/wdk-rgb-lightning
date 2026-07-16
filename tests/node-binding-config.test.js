@@ -20,7 +20,8 @@ describe('NodeRgbLightningBinding._initRequest', () => {
       ldk_peer_listening_port: 0,
       network: 'regtest',
       max_media_upload_size_mb: 5,
-      enable_virtual_channels_v0: false
+      enable_virtual_channels_v0: false,
+      reuse_addresses: true
     })
     // None of the opt-in keys should be present.
     expect(binding._initRequest).not.toHaveProperty('virtual_peer_pubkeys')

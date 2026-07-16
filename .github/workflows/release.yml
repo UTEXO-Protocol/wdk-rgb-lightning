@@ -59,6 +59,35 @@ jobs:
           node-version: 20
           registry-url: 'https://registry.npmjs.org/'
 
+      - name: Wait for required native binding releases
+        if: steps.rln.outputs.auto == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for package in \
+            '@utexo/rgb-lightning-node-bare' \
+            '@utexo/rgb-lightning-node-nodejs'; do
+            range=$(node -p "require('./package.json').peerDependencies['$package']")
+            minimum=$(printf '%s' "$range" | sed -n 's/^>=\([^ ]*\).*/\1/p')
+            if [ -z "$minimum" ]; then
+              echo "::error::Cannot derive a minimum version from $package peer range: $range"
+              exit 1
+            fi
+
+            for attempt in $(seq 1 60); do
+              if npm view "$package@$minimum" version >/dev/null 2>&1; then
+                echo "$package@$minimum is available"
+                break
+              fi
+              if [ "$attempt" -eq 60 ]; then
+                echo "::error::$package@$minimum was not published within 30 minutes"
+                exit 1
+              fi
+              echo "Waiting for $package@$minimum ($attempt/60)"
+              sleep 30
+            done
+          done
+
       - name: Bump package prerelease version
         if: steps.rln.outputs.auto == 'true'
         run: npm version prerelease --preid=beta --no-git-tag-version
@@ -68,18 +97,21 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json
+          git add package.json package-lock.json
           git commit -m "chore(release): bump prerelease version (RLN SDK v${{ steps.rln.outputs.version }})"
           git push
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GH_TOKEN: ${{ github.token }}
 
       - name: Lint
         run: npm run lint
+
+      - name: Check types
+        run: npm run check:types
 
       - name: Publish to npm
         run: npm publish --provenance --access public

@@ -61,6 +61,14 @@ export class UnlockError extends RgbLightningError {
   }
 }
 
+/** Raised when a query requires the RLN wallet to be unlocked first. */
+export class AccountLockedError extends RgbLightningError {
+  constructor (message = 'The RGB Lightning account is locked.', opts = {}) {
+    super(message, { code: 'ACCOUNT_LOCKED', cause: opts.cause })
+    this.name = 'AccountLockedError'
+  }
+}
+
 /**
  * Raised for VSS (cloud backup) operations: a flush that fails, a
  * fence takeover that's rejected, or any other VSS-server interaction
@@ -102,8 +110,8 @@ export class ApayError extends RgbLightningError {
 
 /**
  * Raised by surface that is intentionally not implemented in this
- * module (e.g. `verify`, `signTransaction`) because the underlying
- * C-FFI doesn't expose it or the operation is out of scope. The
+ * module (currently `signTransaction`) because the underlying C-FFI
+ * doesn't expose it or the operation is out of scope. The
  * message documents the supported alternative.
  */
 export class NotImplementedError extends RgbLightningError {

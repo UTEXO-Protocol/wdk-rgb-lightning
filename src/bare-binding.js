@@ -34,6 +34,11 @@ const {
   sdkShutdown
 } = rln
 
+function isExternalSignerIdentityMismatch (message) {
+  return message.includes('Rln(ExternalSignerMismatch)') ||
+    /external signer identity does not match persisted (?:node identity|key_source\.json)/i.test(message)
+}
+
 /**
  * @typedef {Object} BareRgbLightningBindingConfig
  * @property {'mainnet'|'testnet'|'regtest'|'signet'} network
@@ -76,7 +81,10 @@ export class BareRgbLightningBinding {
       ldk_peer_listening_port: config.ldkPeerListeningPort ?? 0,
       network: config.network,
       max_media_upload_size_mb: config.maxMediaUploadSizeMb ?? 5,
-      enable_virtual_channels_v0: config.enableVirtualChannelsV0 ?? false
+      enable_virtual_channels_v0: config.enableVirtualChannelsV0 ?? false,
+      // WDK reads must not allocate a fresh address on every call. Pin the
+      // current address; full accounts rotate it explicitly.
+      reuse_addresses: true
     }
     // Virtual-channels-v0 trust list. When the LSP opens (or the device
     // opens against the LSP) a `trusted_no_broadcast` virtual channel,
@@ -127,8 +135,9 @@ export class BareRgbLightningBinding {
    * key-source file).
    *
    * @param {string} seedHex - 64-char hex string (32 BIP-32 entropy bytes)
+   * @param {string} [fallbackSeedHex] - legacy identity fallback for existing data dirs
    */
-  attachExternalSigner (seedHex) {
+  attachExternalSigner (seedHex, fallbackSeedHex) {
     if (this._signer) {
       if (this._seedHex && this._seedHex !== seedHex) {
         throw new Error(
@@ -136,6 +145,7 @@ export class BareRgbLightningBinding {
           'Shut down the binding before re-attaching with a new seed.'
         )
       }
+      if (fallbackSeedHex) this._fallbackSeedHex = fallbackSeedHex
       return
     }
     this._signer = NativeExternalSigner.create(
@@ -144,6 +154,7 @@ export class BareRgbLightningBinding {
       this._config.permissiveSignerPolicy ?? true
     )
     this._seedHex = seedHex
+    this._fallbackSeedHex = fallbackSeedHex
   }
 
   /**
@@ -175,7 +186,25 @@ export class BareRgbLightningBinding {
       }
       this._sdkInitDone = true
     }
-    node.unlockWithNativeExternalSigner(this._signer, unlockRequest)
+    try {
+      node.unlockWithNativeExternalSigner(this._signer, unlockRequest)
+      this._fallbackSeedHex = undefined
+    } catch (error) {
+      const message = String(error && error.message ? error.message : error)
+      if (!this._fallbackSeedHex || !isExternalSignerIdentityMismatch(message)) {
+        throw error
+      }
+
+      this._signer.destroy()
+      this._signer = NativeExternalSigner.create(
+        this._fallbackSeedHex,
+        this._config.network,
+        this._config.permissiveSignerPolicy ?? true
+      )
+      this._seedHex = this._fallbackSeedHex
+      this._fallbackSeedHex = undefined
+      node.unlockWithNativeExternalSigner(this._signer, unlockRequest)
+    }
   }
 
   /** @returns {SdkNode} */
@@ -272,6 +301,8 @@ export class BareRgbLightningBinding {
       this._signer = null
     }
     this._sdkInitDone = false
+    this._seedHex = undefined
+    this._fallbackSeedHex = undefined
   }
 
   /** @returns {string} */

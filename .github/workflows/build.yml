@@ -27,13 +27,16 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GH_TOKEN: ${{ github.token }}
 
       - name: Lint
         run: npm run lint
+
+      - name: Check types
+        run: npm run check:types
 
       - name: Run tests
         run: npm test

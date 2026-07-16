@@ -16,12 +16,14 @@ export default class WalletManagerRgbLightning extends WalletManagerBase {
 }
 
 export { default as WalletAccountRgbLightning } from './src/wallet-account-rgb-lightning.js'
+export { default as WalletAccountReadOnlyRgbLightning } from './src/wallet-account-read-only-rgb-lightning.js'
 export { BareRgbLightningBinding } from './src/bare-binding.js'
 
 // Typed error hierarchy — see ./src/errors.js. Lets callers branch on
 // `err.name` / `err.code` instead of substring-matching RLN messages.
 export {
   RgbLightningError,
+  AccountLockedError,
   UnlockError,
   VssError,
   VssNotConfiguredError,

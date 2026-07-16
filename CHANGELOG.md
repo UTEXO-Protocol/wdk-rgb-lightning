@@ -9,6 +9,24 @@ while pre-`1.0`.
 ## [Unreleased]
 
 ### Added
+- **First-class read-only account:** exported
+  `WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly`, with
+  all seven mandatory WDK reads plus node, channel, peer, invoice, payment,
+  RGB asset/transfer, BTC history, fee, media, and endpoint queries.
+  `toReadOnlyAccount()` caches it and supplies an immutable query-only
+  adapter with no full-account backreference or mutating capabilities.
+- Native-backed Lightning message verification and explicit receive-address
+  rotation. `verify(message, signature)` is now implemented; `rotateAddress()`
+  remains available only on the full account.
+- `AccountLockedError` (`ACCOUNT_LOCKED`) and `getAddressState()` for UI code
+  that needs a non-throwing locked/ready address state.
+- Txid-filtered `getTransactionsByTxid()` and `listTransfersByTxid()` reads,
+  used by `getTransactionReceipt()` to distinguish confirmed, pending, and
+  absent operations.
+- Correct, versioned signer entropy derivation. New nodes use the first 32
+  bytes of WDK's normalized BIP-39 seed. `nodeSeedDerivation: 'auto'` retries
+  the exact legacy beta derivation only after RLN reports a persisted signer
+  identity mismatch, preserving existing node identities.
 - **`UtexoLsp` composed-flow class** (`src/utexo-lsp.js`) — brings the
   LSP surface to parity with `@utexo/rgb-sdk-rn`'s `UtexoLsp`. A
   stateful orchestration object over an account + `LspClient` covering
@@ -57,9 +75,9 @@ while pre-`1.0`.
   resolution under `nodenext`).
 - **Typed error hierarchy** (`src/errors.js`): `RgbLightningError`
   (base, with `code` + `cause` + `toJSON()`) and `UnlockError`,
-  `VssError`, `VssNotConfiguredError`, `ApayError`,
-  `NotImplementedError`. `unlock`, `clearVssFence`, `vssBackup`,
-  `apayNew`, `bootstrapLsp`, `verify`, and `signTransaction` now throw
+  `AccountLockedError`, `VssError`, `VssNotConfiguredError`, `ApayError`,
+  `NotImplementedError`. `unlock`, locked address reads, `clearVssFence`,
+  `vssBackup`, `apayNew`, `bootstrapLsp`, and `signTransaction` now throw
   these instead of bare `Error`, so callers branch on `err.name` /
   `err.code` rather than substring-matching `Rln(...)` strings. The
   original RLN message is preserved verbatim and attached as `cause`,
@@ -74,6 +92,19 @@ while pre-`1.0`.
   shape.
 
 ### Fixed
+- WDK conformance for `index`, `path`, `keyPair`, `sign()`, `getBalance()`,
+  `getTokenBalance()`, `sendTransaction()`, quotes, and confirmed receipt
+  semantics. Balance failures are no longer silently converted to zero unless
+  the node is actually locked.
+- Removed the synthetic pre-unlock Bitcoin address. `getAddress()` now either
+  returns RLN's stable current address or raises `AccountLockedError`.
+- WDK bindings now force RLN's pinned-address mode, so inherited read-only
+  `getAddress()` calls do not allocate a fresh address each time; explicit
+  rotation remains a full-account command.
+- Aligned exactly with the current `@tetherto/wdk-wallet@1.0.0-beta.14`
+  architecture and added strict declaration checks to build/release CI.
+- Automatic releases wait for both minimum native peer versions to be
+  available from npm before bumping or publishing the WDK package.
 - Removed a duplicate `apayNew` method definition in both
   `node-binding.js` and `bare-binding.js` (the shadowed first copy
   used `this.node`, which throws pre-unlock).
