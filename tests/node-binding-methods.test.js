@@ -82,17 +82,11 @@ describe('ensureNode', () => {
   })
 })
 
-describe('node getter', () => {
-  it("throws 'SdkNode not created' when no node exists", () => {
+describe('binding surface', () => {
+  it('uses ensureNode() as the only node accessor', () => {
     const b = makeBinding()
-    expect(() => b.node).toThrow('SdkNode not created')
-  })
-
-  it('returns the node when one is present', () => {
-    const b = makeBinding()
-    const node = fakeNode()
-    b._node = node
-    expect(b.node).toBe(node)
+    expect('node' in b).toBe(false)
+    expect(typeof b.ensureNode).toBe('function')
   })
 })
 
@@ -102,7 +96,7 @@ describe('attachExternalSigner', () => {
     expect(b._signer).toBeNull()
     b.attachExternalSigner('seed-a')
     expect(b._signer).toBeTruthy()
-    expect(b._seedHex).toBe('seed-a')
+    expect(b._seedHex.toString()).toBe('seed-a')
   })
 
   it('records an optional legacy fallback seed without constructing it eagerly', () => {
@@ -111,7 +105,7 @@ describe('attachExternalSigner', () => {
     try {
       const b = makeBinding()
       b.attachExternalSigner('seed-v2', 'seed-v1')
-      expect(b._fallbackSeedHex).toBe('seed-v1')
+      expect(b._fallbackSeedHex.toString()).toBe('seed-v1')
       expect(spy).toHaveBeenCalledTimes(1)
       expect(spy).toHaveBeenCalledWith('seed-v2', 'regtest', true)
     } finally {
@@ -160,11 +154,13 @@ describe('attachExternalSigner', () => {
 
   it('records a newly supplied fallback seed on the idempotent same-seed path', () => {
     const b = makeBinding()
-    b.attachExternalSigner('seed-v2')
+    b.attachExternalSigner('seed-v2', 'seed-old')
     const signer = b._signer
+    const oldFallback = b._fallbackSeedHex
     b.attachExternalSigner('seed-v2', 'seed-v1')
     expect(b._signer).toBe(signer)
-    expect(b._fallbackSeedHex).toBe('seed-v1')
+    expect(b._fallbackSeedHex.toString()).toBe('seed-v1')
+    expect(oldFallback.every((byte) => byte === 0)).toBe(true)
   })
 
   it('throws when a different seed is already attached', () => {
@@ -173,8 +169,8 @@ describe('attachExternalSigner', () => {
     expect(() => b.attachExternalSigner('seed-b')).toThrow('a different signer is already attached')
   })
 
-  // Kills the mutant that drops the `this._seedHex &&` short-circuit
-  // (`if (this._seedHex !== seedHex)`). When a signer is attached
+  // Preserve the `this._seedHex &&` short-circuit around the retained-secret
+  // comparison. When a signer is attached
   // out-of-band with NO _seedHex recorded, re-attaching must return
   // silently (the falsy guard wins). Dropping the short-circuit would
   // make `undefined !== 'seed-x'` true and wrongly throw.
@@ -203,13 +199,15 @@ describe('unlock', () => {
     const signer = fakeSigner()
     b._node = node
     b._signer = signer
-    b._fallbackSeedHex = 'seed-v1'
+    const fallbackSeed = Buffer.from('seed-v1')
+    b._fallbackSeedHex = fallbackSeed
     const req = { mnemonic: 'm' }
     b.unlock(req)
     expect(node.initWithNativeExternalSigner).toHaveBeenCalledWith(signer)
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledWith(signer, req)
     expect(b._sdkInitDone).toBe(true)
     expect(b._fallbackSeedHex).toBeUndefined()
+    expect(fallbackSeed.every((byte) => byte === 0)).toBe(true)
   })
 
   it('swallows a Conflict init error and still proceeds to unlock', () => {
@@ -258,14 +256,18 @@ describe('unlock', () => {
     const createSpy = jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(fallbackSigner)
     b._node = node
     b._signer = primarySigner
-    b._seedHex = 'seed-v2'
-    b._fallbackSeedHex = 'seed-v1'
+    const primarySeed = Buffer.from('seed-v2')
+    const fallbackSeed = Buffer.from('seed-v1')
+    b._seedHex = primarySeed
+    b._fallbackSeedHex = fallbackSeed
     try {
       expect(() => b.unlock({ rpc: true })).not.toThrow()
       expect(primarySigner.destroy).toHaveBeenCalledTimes(1)
       expect(createSpy).toHaveBeenCalledWith('seed-v1', 'regtest', true)
       expect(node.unlockWithNativeExternalSigner).toHaveBeenLastCalledWith(fallbackSigner, { rpc: true })
-      expect(b._seedHex).toBe('seed-v1')
+      expect(b._seedHex).toBe(fallbackSeed)
+      expect(b._seedHex.toString()).toBe('seed-v1')
+      expect(primarySeed.every((byte) => byte === 0)).toBe(true)
       expect(b._fallbackSeedHex).toBeUndefined()
     } finally {
       createSpy.mockRestore()
@@ -278,7 +280,7 @@ describe('unlock', () => {
     node.unlockWithNativeExternalSigner.mockImplementation(() => { throw new Error('backend unavailable') })
     b._node = node
     b._signer = fakeSigner()
-    b._fallbackSeedHex = 'seed-v1'
+    b._fallbackSeedHex = Buffer.from('seed-v1')
     expect(() => b.unlock({})).toThrow('backend unavailable')
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
   })
@@ -302,7 +304,7 @@ describe('unlock', () => {
     node.unlockWithNativeExternalSigner.mockImplementation(() => { throw 'backend unavailable' })
     b._node = node
     b._signer = fakeSigner()
-    b._fallbackSeedHex = 'seed-v1'
+    b._fallbackSeedHex = Buffer.from('seed-v1')
     expect(() => b.unlock({})).toThrow('backend unavailable')
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
   })
@@ -414,9 +416,12 @@ describe('vssBackup', () => {
     expect(b._lastVssVersion).toBeNull()
   })
 
-  it('throws via the node getter when no node has been created', () => {
+  it('lazily obtains the node through ensureNode()', () => {
     const b = makeBinding()
-    expect(() => b.vssBackup()).toThrow('SdkNode not created')
+    const node = fakeNode()
+    const ensureSpy = jest.spyOn(b, 'ensureNode').mockReturnValue(node)
+    expect(b.vssBackup()).toEqual({ version: 7 })
+    expect(ensureSpy).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -465,8 +470,10 @@ describe('shutdown', () => {
     b._node = node
     b._signer = signer
     b._sdkInitDone = true
-    b._seedHex = 'seed-v2'
-    b._fallbackSeedHex = 'seed-v1'
+    const primarySeed = Buffer.from('seed-v2')
+    const fallbackSeed = Buffer.from('seed-v1')
+    b._seedHex = primarySeed
+    b._fallbackSeedHex = fallbackSeed
     b.shutdown()
     expect(node.shutdown).toHaveBeenCalledTimes(1)
     expect(signer.destroy).toHaveBeenCalledTimes(1)
@@ -475,6 +482,8 @@ describe('shutdown', () => {
     expect(b._sdkInitDone).toBe(false)
     expect(b._seedHex).toBeUndefined()
     expect(b._fallbackSeedHex).toBeUndefined()
+    expect(primarySeed.every((byte) => byte === 0)).toBe(true)
+    expect(fallbackSeed.every((byte) => byte === 0)).toBe(true)
   })
 
   it('is idempotent when nothing is attached', () => {
@@ -482,6 +491,39 @@ describe('shutdown', () => {
     expect(() => b.shutdown()).not.toThrow()
     expect(b._node).toBeNull()
     expect(b._signer).toBeNull()
+  })
+
+  it('destroys the signer and wipes both seeds even when node shutdown fails', () => {
+    const b = makeBinding()
+    const node = fakeNode()
+    const signer = fakeSigner()
+    node.shutdown.mockImplementation(() => { throw new Error('node shutdown failed') })
+    const primarySeed = Buffer.from('seed-v2')
+    const fallbackSeed = Buffer.from('seed-v1')
+    b._node = node
+    b._signer = signer
+    b._seedHex = primarySeed
+    b._fallbackSeedHex = fallbackSeed
+
+    expect(() => b.shutdown()).toThrow('node shutdown failed')
+    expect(signer.destroy).toHaveBeenCalledTimes(1)
+    expect(b._node).toBeNull()
+    expect(b._signer).toBeNull()
+    expect(primarySeed.every((byte) => byte === 0)).toBe(true)
+    expect(fallbackSeed.every((byte) => byte === 0)).toBe(true)
+  })
+
+  it('still wipes retained seeds when signer destruction fails', () => {
+    const b = makeBinding()
+    const signer = fakeSigner()
+    signer.destroy.mockImplementation(() => { throw new Error('signer destroy failed') })
+    const seed = Buffer.from('seed-v2')
+    b._signer = signer
+    b._seedHex = seed
+
+    expect(() => b.shutdown()).toThrow('signer destroy failed')
+    expect(b._signer).toBeNull()
+    expect(seed.every((byte) => byte === 0)).toBe(true)
   })
 })
 

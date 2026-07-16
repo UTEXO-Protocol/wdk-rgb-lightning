@@ -77,7 +77,7 @@ describe('payLightningAddress', () => {
     const fetch = makeLnurlFetch({ routes: [{ a: 1 }] })
     const account = { sendPayment: jest.fn(async () => ({ payment_hash: 'ph' })) }
 
-    const out = await payLightningAddress(account, 'alice@host.example', 5000, { fetch, allowHttp: true })
+    const out = await payLightningAddress(account, 'alice@host.example', 5000, { fetch })
 
     expect(account.sendPayment).toHaveBeenCalledWith({ invoice: BOLT11, amt_msat: 5000 })
     expect(out).toEqual({
@@ -159,6 +159,14 @@ describe('payLightningAddress', () => {
     await expect(
       payLightningAddress(account, 'g@host.example', {}, { fetch })
     ).rejects.toThrow('amountMsat must be a non-negative integer')
+    expect(account.sendPayment).not.toHaveBeenCalled()
+  })
+
+  it('rejects a fractional amount without paying', async () => {
+    const fetch = makeLnurlFetch()
+    const account = { sendPayment: jest.fn(async () => ({})) }
+    await expect(payLightningAddress(account, 'g@host.example', 1.5, { fetch }))
+      .rejects.toThrow('amountMsat must be a non-negative integer')
     expect(account.sendPayment).not.toHaveBeenCalled()
   })
 })

@@ -15,14 +15,15 @@
 // verbatim (so any existing substring checks keep working) and the
 // underlying error as `cause`.
 //
-// Mirrors the shape of `LspError` (see lsp-client.js): a base class
-// with `name`/`code`/`cause` + `toJSON()` for structured logging, and
-// purpose-specific subclasses for the boundaries we wrap.
+// This hierarchy is independent from the HTTP-specific `LspError` in
+// lsp-client.js. It adds a stable SDK `code` and structured `toJSON()`
+// contract for RLN-backed account operations.
 
 /**
- * Base class for all errors raised by this SDK. Carries a stable
- * machine-readable `code`, the optional originating `cause`, and a
- * `toJSON()` for structured logging.
+ * Base class for typed RLN account-operation errors. HTTP/LNURL errors use
+ * their protocol-specific `LspError` and `LnurlPayError` classes instead.
+ * Carries a stable machine-readable `code`, the optional originating
+ * `cause`, and a `toJSON()` for structured logging.
  */
 export class RgbLightningError extends Error {
   /**

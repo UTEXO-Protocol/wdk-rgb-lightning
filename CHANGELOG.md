@@ -55,7 +55,7 @@ while pre-`1.0`.
   Parity with `rgb-sdk-rn`'s `createHodlInvoice`.
 - TS declarations extended for all of the above (`UtexoLsp`, `LspPeer`,
   `WaitOptions`, `ReceiveStatus`, `ChannelReadyInfo`,
-  `CreateHodlInvoiceParams`, the two new error classes, etc.).
+  `CreateHodlInvoiceParams`, the LSP timeout/settlement error classes, etc.).
 - **`virtualPeerPubkeys` config** — plumbed through manager → binding →
   init request (`virtual_peer_pubkeys`). Required (together with
   `enableVirtualChannelsV0`) for async-payments against a production
@@ -108,6 +108,18 @@ while pre-`1.0`.
 - Removed a duplicate `apayNew` method definition in both
   `node-binding.js` and `bare-binding.js` (the shadowed first copy
   used `this.node`, which throws pre-unlock).
+- Consolidated LSP wire-shape and uint conversion helpers. Fractional,
+  unsafe, negative, and overflowing uint values now fail predictably;
+  `lightningReceive()` sends the documented default RGB assignment `Any`.
+- Hardened Lightning Address resolution: generic flows reuse the shared
+  LNURL implementation, constrain callbacks to the discovery host by
+  default, and never resolve an external domain as a same-named LSP user.
+- Removed the binding `node` getter in favor of consistent `ensureNode()`
+  access. Bare and Node bindings now retain signer seeds in zeroizable
+  buffers and wipe both current and #26 legacy-fallback material during
+  replacement, successful unlock, and shutdown failure paths.
+- `waitForOutboundLiquidity()` now throws `LspLiquidityTimeoutError` when
+  its deadline expires instead of resolving without the requested capacity.
 
 ### Changed
 - README: tightened the *"Why a separate module from `wdk-wallet-rgb`?"*

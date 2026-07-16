@@ -16,6 +16,7 @@
 
 import { LspClient } from './lsp-client.js'
 import { resolveAddressToInvoice } from './lnurl-pay.js'
+import { toUint64 } from './lsp-utils.js'
 
 /**
  * Pay a Lightning Address end-to-end.
@@ -31,7 +32,10 @@ import { resolveAddressToInvoice } from './lnurl-pay.js'
  * @param {typeof fetch} [opts.fetch]
  * @param {number} [opts.timeoutMs]
  * @param {boolean} [opts.allowHttp]        Allow http on non-loopback hosts (regtest).
+ * @param {boolean} [opts.allowCrossHostCallback]
  * @param {string} [opts.comment]           LUD-12 comment.
+ * @param {string} [opts.assetId]           Optional RGB asset extension.
+ * @param {bigint|number|string} [opts.assetAmount]
  * @param {boolean} [opts.skipAmount]       Don't pass `amt_msat` to sendPayment.
  * @param {(invoice:string, discovery:object) => void|Promise<void>} [opts.beforePay]
  *                                          Hook to inspect the LSP-issued invoice
@@ -162,13 +166,6 @@ function pickInvoiceMinter (account) {
   if (typeof account.createInvoice === 'function') return account.createInvoice.bind(account)
   if (typeof account.lnInvoice === 'function') return account.lnInvoice.bind(account)
   throw new TypeError('requestLspRgbDeposit: account must expose createInvoice or lnInvoice')
-}
-
-function toUint64 (v) {
-  if (typeof v === 'bigint') return v <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(v) : v.toString()
-  if (typeof v === 'number') return Math.trunc(v)
-  if (typeof v === 'string' && /^\d+$/.test(v)) return v
-  throw new TypeError(`amountMsat must be a non-negative integer; got ${typeof v}`)
 }
 
 function truncate (s) { return s.length > 200 ? s.slice(0, 197) + '…' : s }

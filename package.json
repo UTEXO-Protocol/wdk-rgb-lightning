@@ -29,7 +29,8 @@
   "dependencies": {
     "@tetherto/wdk-wallet": "1.0.0-beta.14",
     "bare-node-runtime": "1.2.0",
-    "bip39": "3.1.0"
+    "bip39": "3.1.0",
+    "sodium-universal": "5.0.1"
   },
   "peerDependencies": {
     "@utexo/rgb-lightning-node-bare": ">=0.1.0-beta.14 <0.2.0",

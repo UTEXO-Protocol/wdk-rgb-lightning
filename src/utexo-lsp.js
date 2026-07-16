@@ -19,6 +19,7 @@
 // absorbed here so the public method names + semantics match.
 
 import { LspClient } from './lsp-client.js'
+import { parseLightningAddress, resolveAddressToInvoice } from './lnurl-pay.js'
 
 // ── Errors ───────────────────────────────────────────────────────────────────
 
@@ -29,6 +30,17 @@ export class LspChannelTimeoutError extends Error {
     this.name = 'LspChannelTimeoutError'
     this.assetId = assetId
     this.elapsedMs = elapsedMs
+  }
+}
+
+/** Outbound liquidity on the LSP channel stayed below the requested floor. */
+export class LspLiquidityTimeoutError extends Error {
+  constructor (minMsat, elapsedMs, peerPubkey) {
+    super(`Outbound liquidity for ${peerPubkey} stayed below ${minMsat} msat after ${Math.round(elapsedMs / 1000)}s`)
+    this.name = 'LspLiquidityTimeoutError'
+    this.minMsat = minMsat
+    this.elapsedMs = elapsedMs
+    this.peerPubkey = peerPubkey
   }
 }
 
@@ -217,6 +229,7 @@ export class UtexoLsp {
    * Poll until outbound balance on the LSP channel ≥ `minMsat`.
    * @param {number} minMsat
    * @param {object} [opts]  WaitOptions.
+   * @throws {LspLiquidityTimeoutError}
    */
   async waitForOutboundLiquidity (minMsat, opts = {}) {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_CHANNEL_TIMEOUT_MS
@@ -236,6 +249,7 @@ export class UtexoLsp {
       if (outbound >= minMsat) return
       await this._sleep(pollIntervalMs, opts.signal)
     }
+    throw new LspLiquidityTimeoutError(minMsat, timeoutMs, this.peer.peerPubkey)
   }
 
   // ── 6. Send RGB via LSP (POST /onchain_send) ──────────────────────────────────
@@ -267,10 +281,11 @@ export class UtexoLsp {
   // ── 7. Pay a Lightning Address ────────────────────────────────────────────────
 
   /**
-   * Resolve a Lightning Address and pay it. Tries this LSP's
-   * `resolveAddress` first (handles internal/emulator host rewriting),
-   * then falls back to host-agnostic LUD-06 discovery on the address's
-   * own domain.
+   * Resolve a Lightning Address and pay it. Addresses on this LSP's host
+   * use `resolveAddress` first (for internal/emulator host rewriting) and
+   * fall back to the shared LNURL resolver. External hosts go directly
+   * through the shared resolver so a same-named LSP user cannot be paid
+   * by mistake.
    *
    * @param {object} opts
    * @param {string} opts.address          `user@host`.
@@ -280,29 +295,33 @@ export class UtexoLsp {
    */
   async payAddress (opts = {}) {
     const address = opts.address
-    if (typeof address !== 'string' || !address.includes('@')) {
+    let parsed
+    try {
+      parsed = parseLightningAddress(address, { allowHttp: this.peer.allowHttp === true })
+    } catch {
       throw new TypeError(`UtexoLsp.payAddress: invalid Lightning Address "${address}"`)
     }
-    const [username, domain] = address.split('@')
-    if (!username || !domain) throw new TypeError(`UtexoLsp.payAddress: invalid Lightning Address "${address}"`)
 
     let invoice
-    try {
-      const cb = await this.http.resolveAddress(
-        username, opts.amtMsat, { assetId: opts.asset?.assetId, assetAmount: opts.asset?.assetAmount }
-      )
-      invoice = cb?.pr
-    } catch {
-      // Fall back to standard LNURL discovery on the address's own host.
-      const fetcher = globalThis.fetch
-      if (typeof fetcher !== 'function') throw new Error('UtexoLsp.payAddress: no global fetch for LNURL fallback')
-      const meta = await fetcher(`https://${domain}/.well-known/lnurlp/${encodeURIComponent(username)}`).then((r) => r.json())
-      if (!meta?.callback) throw new Error('UtexoLsp.payAddress: missing callback in LNURL response')
-      let url = `${meta.callback}${meta.callback.includes('?') ? '&' : '?'}amount=${opts.amtMsat}`
-      if (opts.asset?.assetId) url += `&asset_id=${encodeURIComponent(opts.asset.assetId)}`
-      if (opts.asset?.assetAmount !== undefined) url += `&asset_amount=${opts.asset.assetAmount}`
-      const cb = await fetcher(url).then((r) => r.json())
-      invoice = cb?.pr
+    let useStandardResolver = parsed.host !== new URL(this.http.baseUrl ?? this.peer.baseUrl).host.toLowerCase()
+    if (!useStandardResolver) {
+      try {
+        const cb = await this.http.resolveAddress(
+          parsed.username, opts.amtMsat, { assetId: opts.asset?.assetId, assetAmount: opts.asset?.assetAmount }
+        )
+        invoice = cb?.pr
+      } catch {
+        useStandardResolver = true
+      }
+    }
+
+    if (useStandardResolver) {
+      const resolved = await resolveAddressToInvoice(address, opts.amtMsat, {
+        allowHttp: this.peer.allowHttp === true,
+        assetId: opts.asset?.assetId,
+        assetAmount: opts.asset?.assetAmount
+      })
+      invoice = resolved.pr
     }
 
     if (typeof invoice !== 'string' || invoice.length === 0) {

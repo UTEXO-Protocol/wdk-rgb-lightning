@@ -14,6 +14,7 @@
 import { jest } from '@jest/globals'
 import {
   LspChannelTimeoutError,
+  LspLiquidityTimeoutError,
   LspSettlementError,
   peerUri,
   normalizeReceiveStatus,
@@ -57,6 +58,20 @@ function makeLsp (account, peer = PEER) {
     getLightningAddressByPubkey: jest.fn(async () => ({ username: 'alice', domain: 'lsp.example.io' }))
   }
   return lsp
+}
+
+function lnurlResponse (body) {
+  return { ok: true, status: 200, text: async () => JSON.stringify(body) }
+}
+
+function lnurlDiscovery (callback) {
+  return {
+    tag: 'payRequest',
+    callback,
+    minSendable: 1,
+    maxSendable: 100000,
+    metadata: '[["text/plain","pay"]]'
+  }
 }
 
 beforeEach(() => {
@@ -125,6 +140,18 @@ describe('LspSettlementError', () => {
     expect(e.step).toBe('ln_invoice')
     expect(e.status).toBe('Failed')
     expect(e.message).toBe('Settlement ended with status "Failed" at step ln_invoice')
+  })
+})
+
+describe('LspLiquidityTimeoutError', () => {
+  it('carries the requested floor, elapsed time, and LSP peer', () => {
+    const e = new LspLiquidityTimeoutError(5000, 120000, PEER.peerPubkey)
+    expect(e).toBeInstanceOf(Error)
+    expect(e.name).toBe('LspLiquidityTimeoutError')
+    expect(e.minMsat).toBe(5000)
+    expect(e.elapsedMs).toBe(120000)
+    expect(e.peerPubkey).toBe(PEER.peerPubkey)
+    expect(e.message).toContain('below 5000 msat after 120s')
   })
 })
 
@@ -475,11 +502,12 @@ describe('waitForOutboundLiquidity', () => {
     expect(onProgress).toHaveBeenCalledWith('outbound: 9000 msat (need 1)')
   })
 
-  it('keeps polling and returns (without throwing) when liquidity never arrives', async () => {
+  it('throws a typed timeout when liquidity never arrives', async () => {
     const account = makeAccount({ listChannels: jest.fn(async () => []) })
     const lsp = makeLsp(account)
-    await expect(lsp.waitForOutboundLiquidity(10000, { timeoutMs: 5, pollIntervalMs: 1 }))
-      .resolves.toBeUndefined()
+    const error = await lsp.waitForOutboundLiquidity(10000, { timeoutMs: 5, pollIntervalMs: 1 }).catch((cause) => cause)
+    expect(error).toBeInstanceOf(LspLiquidityTimeoutError)
+    expect(error).toMatchObject({ minMsat: 10000, elapsedMs: 5, peerPubkey: PEER.peerPubkey })
   })
 
   it('IGNORES a peer-matching channel that is not usable (the is_usable conjunct)', async () => {
@@ -492,7 +520,8 @@ describe('waitForOutboundLiquidity', () => {
     const account = makeAccount({ listChannels: jest.fn(async () => [channel]) })
     const lsp = makeLsp(account)
     const onProgress = jest.fn()
-    await lsp.waitForOutboundLiquidity(5000, { timeoutMs: 5, pollIntervalMs: 1, onProgress })
+    await expect(lsp.waitForOutboundLiquidity(5000, { timeoutMs: 5, pollIntervalMs: 1, onProgress }))
+      .rejects.toBeInstanceOf(LspLiquidityTimeoutError)
     expect(onProgress).toHaveBeenCalledWith('outbound: 0 msat (need 5000)')
     expect(onProgress).not.toHaveBeenCalledWith(expect.stringContaining('9999'))
   })
@@ -504,7 +533,8 @@ describe('waitForOutboundLiquidity', () => {
     const account = makeAccount({ listChannels: jest.fn(async () => [channel]) })
     const lsp = makeLsp(account)
     const onProgress = jest.fn()
-    await lsp.waitForOutboundLiquidity(5000, { timeoutMs: 5, pollIntervalMs: 1, onProgress })
+    await expect(lsp.waitForOutboundLiquidity(5000, { timeoutMs: 5, pollIntervalMs: 1, onProgress }))
+      .rejects.toBeInstanceOf(LspLiquidityTimeoutError)
     expect(onProgress).toHaveBeenCalledWith('outbound: 0 msat (need 5000)')
     expect(onProgress).not.toHaveBeenCalledWith(expect.stringContaining('9999'))
   })
@@ -573,20 +603,20 @@ describe('payAddress', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
-  it('falls back to LNURL discovery on the address domain when the LSP resolve fails', async () => {
+  it('uses the shared LNURL resolver directly for an external address', async () => {
     const account = makeAccount({ sendPayment: jest.fn(async () => ({ payment_hash: 'fb' })) })
     const lsp = makeLsp(account)
-    lsp.http.resolveAddress = jest.fn(async () => { throw new Error('lsp resolve down') })
     globalThis.fetch = jest.fn()
-      .mockResolvedValueOnce({ json: async () => ({ callback: 'https://other.test/cb?x=1' }) })
-      .mockResolvedValueOnce({ json: async () => ({ pr: 'lnbcrt-lnurl' }) })
+      .mockResolvedValueOnce(lnurlResponse(lnurlDiscovery('https://other.test/cb?x=1')))
+      .mockResolvedValueOnce(lnurlResponse({ pr: 'lnbcrt-lnurl' }))
 
     const out = await lsp.payAddress({
       address: 'bob@other.test',
       amtMsat: 3000,
       asset: { assetId: 'assetY', assetAmount: 9 }
     })
-    expect(globalThis.fetch).toHaveBeenNthCalledWith(1, 'https://other.test/.well-known/lnurlp/bob')
+    expect(globalThis.fetch.mock.calls[0][0]).toBe('https://other.test/.well-known/lnurlp/bob')
+    expect(lsp.http.resolveAddress).not.toHaveBeenCalled()
     const secondUrl = globalThis.fetch.mock.calls[1][0]
     expect(secondUrl).toContain('https://other.test/cb?x=1')
     expect(secondUrl).toContain('&amount=3000')
@@ -597,28 +627,37 @@ describe('payAddress', () => {
 
   it('uses a ? separator in the fallback callback when none is present', async () => {
     const lsp = makeLsp(makeAccount())
-    lsp.http.resolveAddress = jest.fn(async () => { throw new Error('down') })
     globalThis.fetch = jest.fn()
-      .mockResolvedValueOnce({ json: async () => ({ callback: 'https://other.test/cb' }) })
-      .mockResolvedValueOnce({ json: async () => ({ pr: 'lnbcrt-q' }) })
+      .mockResolvedValueOnce(lnurlResponse(lnurlDiscovery('https://other.test/cb')))
+      .mockResolvedValueOnce(lnurlResponse({ pr: 'lnbcrt-q' }))
     await lsp.payAddress({ address: 'bob@other.test', amtMsat: 1 })
     expect(globalThis.fetch.mock.calls[1][0]).toContain('https://other.test/cb?amount=1')
   })
 
   it('throws when no global fetch is available for the fallback', async () => {
     const lsp = makeLsp(makeAccount())
-    lsp.http.resolveAddress = jest.fn(async () => { throw new Error('down') })
     delete globalThis.fetch
     await expect(lsp.payAddress({ address: 'bob@other.test', amtMsat: 1 }))
-      .rejects.toThrow('no global fetch for LNURL fallback')
+      .rejects.toThrow('no global fetch')
   })
 
   it('throws when the LNURL response has no callback', async () => {
     const lsp = makeLsp(makeAccount())
-    lsp.http.resolveAddress = jest.fn(async () => { throw new Error('down') })
-    globalThis.fetch = jest.fn().mockResolvedValueOnce({ json: async () => ({}) })
+    globalThis.fetch = jest.fn().mockResolvedValueOnce(lnurlResponse(lnurlDiscovery(undefined)))
     await expect(lsp.payAddress({ address: 'bob@other.test', amtMsat: 1 }))
-      .rejects.toThrow('missing callback in LNURL response')
+      .rejects.toThrow('invalid callback')
+  })
+
+  it('falls back to the shared resolver when the same-host LSP path fails', async () => {
+    const lsp = makeLsp(makeAccount())
+    lsp.http.resolveAddress = jest.fn(async () => { throw new Error('LSP unavailable') })
+    globalThis.fetch = jest.fn()
+      .mockResolvedValueOnce(lnurlResponse(lnurlDiscovery('https://lsp.example.io/cb')))
+      .mockResolvedValueOnce(lnurlResponse({ pr: 'lnbcrt-fallback' }))
+    await expect(lsp.payAddress({ address: 'alice@lsp.example.io', amtMsat: 2 }))
+      .resolves.toMatchObject({ invoice: 'lnbcrt-fallback' })
+    expect(lsp.http.resolveAddress).toHaveBeenCalledTimes(1)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
   })
 
   it('throws when no invoice is returned from either path', async () => {

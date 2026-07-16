@@ -74,8 +74,6 @@
  * @property {(unlockRequest: object) => void}          unlock
  *   First call: init+unlock against a fresh dataDir. Later calls swallow
  *   the expected `Rln(Conflict)` from init and proceed with unlock.
- * @property {unknown}                                  node
- *   The `SdkNode` handle (getter). Throws if `unlock()` has not run.
  * @property {() => object}                             bootstrap
  *   Returns the signer's bootstrap payload (node_id, xpubs, master_fp).
  * @property {(password: string) => void}               clearVssFence
@@ -108,4 +106,4 @@
  *   Idempotent stop — releases the node handle + destroys the signer.
  */
 
-export const __SHAPE_ONLY = true
+export {}

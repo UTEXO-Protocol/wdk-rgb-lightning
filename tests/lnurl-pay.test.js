@@ -26,7 +26,7 @@ function makeResponse ({ ok = true, status = 200, body = {}, raw } = {}) {
 function discoveryDoc (overrides = {}) {
   return {
     tag: 'payRequest',
-    callback: 'https://pay.example/lnurlp/cb',
+    callback: 'https://b.com/lnurlp/cb',
     minSendable: 1000,
     maxSendable: 100000,
     metadata: '[["text/plain","pay alice"]]',
@@ -144,6 +144,14 @@ describe('fetchDiscovery', () => {
     expect(fetch.mock.calls[0][0]).toBe(url)
   })
 
+  it('rejects malformed and disallowed plain-HTTP discovery URLs before fetching', async () => {
+    const fetch = jest.fn()
+    await expect(fetchDiscovery('http://[invalid', { fetch })).rejects.toThrow(/invalid discovery URL/)
+    await expect(fetchDiscovery('http://public.example/lnurlp/alice', { fetch }))
+      .rejects.toThrow(/plain HTTP discovery is not allowed/)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('throws when no usable fetch is available', async () => {
     // `opts.fetch ?? globalThis.fetch` only falls back on null/undefined,
     // so a non-function value reaches the typeof guard.
@@ -197,6 +205,9 @@ describe('fetchDiscovery', () => {
   it('throws when the callback is not an http(s) URL', async () => {
     const fetch = jest.fn(async () => makeResponse({ body: discoveryDoc({ callback: 'ftp://x' }) }))
     await expect(fetchDiscovery('a@b.com', { fetch })).rejects.toThrow(/invalid callback/)
+
+    const malformed = jest.fn(async () => makeResponse({ body: discoveryDoc({ callback: 'https://[invalid' }) }))
+    await expect(fetchDiscovery('a@b.com', { fetch: malformed })).rejects.toThrow(/invalid callback/)
   })
 
   it('throws when the sendable range is missing, inverted, or non-positive', async () => {
@@ -234,6 +245,17 @@ describe('fetchDiscovery', () => {
     await expect(fetchDiscovery('a@b.com', { fetch })).resolves.toMatchObject({ tag: 'payRequest' })
   })
 
+  it('wraps fractional sendable bounds as LnurlPayError instead of leaking RangeError', async () => {
+    const fetch = jest.fn(async () => makeResponse({
+      body: discoveryDoc({ minSendable: 1000.5 })
+    }))
+    const error = await fetchDiscovery('a@b.com', { fetch }).catch((cause) => cause)
+    expect(error).toBeInstanceOf(LnurlPayError)
+    expect(error).not.toBeInstanceOf(RangeError)
+    expect(error.message).toMatch(/invalid sendable range/)
+    expect(error.cause).toBeInstanceOf(TypeError)
+  })
+
   it('throws when metadata is not a string', async () => {
     const fetch = jest.fn(async () => makeResponse({ body: discoveryDoc({ metadata: 123 }) }))
     await expect(fetchDiscovery('a@b.com', { fetch })).rejects.toThrow(/missing metadata string/)
@@ -253,14 +275,14 @@ describe('resolveAddressToInvoice', () => {
   it('resolves an in-range amount to the bolt11 invoice plus context', async () => {
     const discovery = discoveryDoc()
     const fetch = twoStepFetch(discovery, { pr: 'lnbc1...', routes: [{ a: 1 }] })
-    const out = await resolveAddressToInvoice('alice@getalby.com', 5000n, { fetch })
+    const out = await resolveAddressToInvoice('alice@b.com', 5000n, { fetch })
     expect(out.pr).toBe('lnbc1...')
     expect(out.routes).toEqual([{ a: 1 }])
     expect(out.discovery).toEqual(discovery)
-    expect(out.callbackUrl).toBe('https://pay.example/lnurlp/cb?amount=5000')
+    expect(out.callbackUrl).toBe('https://b.com/lnurlp/cb?amount=5000')
     // discovery + callback = exactly two fetches.
     expect(fetch).toHaveBeenCalledTimes(2)
-    expect(fetch.mock.calls[1][0]).toBe('https://pay.example/lnurlp/cb?amount=5000')
+    expect(fetch.mock.calls[1][0]).toBe('https://b.com/lnurlp/cb?amount=5000')
   })
 
   it('defaults routes to an empty array when the callback omits them', async () => {
@@ -269,23 +291,67 @@ describe('resolveAddressToInvoice', () => {
     expect(out.routes).toEqual([])
   })
 
-  it('accepts a numeric amount and truncates it to an integer string', async () => {
+  it('rejects a fractional numeric amount instead of silently truncating it', async () => {
     const fetch = twoStepFetch(discoveryDoc(), { pr: 'lnbc1...' })
-    const out = await resolveAddressToInvoice('a@b.com', 4999.9, { fetch })
-    expect(out.callbackUrl).toBe('https://pay.example/lnurlp/cb?amount=4999')
+    await expect(resolveAddressToInvoice('a@b.com', 4999.9, { fetch }))
+      .rejects.toBeInstanceOf(LnurlPayError)
+    expect(fetch).toHaveBeenCalledTimes(1)
   })
 
   it('accepts an integer string amount', async () => {
     const fetch = twoStepFetch(discoveryDoc(), { pr: 'lnbc1...' })
     const out = await resolveAddressToInvoice('a@b.com', '2500', { fetch })
-    expect(out.callbackUrl).toBe('https://pay.example/lnurlp/cb?amount=2500')
+    expect(out.callbackUrl).toBe('https://b.com/lnurlp/cb?amount=2500')
+  })
+
+  it('rejects a callback on a different host before making the second request', async () => {
+    const fetch = twoStepFetch(
+      discoveryDoc({ callback: 'https://attacker.example/collect' }),
+      { pr: 'must-not-be-reached' }
+    )
+    await expect(resolveAddressToInvoice('a@b.com', 2500, { fetch }))
+      .rejects.toThrow(/callback host .* does not match discovery host/)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a plain-HTTP callback on a public host', async () => {
+    const fetch = twoStepFetch(
+      discoveryDoc({ callback: 'http://b.com/cb' }),
+      { pr: 'must-not-be-reached' }
+    )
+    await expect(resolveAddressToInvoice('a@b.com', 2500, { fetch }))
+      .rejects.toThrow(/disallowed plain HTTP/)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows an explicitly opted-in cross-host callback for delegated services', async () => {
+    const fetch = twoStepFetch(
+      discoveryDoc({ callback: 'https://delegate.example/cb' }),
+      { pr: 'lnbc-delegated' }
+    )
+    const out = await resolveAddressToInvoice('a@b.com', 2500, {
+      fetch,
+      allowCrossHostCallback: true
+    })
+    expect(out.pr).toBe('lnbc-delegated')
+    expect(out.callbackUrl).toBe('https://delegate.example/cb?amount=2500')
+  })
+
+  it('forwards validated RGB extension parameters through the shared resolver', async () => {
+    const fetch = twoStepFetch(discoveryDoc(), { pr: 'lnbc-rgb' })
+    const out = await resolveAddressToInvoice('a@b.com', 2500, {
+      fetch,
+      assetId: 'rgb:asset',
+      assetAmount: 7n
+    })
+    expect(out.callbackUrl).toBe('https://b.com/lnurlp/cb?amount=2500&asset_id=rgb%3Aasset&asset_amount=7')
   })
 
   it('appends a LUD-12 comment with & when the callback already has a query', async () => {
-    const discovery = discoveryDoc({ callback: 'https://pay.example/cb?token=xyz' })
+    const discovery = discoveryDoc({ callback: 'https://b.com/cb?token=xyz' })
     const fetch = twoStepFetch(discovery, { pr: 'lnbc1...' })
     const out = await resolveAddressToInvoice('a@b.com', 5000, { fetch, comment: 'hi there' })
-    expect(out.callbackUrl).toBe('https://pay.example/cb?token=xyz&amount=5000&comment=hi+there')
+    expect(out.callbackUrl).toBe('https://b.com/cb?token=xyz&amount=5000&comment=hi+there')
   })
 
   it('uses ? for the first param and & between params when the callback has no query', async () => {
@@ -294,8 +360,8 @@ describe('resolveAddressToInvoice', () => {
     // for the comment branch independently of the already-has-query test above.
     const fetch = twoStepFetch(discoveryDoc(), { pr: 'lnbc1...' })
     const out = await resolveAddressToInvoice('a@b.com', 5000, { fetch, comment: 'hi there' })
-    expect(out.callbackUrl).toBe('https://pay.example/lnurlp/cb?amount=5000&comment=hi+there')
-    expect(fetch.mock.calls[1][0]).toBe('https://pay.example/lnurlp/cb?amount=5000&comment=hi+there')
+    expect(out.callbackUrl).toBe('https://b.com/lnurlp/cb?amount=5000&comment=hi+there')
+    expect(fetch.mock.calls[1][0]).toBe('https://b.com/lnurlp/cb?amount=5000&comment=hi+there')
   })
 
   it('omits the comment param entirely when no comment is supplied', async () => {
@@ -303,7 +369,7 @@ describe('resolveAddressToInvoice', () => {
     // callback URL carries amount only and NO comment key.
     const fetch = twoStepFetch(discoveryDoc(), { pr: 'lnbc1...' })
     const out = await resolveAddressToInvoice('a@b.com', 5000, { fetch })
-    expect(out.callbackUrl).toBe('https://pay.example/lnurlp/cb?amount=5000')
+    expect(out.callbackUrl).toBe('https://b.com/lnurlp/cb?amount=5000')
     expect(out.callbackUrl).not.toContain('comment')
   })
 
@@ -333,7 +399,7 @@ describe('resolveAddressToInvoice', () => {
     const fetch = twoStepFetch(discoveryDoc(), { pr: 'lnbc1...' })
     const out = await resolveAddressToInvoice('a@b.com', 1000, { fetch })
     expect(out.pr).toBe('lnbc1...')
-    expect(out.callbackUrl).toBe('https://pay.example/lnurlp/cb?amount=1000')
+    expect(out.callbackUrl).toBe('https://b.com/lnurlp/cb?amount=1000')
     expect(fetch).toHaveBeenCalledTimes(2)
   })
 
@@ -344,7 +410,7 @@ describe('resolveAddressToInvoice', () => {
     const fetch = twoStepFetch(discoveryDoc(), { pr: 'lnbc1...' })
     const out = await resolveAddressToInvoice('a@b.com', 100000, { fetch })
     expect(out.pr).toBe('lnbc1...')
-    expect(out.callbackUrl).toBe('https://pay.example/lnurlp/cb?amount=100000')
+    expect(out.callbackUrl).toBe('https://b.com/lnurlp/cb?amount=100000')
     expect(fetch).toHaveBeenCalledTimes(2)
   })
 
@@ -367,7 +433,7 @@ describe('resolveAddressToInvoice', () => {
   it('throws on a negative bigint amount', async () => {
     const fetch = jest.fn(async () => makeResponse({ body: discoveryDoc() }))
     await expect(resolveAddressToInvoice('a@b.com', -1n, { fetch }))
-      .rejects.toThrow(/must be ≥ 0/)
+      .rejects.toThrow(/non-negative integer/)
   })
 
   it('throws on a non-integer / negative amount', async () => {
@@ -453,7 +519,7 @@ describe('resolveAddressToInvoice', () => {
     const discovery = discoveryDoc({ minSendable: '1000', maxSendable: big })
     const fetch = twoStepFetch(discovery, { pr: 'lnbc1...' })
     const out = await resolveAddressToInvoice('a@b.com', BigInt(big), { fetch })
-    expect(out.callbackUrl).toBe(`https://pay.example/lnurlp/cb?amount=${big}`)
+    expect(out.callbackUrl).toBe(`https://b.com/lnurlp/cb?amount=${big}`)
   })
 })
 

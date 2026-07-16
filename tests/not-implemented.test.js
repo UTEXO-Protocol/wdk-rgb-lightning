@@ -13,7 +13,7 @@ import { NotImplementedError } from '../src/errors.js'
 function makeAccount () {
   return new WalletAccountRgbLightning({
     binding: {
-      node: { verifyMessage: () => ({ valid: true }) }
+      ensureNode: () => ({ verifyMessage: () => ({ valid: true }) })
     }
   })
 }

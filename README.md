@@ -318,13 +318,17 @@ Key methods: `connect()`, `waitForChannel(assetId, opts?)`,
 `receiveAsset(opts)`, `awaitReceiveSettlement(lnInvoice, opts?)`,
 `waitForOutboundLiquidity(minMsat, opts?)`, `sendAsset(opts)`,
 `payAddress(opts)`, `enableLightningAddress()`, `claimPendingPayments()`.
-Timeouts throw `LspChannelTimeoutError` / `LspSettlementError`.
+Channel and liquidity wait timeouts throw `LspChannelTimeoutError` and
+`LspLiquidityTimeoutError`; terminal settlement failures throw
+`LspSettlementError`.
 
 ### LNURL / Lightning Address helpers
 
 `parseLightningAddress`, `fetchDiscovery`, `resolveAddressToInvoice`
 (LNURL-pay), and the account-bound helpers `payLightningAddress`,
 `requestLspRgbDeposit`, `payRgbViaLsp` are also exported from the root.
+LNURL callbacks are restricted to the discovery host by default; delegated
+cross-host callbacks require the explicit `allowCrossHostCallback: true` opt-in.
 
 ## VSS cloud backup
 
@@ -375,7 +379,9 @@ the wallet's behalf. Against a production LSP this requires
   keeps the LDK node identity stable across restarts.
 - **All channel-state crypto runs in-process** through
   [`vls-protocol-signer`][vls]. The signer's lifecycle is tied to the
-  binding and is destroyed on `manager.dispose()`.
+  binding and is destroyed on `manager.dispose()`. Retained seed copies use
+  zeroizable buffers and are erased with `sodium_memzero` on successful
+  fallback resolution and shutdown, including cleanup failure paths.
 - **VSS payloads are client-side encrypted** (see above); the server only
   ever holds ciphertext.
 - **Plain `http://` is rejected by default** for VSS and LSP endpoints; opt

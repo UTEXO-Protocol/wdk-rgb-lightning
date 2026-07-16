@@ -24,6 +24,7 @@
 //   restarts.
 
 import rln from '@utexo/rgb-lightning-node-bare'
+import { retainSecret, revealSecret, secretMatches, wipeSecret } from './secret-buffer.js'
 
 const {
   SdkNode,
@@ -47,6 +48,7 @@ function isExternalSignerIdentityMismatch (message) {
  * @property {number} [ldkPeerListeningPort=0]
  * @property {number} [maxMediaUploadSizeMb=5]
  * @property {boolean} [enableVirtualChannelsV0=false]
+ * @property {string[]} [virtualPeerPubkeys] - trusted virtual-channel peer node IDs
  * @property {boolean} [permissiveSignerPolicy=true] - VLS policy filter;
  *   pass `false` to enforce the full simple policy. Defaults to
  *   permissive for in-process use.
@@ -68,7 +70,7 @@ function isExternalSignerIdentityMismatch (message) {
  *   2. `binding.attachExternalSigner(seedHex)`   - builds the signer
  *   3. `binding.unlock(unlockRequest)`           - first call: init+unlock
  *                                                  next:        attach+unlock
- *   4. `binding.node`                            - SdkNode (after unlock)
+ *   4. `binding.ensureNode()`                    - cached SdkNode handle
  *   5. `binding.shutdown()`                      - idempotent stop
  */
 export class BareRgbLightningBinding {
@@ -110,6 +112,10 @@ export class BareRgbLightningBinding {
     this._node = null
     /** @type {NativeExternalSigner | null} */
     this._signer = null
+    /** @type {Buffer | undefined} Zeroizable retained copy for idempotency checks. */
+    this._seedHex = undefined
+    /** @type {Buffer | undefined} Temporary legacy seed retained until first unlock. */
+    this._fallbackSeedHex = undefined
     /** @type {boolean} */
     this._sdkInitDone = false
     /** @type {number | null} Snapshot version returned by the most recent vssBackup(). */
@@ -139,13 +145,16 @@ export class BareRgbLightningBinding {
    */
   attachExternalSigner (seedHex, fallbackSeedHex) {
     if (this._signer) {
-      if (this._seedHex && this._seedHex !== seedHex) {
+      if (this._seedHex && !secretMatches(this._seedHex, seedHex)) {
         throw new Error(
           'attachExternalSigner: a different signer is already attached. ' +
           'Shut down the binding before re-attaching with a new seed.'
         )
       }
-      if (fallbackSeedHex) this._fallbackSeedHex = fallbackSeedHex
+      if (fallbackSeedHex) {
+        wipeSecret(this._fallbackSeedHex)
+        this._fallbackSeedHex = retainSecret(fallbackSeedHex)
+      }
       return
     }
     this._signer = NativeExternalSigner.create(
@@ -153,8 +162,10 @@ export class BareRgbLightningBinding {
       this._config.network,
       this._config.permissiveSignerPolicy ?? true
     )
-    this._seedHex = seedHex
-    this._fallbackSeedHex = fallbackSeedHex
+    wipeSecret(this._seedHex)
+    wipeSecret(this._fallbackSeedHex)
+    this._seedHex = retainSecret(seedHex)
+    this._fallbackSeedHex = retainSecret(fallbackSeedHex)
   }
 
   /**
@@ -188,6 +199,7 @@ export class BareRgbLightningBinding {
     }
     try {
       node.unlockWithNativeExternalSigner(this._signer, unlockRequest)
+      wipeSecret(this._fallbackSeedHex)
       this._fallbackSeedHex = undefined
     } catch (error) {
       const message = String(error && error.message ? error.message : error)
@@ -195,22 +207,19 @@ export class BareRgbLightningBinding {
         throw error
       }
 
-      this._signer.destroy()
-      this._signer = NativeExternalSigner.create(
-        this._fallbackSeedHex,
+      const fallbackSeed = this._fallbackSeedHex
+      const fallbackSigner = NativeExternalSigner.create(
+        revealSecret(fallbackSeed),
         this._config.network,
         this._config.permissiveSignerPolicy ?? true
       )
-      this._seedHex = this._fallbackSeedHex
+      this._signer.destroy()
+      this._signer = fallbackSigner
+      wipeSecret(this._seedHex)
+      this._seedHex = fallbackSeed
       this._fallbackSeedHex = undefined
       node.unlockWithNativeExternalSigner(this._signer, unlockRequest)
     }
-  }
-
-  /** @returns {SdkNode} */
-  get node () {
-    if (!this._node) throw new Error('SdkNode not created — call unlock() first')
-    return this._node
   }
 
   /**
@@ -247,7 +256,8 @@ export class BareRgbLightningBinding {
    * @returns {{version: number}}
    */
   vssBackup () {
-    const r = this.node.vssBackup()
+    const node = this.ensureNode()
+    const r = node.vssBackup()
     if (r && typeof r.version === 'number') this._lastVssVersion = r.version
     return r
   }
@@ -292,17 +302,31 @@ export class BareRgbLightningBinding {
 
   /** Best-effort shutdown. Idempotent. */
   shutdown () {
+    let failure
     if (this._node) {
-      this._node.shutdown()
-      this._node = null
+      try {
+        this._node.shutdown()
+      } catch (error) {
+        failure = error
+      } finally {
+        this._node = null
+      }
     }
     if (this._signer) {
-      this._signer.destroy()
-      this._signer = null
+      try {
+        this._signer.destroy()
+      } catch (error) {
+        failure ??= error
+      } finally {
+        this._signer = null
+      }
     }
     this._sdkInitDone = false
+    wipeSecret(this._seedHex)
+    wipeSecret(this._fallbackSeedHex)
     this._seedHex = undefined
     this._fallbackSeedHex = undefined
+    if (failure) throw failure
   }
 
   /** @returns {string} */

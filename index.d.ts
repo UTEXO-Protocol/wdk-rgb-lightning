@@ -243,7 +243,6 @@ export interface IRgbLightningBinding {
   ensureNode(): unknown
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
   unlock(unlockRequest: object): void
-  readonly node: unknown
   bootstrap(): object
   clearVssFence(password: string): void
   vssBackup(): { version: number }
@@ -257,7 +256,6 @@ export class NodeRgbLightningBinding implements IRgbLightningBinding {
   ensureNode(): unknown
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
   unlock(unlockRequest: object): void
-  readonly node: unknown
   bootstrap(): object
   clearVssFence(password: string): void
   vssBackup(): { version: number }
@@ -275,7 +273,6 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
   ensureNode(): unknown
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
   unlock(unlockRequest: object): void
-  readonly node: unknown
   bootstrap(): object
   clearVssFence(password: string): void
   vssBackup(): { version: number }
@@ -495,14 +492,14 @@ export class LspClient {
   health(opts?: { timeoutMs?: number }): Promise<object>
   getInfo(opts?: { timeoutMs?: number }): Promise<object>
   lnurlDiscovery(username: string, opts?: { timeoutMs?: number }): Promise<LnurlPayDiscovery>
-  lnurlCallback(username: string, amountMsat: bigint | number, opts?: { assetId?: string; assetAmount?: number; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[] }>
+  lnurlCallback(username: string, amountMsat: bigint | number | string, opts?: { assetId?: string; assetAmount?: bigint | number | string; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[] }>
   /** Full LUD-06 resolution routed through this LSP's baseUrl (discovery + callback). */
-  resolveAddress(username: string, amountMsat: bigint | number, opts?: { assetId?: string; assetAmount?: bigint | number; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[]; status?: string; reason?: string }>
+  resolveAddress(username: string, amountMsat: bigint | number | string, opts?: { assetId?: string; assetAmount?: bigint | number | string; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[]; status?: string; reason?: string }>
   /** Resolve the auto-assigned Lightning Address for a node pubkey (post-apayNew). */
   getLightningAddressByPubkey(peerPubkey: string, opts?: { timeoutMs?: number }): Promise<{ username: string; domain: string }>
   onchainSend(params: {
     rgbInvoice: string
-    ln: { amtMsat: bigint | number; expirySec: number; assetId?: string; assetAmount?: number; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
+    ln: { amtMsat: bigint | number | string; expirySec: number; assetId?: string; assetAmount?: bigint | number | string; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
     timeoutMs?: number
   }): Promise<LspBridgeResult>
   lightningReceive(params: {
@@ -528,8 +525,19 @@ export class LspError extends Error {
 // ───────────────────────────────────────────────────────────────────
 
 export function parseLightningAddress(addr: string, opts?: { allowHttp?: boolean }): { username: string; host: string; discoveryUrl: string }
-export function fetchDiscovery(addr: string, opts?: { fetch?: typeof fetch; timeoutMs?: number; allowHttp?: boolean }): Promise<LnurlPayDiscovery>
-export function resolveAddressToInvoice(addr: string, amountMsat: bigint | number, opts?: { fetch?: typeof fetch; timeoutMs?: number; allowHttp?: boolean; comment?: string }): Promise<{ pr: string; routes?: unknown[]; discovery: LnurlPayDiscovery; callbackUrl: string }>
+export interface LnurlPayOptions {
+  fetch?: typeof fetch
+  timeoutMs?: number
+  allowHttp?: boolean
+  /** Opt in to following a callback on a different host than discovery. */
+  allowCrossHostCallback?: boolean
+  comment?: string
+  assetId?: string
+  assetAmount?: bigint | number | string
+}
+
+export function fetchDiscovery(addr: string, opts?: Pick<LnurlPayOptions, 'fetch' | 'timeoutMs' | 'allowHttp'>): Promise<LnurlPayDiscovery>
+export function resolveAddressToInvoice(addr: string, amountMsat: bigint | number | string, opts?: LnurlPayOptions): Promise<{ pr: string; routes?: unknown[]; discovery: LnurlPayDiscovery; callbackUrl: string }>
 
 export class LnurlPayError extends Error {
   status?: number
@@ -540,13 +548,9 @@ export class LnurlPayError extends Error {
 // LSP helpers (account + LSP combined flows)
 // ───────────────────────────────────────────────────────────────────
 
-export interface PayLightningAddressOptions {
-  fetch?: typeof fetch
-  timeoutMs?: number
-  allowHttp?: boolean
-  comment?: string
+export interface PayLightningAddressOptions extends LnurlPayOptions {
   skipAmount?: boolean
-  beforePay?: (invoice: string, ctx: { discovery: LnurlPayDiscovery; callbackUrl: string }) => void | Promise<void>
+  beforePay?: (invoice: string, discovery: LnurlPayDiscovery) => void | Promise<void>
 }
 
 export interface PayLightningAddressResult {
@@ -569,7 +573,7 @@ export type LspRgbDepositResult = LspBridgeResult
 export interface PayRgbViaLspArgs {
   lsp: string | LspClient
   rgbInvoice: string
-  ln: { amtMsat: bigint | number; expirySec: number; assetId?: string; assetAmount?: number; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
+  ln: { amtMsat: bigint | number | string; expirySec: number; assetId?: string; assetAmount?: bigint | number | string; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
   lspOpts?: { timeoutMs?: number }
 }
 
@@ -577,7 +581,7 @@ export interface PayRgbViaLspResult extends LspBridgeResult {
   sendResult: object
 }
 
-export function payLightningAddress(account: WalletAccountRgbLightning, addr: string, amountMsat: bigint | number, opts?: PayLightningAddressOptions): Promise<PayLightningAddressResult>
+export function payLightningAddress(account: WalletAccountRgbLightning, addr: string, amountMsat: bigint | number | string, opts?: PayLightningAddressOptions): Promise<PayLightningAddressResult>
 export function requestLspRgbDeposit(account: WalletAccountRgbLightning, args: RequestLspRgbDepositArgs): Promise<LspRgbDepositResult>
 export function payRgbViaLsp(account: WalletAccountRgbLightning, args: PayRgbViaLspArgs): Promise<PayRgbViaLspResult>
 
@@ -632,7 +636,7 @@ export interface ReceiveAssetResult {
 
 export interface SendAssetOptions {
   rgbInvoice: string
-  ln?: { amtMsat?: bigint | number; expirySec?: number; assetId?: string; assetAmount?: bigint | number; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
+  ln?: { amtMsat?: bigint | number | string; expirySec?: number; assetId?: string; assetAmount?: bigint | number | string; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
 }
 
 export interface SendAssetResult extends LspBridgeResult {
@@ -641,8 +645,8 @@ export interface SendAssetResult extends LspBridgeResult {
 
 export interface PayAddressOptions {
   address: string
-  amtMsat: bigint | number
-  asset?: { assetId: string; assetAmount: number }
+  amtMsat: bigint | number | string
+  asset?: { assetId: string; assetAmount: bigint | number | string }
 }
 
 export interface LightningAddressInfo {
@@ -677,11 +681,20 @@ export function peerUri(peer: LspPeer): string
 export function normalizeReceiveStatus(raw: string | { status?: string } | null | undefined): ReceiveStatus
 
 export class LspChannelTimeoutError extends Error {
+  constructor(assetId: string, elapsedMs: number)
   assetId: string
   elapsedMs: number
 }
 
+export class LspLiquidityTimeoutError extends Error {
+  constructor(minMsat: number, elapsedMs: number, peerPubkey: string)
+  minMsat: number
+  elapsedMs: number
+  peerPubkey: string
+}
+
 export class LspSettlementError extends Error {
+  constructor(step: 'ln_invoice', status: 'Failed' | 'Expired')
   step: 'ln_invoice'
   /** Only the terminal-failure states ever reach this error. */
   status: 'Failed' | 'Expired'

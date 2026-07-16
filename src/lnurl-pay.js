@@ -4,6 +4,8 @@
 // you may not use this file except in compliance with the License.
 'use strict'
 
+import { toUint64String } from './lsp-utils.js'
+
 // Generic LUD-06 (Lightning Address) client. NOT utexo-lsp specific:
 // any LNURL-pay server that follows the spec works. We split this out
 // from LspClient so a wallet can pay an external Lightning Address
@@ -113,9 +115,7 @@ export async function fetchDiscovery (addr, opts = {}) {
   if (typeof fetcher !== 'function') {
     throw new LnurlPayError('fetchDiscovery: no global fetch; pass opts.fetch')
   }
-  const url = addr.startsWith('http://') || addr.startsWith('https://')
-    ? addr
-    : parseLightningAddress(addr, opts).discoveryUrl
+  const url = discoveryUrlFor(addr, opts)
 
   const data = await fetchJson(fetcher, url, {
     signal: timeoutSignal(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS)
@@ -137,7 +137,13 @@ export async function fetchDiscovery (addr, opts = {}) {
  * @param {typeof fetch} [opts.fetch]
  * @param {number} [opts.timeoutMs]
  * @param {boolean} [opts.allowHttp]
+ * @param {boolean} [opts.allowCrossHostCallback=false]
+ *   Permit a callback on a host other than the discovery endpoint.
+ *   Disabled by default to prevent a discovery document from redirecting
+ *   the wallet's authenticated network access to an unrelated host.
  * @param {string} [opts.comment]   LUD-12 comment (server-policy gated).
+ * @param {string} [opts.assetId]   Optional RGB asset extension.
+ * @param {bigint|number|string} [opts.assetAmount]
  * @returns {Promise<{ pr:string, routes:Array, discovery:LnurlPayDiscovery, callbackUrl:string }>}
  */
 export async function resolveAddressToInvoice (addr, amountMsat, opts = {}) {
@@ -146,12 +152,16 @@ export async function resolveAddressToInvoice (addr, amountMsat, opts = {}) {
     throw new LnurlPayError('resolveAddressToInvoice: no global fetch; pass opts.fetch')
   }
 
-  const discovery = await fetchDiscovery(addr, opts)
-  const amount = toIntString(amountMsat, 'amountMsat')
+  const discoveryUrl = discoveryUrlFor(addr, opts)
+  const discovery = await fetchDiscovery(discoveryUrl, opts)
+  assertCallbackOrigin(discovery.callback, discoveryUrl, opts)
+  const amount = asUint64String(amountMsat, 'amountMsat')
   enforceRange(amount, discovery)
 
   const callbackUrl = appendQuery(discovery.callback, {
     amount,
+    ...(opts.assetId !== undefined ? { asset_id: String(opts.assetId) } : {}),
+    ...(opts.assetAmount !== undefined ? { asset_amount: asUint64String(opts.assetAmount, 'assetAmount') } : {}),
     ...(opts.comment ? { comment: opts.comment } : {})
   })
 
@@ -207,12 +217,21 @@ function validateDiscovery (data, url) {
   if (data.tag !== 'payRequest') {
     throw new LnurlPayError(`LUD-06 discovery: expected tag='payRequest', got '${data.tag}'`)
   }
-  if (typeof data.callback !== 'string' || !/^https?:\/\//i.test(data.callback)) {
+  if (typeof data.callback !== 'string' || !isHttpUrl(data.callback)) {
     throw new LnurlPayError(`LUD-06 discovery: invalid callback '${data.callback}'`)
   }
-  const min = numOrNull(data.minSendable)
-  const max = numOrNull(data.maxSendable)
-  if (min == null || max == null || min > max || min <= 0) {
+  let min
+  let max
+  try {
+    min = BigInt(toUint64String(data.minSendable, 'minSendable'))
+    max = BigInt(toUint64String(data.maxSendable, 'maxSendable'))
+  } catch (cause) {
+    throw new LnurlPayError(
+      `LUD-06 discovery: invalid sendable range min=${data.minSendable} max=${data.maxSendable}`,
+      { cause }
+    )
+  }
+  if (min > max || min === 0n) {
     throw new LnurlPayError(`LUD-06 discovery: invalid sendable range min=${data.minSendable} max=${data.maxSendable}`)
   }
   if (typeof data.metadata !== 'string') {
@@ -223,32 +242,64 @@ function validateDiscovery (data, url) {
 function enforceRange (amountStr, d) {
   // Compare as BigInt to avoid 2^53 truncation on large msat values.
   const amount = BigInt(amountStr)
-  if (amount < BigInt(d.minSendable) || amount > BigInt(d.maxSendable)) {
+  const min = BigInt(asUint64String(d.minSendable, 'minSendable'))
+  const max = BigInt(asUint64String(d.maxSendable, 'maxSendable'))
+  if (amount < min || amount > max) {
     throw new LnurlPayError(`amount ${amountStr} outside server range [${d.minSendable}, ${d.maxSendable}]`)
   }
 }
 
 function appendQuery (url, params) {
-  const sep = url.includes('?') ? '&' : '?'
-  const enc = new URLSearchParams()
-  for (const [k, v] of Object.entries(params)) enc.set(k, String(v))
-  return `${url}${sep}${enc.toString()}`
+  const callback = new URL(url)
+  for (const [key, value] of Object.entries(params)) callback.searchParams.set(key, String(value))
+  return callback.toString()
 }
 
-function toIntString (v, field) {
-  if (typeof v === 'bigint') {
-    if (v < 0n) throw new LnurlPayError(`${field} must be ≥ 0`)
-    return v.toString()
+function discoveryUrlFor (addr, opts) {
+  if (typeof addr !== 'string' || !/^https?:\/\//i.test(addr)) {
+    return parseLightningAddress(addr, opts).discoveryUrl
   }
-  if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return Math.trunc(v).toString()
-  if (typeof v === 'string' && /^\d+$/.test(v)) return v
-  throw new LnurlPayError(`${field} must be a non-negative integer`)
+
+  let url
+  try {
+    url = new URL(addr)
+  } catch (cause) {
+    throw new LnurlPayError(`invalid discovery URL '${addr}'`, { cause })
+  }
+  if (url.protocol === 'http:' && opts.allowHttp !== true && !isLoopback(url.host) && !url.hostname.endsWith('.onion')) {
+    throw new LnurlPayError(`plain HTTP discovery is not allowed for '${url.host}'`)
+  }
+  return url.toString()
 }
 
-function numOrNull (v) {
-  if (typeof v === 'number' && Number.isFinite(v)) return v
-  if (typeof v === 'string' && /^\d+$/.test(v)) return Number(v)
-  return null
+function assertCallbackOrigin (callbackUrl, discoveryUrl, opts) {
+  const callback = new URL(callbackUrl)
+  const discovery = new URL(discoveryUrl)
+  if (callback.protocol === 'http:' && opts.allowHttp !== true && !isLoopback(callback.host) && !callback.hostname.endsWith('.onion')) {
+    throw new LnurlPayError(`LUD-06 callback uses disallowed plain HTTP origin '${callback.origin}'`)
+  }
+  if (opts.allowCrossHostCallback !== true && callback.host !== discovery.host) {
+    throw new LnurlPayError(
+      `LUD-06 callback host '${callback.host}' does not match discovery host '${discovery.host}'`
+    )
+  }
+}
+
+function isHttpUrl (value) {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function asUint64String (value, field) {
+  try {
+    return toUint64String(value, field)
+  } catch (cause) {
+    throw new LnurlPayError(cause.message, { cause })
+  }
 }
 
 function timeoutSignal (ms) {

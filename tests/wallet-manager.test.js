@@ -24,7 +24,7 @@ class FakeBinding {
     this.shutdown = jest.fn()
     this.bootstrap = jest.fn(() => ({ node_id: '02' + '11'.repeat(32) }))
     this.vssStatus = jest.fn(() => ({ configured: false, url: null, allowHttp: false, lastBackupVersion: null }))
-    this.node = {}
+    this.ensureNode = jest.fn(() => ({}))
     FakeBinding.instances.push(this)
   }
 }
