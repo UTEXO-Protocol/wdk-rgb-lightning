@@ -278,6 +278,7 @@ describe('GET endpoint methods', () => {
   it('lnurlCallback() rejects a non-integer amount', () => {
     const { client } = makeClient()
     expect(() => client.lnurlCallback('alice', -1)).toThrow(/non-negative integer/)
+    expect(() => client.lnurlCallback('alice', 1.5)).toThrow(/non-negative integer/)
     expect(() => client.lnurlCallback('alice', 'abc')).toThrow(/non-negative integer/)
   })
 
@@ -407,7 +408,7 @@ describe('POST endpoint methods', () => {
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
     expect(body).toEqual({
       ln_invoice: 'lnbc',
-      rgb_invoice: { asset_id: 'rgb:a', min_confirmations: 1, witness: false }
+      rgb_invoice: { asset_id: 'rgb:a', assignment: 'Any', min_confirmations: 1, witness: false }
     })
   })
 
@@ -677,13 +678,40 @@ describe('numeric coercion edge cases (via public API)', () => {
   it('rejects a negative bigint amount', async () => {
     const { client } = makeClient()
     await expect(client.onchainSend({ rgbInvoice: 'rgb:x', ln: { amtMsat: -1n } }))
-      .rejects.toThrow(/must be ≥ 0/)
+      .rejects.toThrow(/non-negative integer/)
+  })
+
+  it('rejects fractional and unsafe number inputs instead of truncating them', async () => {
+    const { client } = makeClient()
+    await expect(client.onchainSend({ rgbInvoice: 'rgb:x', ln: { amtMsat: 1.5 } }))
+      .rejects.toThrow(/non-negative integer/)
+    await expect(client.onchainSend({ rgbInvoice: 'rgb:x', ln: { amtMsat: Number.MAX_SAFE_INTEGER + 1 } }))
+      .rejects.toThrow(/fits in uint64/)
+  })
+
+  it('rejects bigint and string values above uint64 max', async () => {
+    const { client } = makeClient()
+    const overflow = 1n << 64n
+    await expect(client.onchainSend({ rgbInvoice: 'rgb:x', ln: { amtMsat: overflow } }))
+      .rejects.toThrow(/fits in uint64/)
+    await expect(client.onchainSend({ rgbInvoice: 'rgb:x', ln: { amtMsat: overflow.toString() } }))
+      .rejects.toThrow(/fits in uint64/)
   })
 
   it('rejects a uint32 field that overflows', async () => {
     const { client } = makeClient()
     await expect(client.onchainSend({ rgbInvoice: 'rgb:x', ln: { expirySec: 0x1ffffffff } }))
       .rejects.toThrow(/must fit in uint32/)
+    await expect(client.onchainSend({ rgbInvoice: 'rgb:x', ln: { expirySec: null } }))
+      .rejects.toThrow(/must fit in uint32/)
+  })
+
+  it('accepts a numeric-string uint32 field', async () => {
+    const fetchImpl = fetchReturning(makeRes({ json: {} }))
+    const { client } = makeClient({ fetch: fetchImpl })
+    await client.onchainSend({ rgbInvoice: 'rgb:x', ln: { expirySec: '60' } })
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
+    expect(body.lninvoice.expiry_sec).toBe(60)
   })
 
   it('passes a numeric-string amtMsat through unchanged (uint64 string path)', async () => {

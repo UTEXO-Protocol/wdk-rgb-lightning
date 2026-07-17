@@ -60,7 +60,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
 
   /** @private */
   get _node () {
-    return this._binding.node
+    return this._binding.ensureNode()
   }
 
   // ==========================================================================

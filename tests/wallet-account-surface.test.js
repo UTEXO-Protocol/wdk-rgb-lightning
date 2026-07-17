@@ -5,8 +5,8 @@
 
 // Surface coverage for WalletAccountRgbLightning + the read-only façade
 // it returns from toReadOnlyAccount(). Most methods are 1-line
-// passthroughs to this._node.<x>() (the _node getter returns
-// this._binding.node) or this._binding.<x>(); these tests assert each
+// passthroughs to this._node.<x>() (the _node getter calls
+// this._binding.ensureNode()) or this._binding.<x>(); these tests assert each
 // account method forwards to the right node/binding method with the
 // right args and maps the result as documented.
 //
@@ -83,21 +83,20 @@ function makeNode (overrides = {}) {
   }
 }
 
-// Build a fake binding around a node. node-level overrides go via
-// `node`; binding-level overrides spread on top.
+// Build a fake binding around a node. Node-level overrides go via `node`;
+// the binding exposes it through ensureNode(), matching the native wrappers.
 function makeBinding (overrides = {}) {
-  const node = overrides.node ?? makeNode()
+  const { node: nodeOverride, ...bindingOverrides } = overrides
+  const node = nodeOverride ?? makeNode()
   const binding = {
+    ensureNode: jest.fn(() => node),
     unlock: jest.fn(() => undefined),
     bootstrap: jest.fn(() => ({ node_id: 'aa'.repeat(33) })),
     shutdown: jest.fn(() => undefined),
     apayNew: jest.fn(() => ({ order_id: 'o1' })),
     vssStatus: jest.fn(() => ({ configured: false, url: null, allowHttp: false, lastBackupVersion: null })),
-    ...overrides
+    ...bindingOverrides
   }
-  // Ensure the binding's `node` getter target is the resolved node even
-  // when overrides supplied one (or none).
-  binding.node = node
   return binding
 }
 
@@ -111,10 +110,11 @@ describe('construction', () => {
     expect(() => new WalletAccountRgbLightning({})).toThrow(/requires a BareRgbLightningBinding/)
   })
 
-  it('exposes the node via the _binding.node getter', () => {
+  it('exposes the cached node through binding.ensureNode()', () => {
     const node = makeNode()
     const account = makeAccount({ node })
     expect(account._node).toBe(node)
+    expect(account._binding.ensureNode).toHaveBeenCalledTimes(1)
   })
 
   it('follows the current WDK inheritance chain through the concrete read-only account', () => {
@@ -281,9 +281,7 @@ describe('getAddress', () => {
 
   it('classifies an uncreated native node as locked', async () => {
     const binding = makeBinding()
-    Object.defineProperty(binding, 'node', {
-      get: () => { throw new Error('SdkNode not created — call unlock() first') }
-    })
+    binding.ensureNode.mockImplementation(() => { throw new Error('SdkNode not created — call unlock() first') })
     const account = new WalletAccountRgbLightning({ binding })
     await expect(account.getAddress()).rejects.toBeInstanceOf(AccountLockedError)
     await expect(account.getBalance()).resolves.toBe(0n)

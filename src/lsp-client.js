@@ -4,6 +4,13 @@
 // you may not use this file except in compliance with the License.
 'use strict'
 
+import {
+  camelCaseLspResponse,
+  snakeCaseLnParams,
+  snakeCaseRgbParams,
+  toUint64String
+} from './lsp-utils.js'
+
 // Thin typed wrapper around utexo-lsp's HTTP API. Side-effect free:
 // methods build URLs, send JSON, validate response status, and return
 // parsed JSON DTOs. Anything that combines an LSP call with a local
@@ -187,9 +194,9 @@ export class LspClient {
   lnurlCallback (username, amountMsat, opts = {}) {
     if (!isNonEmptyString(username)) throw new TypeError('LspClient.lnurlCallback: username required')
     const params = new URLSearchParams()
-    params.set('amount', toIntString(amountMsat, 'amountMsat'))
+    params.set('amount', toUint64String(amountMsat, 'amountMsat'))
     if (opts.assetId !== undefined) params.set('asset_id', String(opts.assetId))
-    if (opts.assetAmount !== undefined) params.set('asset_amount', toIntString(opts.assetAmount, 'assetAmount'))
+    if (opts.assetAmount !== undefined) params.set('asset_amount', toUint64String(opts.assetAmount, 'assetAmount'))
     return this._req('GET', `/pay/callback/${encodeURIComponent(username)}?${params.toString()}`, undefined, opts)
   }
 
@@ -222,9 +229,9 @@ export class LspClient {
     }
     const cbPath = this._rewriteCallbackToPath(meta.callback)
     const params = new URLSearchParams()
-    params.set('amount', toIntString(amountMsat, 'amountMsat'))
+    params.set('amount', toUint64String(amountMsat, 'amountMsat'))
     if (opts.assetId !== undefined) params.set('asset_id', String(opts.assetId))
-    if (opts.assetAmount !== undefined) params.set('asset_amount', toIntString(opts.assetAmount, 'assetAmount'))
+    if (opts.assetAmount !== undefined) params.set('asset_amount', toUint64String(opts.assetAmount, 'assetAmount'))
     const sep = cbPath.includes('?') ? '&' : '?'
     return this._req('GET', `${cbPath}${sep}${params.toString()}`, undefined, opts)
   }
@@ -419,85 +426,6 @@ export class LspClient {
 function wait (ms) { return new Promise((resolve) => setTimeout(resolve, ms)) }
 function backoffMs (attempt) { return RETRY_BASE_MS * Math.pow(2, attempt) }
 
-// ---------------------------------------------------------------------------
-// Shape adapters
-// ---------------------------------------------------------------------------
-
-/**
- * The LSP returns snake_case JSON (`{rgb_invoice, ln_invoice,
- * mapping_id}`). Map it to camelCase to match this module's public
- * API style + the helpers in lsp-helpers.js. Other keys pass through
- * unchanged for forward compatibility.
- */
-function camelCaseLspResponse (raw) {
-  if (!raw || typeof raw !== 'object') return raw
-  const out = { ...raw }
-  if ('rgb_invoice' in raw) out.rgbInvoice = raw.rgb_invoice
-  if ('ln_invoice' in raw) out.lnInvoice = raw.ln_invoice
-  if ('mapping_id' in raw) out.mappingId = raw.mapping_id
-  return out
-}
-
-function snakeCaseLnParams (ln) {
-  const out = {}
-  if (ln.amtMsat !== undefined) out.amt_msat = toUint64Json(ln.amtMsat, 'ln.amtMsat')
-  if (ln.expirySec !== undefined) out.expiry_sec = toUint32(ln.expirySec, 'ln.expirySec')
-  if (ln.assetId !== undefined) out.asset_id = String(ln.assetId)
-  if (ln.assetAmount !== undefined) out.asset_amount = toUint64Json(ln.assetAmount, 'ln.assetAmount')
-  if (ln.descriptionHash !== undefined) out.description_hash = String(ln.descriptionHash)
-  if (ln.paymentHash !== undefined) out.payment_hash = String(ln.paymentHash)
-  if (ln.minFinalCltvExpiryDelta !== undefined) {
-    out.min_final_cltv_expiry_delta = toUint32(ln.minFinalCltvExpiryDelta, 'ln.minFinalCltvExpiryDelta')
-  }
-  return out
-}
-
-function snakeCaseRgbParams (rgb) {
-  const out = {
-    asset_id: rgb.assetId,
-    min_confirmations: rgb.minConfirmations !== undefined ? toUint32(rgb.minConfirmations, 'rgb.minConfirmations') : 1,
-    witness: !!rgb.witness
-  }
-  if (rgb.assignment !== undefined) out.assignment = String(rgb.assignment)
-  if (rgb.durationSeconds !== undefined) out.duration_seconds = toUint32(rgb.durationSeconds, 'rgb.durationSeconds')
-  return out
-}
-
 function isNonEmptyString (v) {
   return typeof v === 'string' && v.length > 0
-}
-
-function toIntString (v, field) {
-  if (typeof v === 'bigint' && v >= 0n) return v.toString()
-  if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return Math.trunc(v).toString()
-  if (typeof v === 'string' && /^\d+$/.test(v)) return v
-  throw new TypeError(`${field} must be a non-negative integer`)
-}
-
-/**
- * The Go side uses uint64 fields. JS numbers lose precision above 2^53.
- * Emit bigint values as numeric JSON (rgb-lightning-node accepts both
- * 1234 and "1234" but we prefer numeric for amt_msat to match the
- * canonical shape). For values above 2^53 we drop to strings — RLN
- * tolerates this on amt_msat (see daemon JsonLnInvoiceRequest).
- */
-function toUint64Json (v, field) {
-  if (typeof v === 'number') {
-    if (!Number.isFinite(v) || v < 0) throw new TypeError(`${field} must be ≥ 0`)
-    return Math.trunc(v)
-  }
-  if (typeof v === 'bigint') {
-    if (v < 0n) throw new TypeError(`${field} must be ≥ 0`)
-    return v <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(v) : v.toString()
-  }
-  if (typeof v === 'string' && /^\d+$/.test(v)) return v
-  throw new TypeError(`${field} must be a non-negative integer`)
-}
-
-function toUint32 (v, field) {
-  const n = typeof v === 'bigint' ? Number(v) : Number(v)
-  if (!Number.isFinite(n) || n < 0 || n > 0xffffffff || !Number.isInteger(n)) {
-    throw new TypeError(`${field} must fit in uint32`)
-  }
-  return n
 }

@@ -11,6 +11,7 @@
 // runtimes — see binding-interface.js for the contract.
 
 import rln from '@utexo/rgb-lightning-node-nodejs'
+import { retainSecret, revealSecret, secretMatches, wipeSecret } from './secret-buffer.js'
 
 const {
   SdkNode,
@@ -65,6 +66,10 @@ export class NodeRgbLightningBinding {
     this._node = null
     /** @type {unknown | null} */
     this._signer = null
+    /** @type {Buffer | undefined} Zeroizable retained copy for idempotency checks. */
+    this._seedHex = undefined
+    /** @type {Buffer | undefined} Temporary legacy seed retained until first unlock. */
+    this._fallbackSeedHex = undefined
     /** @type {boolean} */
     this._sdkInitDone = false
     /** @type {number | null} Snapshot version returned by the most recent vssBackup(). */
@@ -81,13 +86,16 @@ export class NodeRgbLightningBinding {
   /** @param {string} seedHex */
   attachExternalSigner (seedHex, fallbackSeedHex) {
     if (this._signer) {
-      if (this._seedHex && this._seedHex !== seedHex) {
+      if (this._seedHex && !secretMatches(this._seedHex, seedHex)) {
         throw new Error(
           'attachExternalSigner: a different signer is already attached. ' +
           'Shut down the binding before re-attaching with a new seed.'
         )
       }
-      if (fallbackSeedHex) this._fallbackSeedHex = fallbackSeedHex
+      if (fallbackSeedHex) {
+        wipeSecret(this._fallbackSeedHex)
+        this._fallbackSeedHex = retainSecret(fallbackSeedHex)
+      }
       return
     }
     this._signer = NativeExternalSigner.create(
@@ -95,8 +103,10 @@ export class NodeRgbLightningBinding {
       this._config.network,
       this._config.permissiveSignerPolicy ?? true
     )
-    this._seedHex = seedHex
-    this._fallbackSeedHex = fallbackSeedHex
+    wipeSecret(this._seedHex)
+    wipeSecret(this._fallbackSeedHex)
+    this._seedHex = retainSecret(seedHex)
+    this._fallbackSeedHex = retainSecret(fallbackSeedHex)
   }
 
   /** @param {object} unlockRequest */
@@ -116,6 +126,7 @@ export class NodeRgbLightningBinding {
     }
     try {
       node.unlockWithNativeExternalSigner(this._signer, unlockRequest)
+      wipeSecret(this._fallbackSeedHex)
       this._fallbackSeedHex = undefined
     } catch (error) {
       const message = String(error && error.message ? error.message : error)
@@ -123,21 +134,31 @@ export class NodeRgbLightningBinding {
         throw error
       }
 
-      this._signer.destroy()
-      this._signer = NativeExternalSigner.create(
-        this._fallbackSeedHex,
+      const fallbackSeed = this._fallbackSeedHex
+      const fallbackSigner = NativeExternalSigner.create(
+        revealSecret(fallbackSeed),
         this._config.network,
         this._config.permissiveSignerPolicy ?? true
       )
-      this._seedHex = this._fallbackSeedHex
+      try {
+        this._signer.destroy()
+      } catch (primaryDestroyError) {
+        try {
+          fallbackSigner.destroy()
+        } catch (fallbackDestroyError) {
+          throw new AggregateError(
+            [primaryDestroyError, fallbackDestroyError],
+            'unlock: failed to destroy both the primary and fallback signers'
+          )
+        }
+        throw primaryDestroyError
+      }
+      this._signer = fallbackSigner
+      wipeSecret(this._seedHex)
+      this._seedHex = fallbackSeed
       this._fallbackSeedHex = undefined
       node.unlockWithNativeExternalSigner(this._signer, unlockRequest)
     }
-  }
-
-  get node () {
-    if (!this._node) throw new Error('SdkNode not created — call unlock() first')
-    return this._node
   }
 
   bootstrap () {
@@ -167,7 +188,8 @@ export class NodeRgbLightningBinding {
    * @returns {{version: number}}
    */
   vssBackup () {
-    const r = this.node.vssBackup()
+    const node = this.ensureNode()
+    const r = node.vssBackup()
     if (r && typeof r.version === 'number') this._lastVssVersion = r.version
     return r
   }
@@ -206,17 +228,31 @@ export class NodeRgbLightningBinding {
   }
 
   shutdown () {
+    let failure
     if (this._node) {
-      this._node.shutdown()
-      this._node = null
+      try {
+        this._node.shutdown()
+      } catch (error) {
+        failure = error
+      } finally {
+        this._node = null
+      }
     }
     if (this._signer) {
-      this._signer.destroy()
-      this._signer = null
+      try {
+        this._signer.destroy()
+      } catch (error) {
+        failure ??= error
+      } finally {
+        this._signer = null
+      }
     }
     this._sdkInitDone = false
+    wipeSecret(this._seedHex)
+    wipeSecret(this._fallbackSeedHex)
     this._seedHex = undefined
     this._fallbackSeedHex = undefined
+    if (failure) throw failure
   }
 
   static healthcheck () { return uniffiHealthcheck() }

@@ -53,6 +53,7 @@ export {
 export {
   UtexoLsp,
   LspChannelTimeoutError,
+  LspLiquidityTimeoutError,
   LspSettlementError,
   peerUri,
   normalizeReceiveStatus

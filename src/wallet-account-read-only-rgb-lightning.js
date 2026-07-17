@@ -77,7 +77,7 @@ export function createReadOnlyRgbLightningAdapter (binding) {
   if (!binding) throw new TypeError('A RGB Lightning binding is required')
 
   const callNode = (method, ...args) => {
-    const node = binding.node
+    const node = binding.ensureNode()
     if (!node || typeof node[method] !== 'function') {
       throw new Error(
         `The installed RGB Lightning native binding does not expose ${method}(). ` +
