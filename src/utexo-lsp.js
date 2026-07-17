@@ -289,8 +289,10 @@ export class UtexoLsp {
    *
    * @param {object} opts
    * @param {string} opts.address          `user@host`.
-   * @param {bigint|number} opts.amtMsat
+   * @param {bigint|number|string} opts.amtMsat
    * @param {object} [opts.asset]          `{ assetId, assetAmount }`.
+   * @param {boolean} [opts.allowCrossHostCallback=false]
+   *   Permit a delegated LNURL callback on a different host.
    * @returns {Promise<{ invoice:string, sendResult:any }>}
    */
   async payAddress (opts = {}) {
@@ -318,6 +320,7 @@ export class UtexoLsp {
     if (useStandardResolver) {
       const resolved = await resolveAddressToInvoice(address, opts.amtMsat, {
         allowHttp: this.peer.allowHttp === true,
+        allowCrossHostCallback: opts.allowCrossHostCallback === true,
         assetId: opts.asset?.assetId,
         assetAmount: opts.asset?.assetAmount
       })

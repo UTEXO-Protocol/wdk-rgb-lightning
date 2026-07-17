@@ -140,7 +140,19 @@ export class NodeRgbLightningBinding {
         this._config.network,
         this._config.permissiveSignerPolicy ?? true
       )
-      this._signer.destroy()
+      try {
+        this._signer.destroy()
+      } catch (primaryDestroyError) {
+        try {
+          fallbackSigner.destroy()
+        } catch (fallbackDestroyError) {
+          throw new AggregateError(
+            [primaryDestroyError, fallbackDestroyError],
+            'unlock: failed to destroy both the primary and fallback signers'
+          )
+        }
+        throw primaryDestroyError
+      }
       this._signer = fallbackSigner
       wipeSecret(this._seedHex)
       this._seedHex = fallbackSeed

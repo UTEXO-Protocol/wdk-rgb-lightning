@@ -625,6 +625,37 @@ describe('payAddress', () => {
     expect(out).toEqual({ invoice: 'lnbcrt-lnurl', sendResult: { payment_hash: 'fb' } })
   })
 
+  it('rejects a delegated callback by default', async () => {
+    const account = makeAccount()
+    const lsp = makeLsp(account)
+    globalThis.fetch = jest.fn()
+      .mockResolvedValueOnce(lnurlResponse(lnurlDiscovery('https://delegate.test/cb')))
+
+    await expect(lsp.payAddress({ address: 'bob@other.test', amtMsat: 3000 }))
+      .rejects.toThrow("callback host 'delegate.test' does not match discovery host 'other.test'")
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect(account.sendPayment).not.toHaveBeenCalled()
+  })
+
+  it('forwards the explicit delegated-callback opt-in', async () => {
+    const account = makeAccount({ sendPayment: jest.fn(async () => ({ payment_hash: 'delegated' })) })
+    const lsp = makeLsp(account)
+    globalThis.fetch = jest.fn()
+      .mockResolvedValueOnce(lnurlResponse(lnurlDiscovery('https://delegate.test/cb')))
+      .mockResolvedValueOnce(lnurlResponse({ pr: 'lnbcrt-delegated' }))
+
+    await expect(lsp.payAddress({
+      address: 'bob@other.test',
+      amtMsat: '3000',
+      allowCrossHostCallback: true
+    })).resolves.toEqual({
+      invoice: 'lnbcrt-delegated',
+      sendResult: { payment_hash: 'delegated' }
+    })
+    expect(globalThis.fetch.mock.calls[1][0]).toBe('https://delegate.test/cb?amount=3000')
+    expect(account.sendPayment).toHaveBeenCalledWith({ invoice: 'lnbcrt-delegated' })
+  })
+
   it('uses a ? separator in the fallback callback when none is present', async () => {
     const lsp = makeLsp(makeAccount())
     globalThis.fetch = jest.fn()

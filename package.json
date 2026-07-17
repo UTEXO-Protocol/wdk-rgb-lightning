@@ -55,7 +55,8 @@
       "<rootDir>/jest.setup.js"
     ],
     "moduleNameMapper": {
-      "^@utexo/rgb-lightning-node-nodejs$": "<rootDir>/tests/__mocks__/rgb-lightning-node-nodejs.mjs"
+      "^@utexo/rgb-lightning-node-nodejs$": "<rootDir>/tests/__mocks__/rgb-lightning-node-nodejs.mjs",
+      "^@utexo/rgb-lightning-node-bare$": "<rootDir>/tests/__mocks__/rgb-lightning-node-bare.mjs"
     }
   },
   "exports": {

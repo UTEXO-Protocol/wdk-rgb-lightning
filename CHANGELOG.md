@@ -116,8 +116,9 @@ while pre-`1.0`.
   default, and never resolve an external domain as a same-named LSP user.
 - Removed the binding `node` getter in favor of consistent `ensureNode()`
   access. Bare and Node bindings now retain signer seeds in zeroizable
-  buffers and wipe both current and #26 legacy-fallback material during
-  replacement, successful unlock, and shutdown failure paths.
+  buffers, wipe fallback material when it is superseded or no longer needed,
+  wipe replaced primary material after fallback recovery, and wipe all retained
+  material during shutdown even when native cleanup fails.
 - `waitForOutboundLiquidity()` now throws `LspLiquidityTimeoutError` when
   its deadline expires instead of resolving without the requested capacity.
 

@@ -647,6 +647,8 @@ export interface PayAddressOptions {
   address: string
   amtMsat: bigint | number | string
   asset?: { assetId: string; assetAmount: bigint | number | string }
+  /** Opt in to following a delegated LNURL callback on a different host. */
+  allowCrossHostCallback?: boolean
 }
 
 export interface LightningAddressInfo {

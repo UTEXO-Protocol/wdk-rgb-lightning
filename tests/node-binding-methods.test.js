@@ -274,6 +274,69 @@ describe('unlock', () => {
     }
   })
 
+  it('destroys a newly created fallback signer when the primary signer cannot be released', () => {
+    const b = makeBinding()
+    const node = fakeNode()
+    const primarySigner = fakeSigner()
+    const fallbackSigner = fakeSigner()
+    const destroyError = new Error('primary signer destroy failed')
+    primarySigner.destroy.mockImplementation(() => { throw destroyError })
+    node.unlockWithNativeExternalSigner.mockImplementation(() => {
+      throw new Error('Rln(ExternalSignerMismatch): External signer identity does not match persisted node identity')
+    })
+    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(fallbackSigner)
+    const primarySeed = Buffer.from('seed-v2')
+    const fallbackSeed = Buffer.from('seed-v1')
+    b._node = node
+    b._signer = primarySigner
+    b._seedHex = primarySeed
+    b._fallbackSeedHex = fallbackSeed
+    try {
+      expect(() => b.unlock({})).toThrow(destroyError)
+      expect(fallbackSigner.destroy).toHaveBeenCalledTimes(1)
+      expect(b._signer).toBe(primarySigner)
+      expect(b._seedHex).toBe(primarySeed)
+      expect(b._fallbackSeedHex).toBe(fallbackSeed)
+      expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
+    } finally {
+      createSpy.mockRestore()
+    }
+  })
+
+  it('reports both native cleanup failures during fallback replacement', () => {
+    const b = makeBinding()
+    const node = fakeNode()
+    const primarySigner = fakeSigner()
+    const fallbackSigner = fakeSigner()
+    const primaryError = new Error('primary signer destroy failed')
+    const fallbackError = new Error('fallback signer destroy failed')
+    primarySigner.destroy.mockImplementation(() => { throw primaryError })
+    fallbackSigner.destroy.mockImplementation(() => { throw fallbackError })
+    node.unlockWithNativeExternalSigner.mockImplementation(() => {
+      throw new Error('Rln(ExternalSignerMismatch): External signer identity does not match persisted node identity')
+    })
+    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(fallbackSigner)
+    b._node = node
+    b._signer = primarySigner
+    b._seedHex = Buffer.from('seed-v2')
+    b._fallbackSeedHex = Buffer.from('seed-v1')
+    try {
+      let thrown
+      try {
+        b.unlock({})
+      } catch (error) {
+        thrown = error
+      }
+      expect(thrown).toBeInstanceOf(AggregateError)
+      expect(thrown.message).toBe('unlock: failed to destroy both the primary and fallback signers')
+      expect(thrown.errors).toEqual([primaryError, fallbackError])
+      expect(fallbackSigner.destroy).toHaveBeenCalledTimes(1)
+      expect(b._signer).toBe(primarySigner)
+    } finally {
+      createSpy.mockRestore()
+    }
+  })
+
   it('does not retry a generic unlock failure with the legacy signer', () => {
     const b = makeBinding()
     const node = fakeNode()

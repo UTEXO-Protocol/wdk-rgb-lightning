@@ -140,7 +140,7 @@ export async function fetchDiscovery (addr, opts = {}) {
  * @param {boolean} [opts.allowCrossHostCallback=false]
  *   Permit a callback on a host other than the discovery endpoint.
  *   Disabled by default to prevent a discovery document from redirecting
- *   the wallet's authenticated network access to an unrelated host.
+ *   the follow-up callback request to an unrelated host.
  * @param {string} [opts.comment]   LUD-12 comment (server-policy gated).
  * @param {string} [opts.assetId]   Optional RGB asset extension.
  * @param {bigint|number|string} [opts.assetAmount]
