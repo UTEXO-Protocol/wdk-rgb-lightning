@@ -13,6 +13,8 @@ import type {
   LnurlPayOptions,
   LspLiquidityTimeoutError,
   PayAddressOptions,
+  WalletRefreshResult,
+  WalletSnapshotOptions,
   WalletAccountReadOnlyRgbLightning,
   WalletAccountRgbLightning
 } from '../index.js'
@@ -50,6 +52,17 @@ const lnurlError = new LnurlPayError('request failed', {
 })
 const lnurlStatus: number | undefined = lnurlError.status
 const lnurlBody: string | undefined = lnurlError.body
+const walletSnapshotOptions: WalletSnapshotOptions = {
+  mode: 'recovery',
+  assetIds: ['rgb:asset'],
+  includeActivity: true
+}
+const refreshed: Promise<WalletRefreshResult> = account.refreshWalletSnapshot(walletSnapshotOptions)
+
+// @ts-expect-error recovery mode is explicit; arbitrary sync strategies are rejected.
+account.refreshWalletSnapshot({ mode: 'fast' })
+// @ts-expect-error read-only accounts cannot mutate native sync state.
+readOnlyAccount.refreshWalletSnapshot()
 
 binding.ensureNode()
 // @ts-expect-error IRgbLightningBinding exposes ensureNode(), not a node property.
@@ -62,3 +75,4 @@ void nodeHealth
 void bareHealth
 void lnurlStatus
 void lnurlBody
+void refreshed

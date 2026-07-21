@@ -28,6 +28,8 @@ export {
   VssError,
   VssNotConfiguredError,
   ApayError,
+  WalletSyncError,
+  WalletSnapshotError,
   NotImplementedError
 } from './src/errors.js'
 
