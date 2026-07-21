@@ -47,7 +47,7 @@ export interface WalletSnapshotOptions {
 }
 
 export interface WalletSnapshotNetwork {
-  network: string
+  network: Network
   height: number
 }
 

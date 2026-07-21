@@ -426,41 +426,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       )
     }
 
-    let sync
-    try {
-      sync = validateWalletSyncResponse(
-        await node.syncWallet({ mode: options.mode }),
-        options.mode
-      )
-    } catch (error) {
-      const contractFailure = error instanceof WalletSnapshotContractError
-      throw new WalletSyncError(
-        contractFailure
-          ? 'The native wallet sync response does not match contract v1.'
-          : 'The native wallet synchronization failed.',
-        {
-          code: contractFailure
-            ? 'WALLET_SYNC_CONTRACT_MISMATCH'
-            : 'WALLET_SYNC_NATIVE_FAILURE',
-          cause: error,
-          details: Object.freeze({ mode: options.mode })
-        }
-      )
-    }
-
-    if (sync.vanilla.status !== 'succeeded' || sync.colored.status !== 'succeeded') {
-      throw new WalletSyncError(
-        'The native wallet synchronization did not complete for both keychains.',
-        {
-          code: 'WALLET_SYNC_PARTIAL_FAILURE',
-          details: Object.freeze({
-            mode: options.mode,
-            vanilla: sync.vanilla,
-            colored: sync.colored
-          })
-        }
-      )
-    }
+    let sync = await this._synchronizeWalletForSnapshot(node, options.mode)
 
     const first = await this._captureWalletSnapshot(node, options)
     if (isCoherentWalletSnapshot(first)) {
@@ -471,6 +437,9 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       })
     }
 
+    // A moving chain tip can leave the first wallet sync behind the retry
+    // capture. Synchronize both keychains again before accepting new-tip data.
+    sync = await this._synchronizeWalletForSnapshot(node, options.mode)
     const retry = await this._captureWalletSnapshot(node, options)
     if (BigInt(retry.capture_sequence) <= BigInt(first.capture_sequence)) {
       throw new WalletSnapshotError(
@@ -510,6 +479,47 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       sync,
       snapshot: retry
     })
+  }
+
+  /** @private */
+  async _synchronizeWalletForSnapshot (node, mode) {
+    let sync
+    try {
+      sync = validateWalletSyncResponse(
+        await node.syncWallet({ mode }),
+        mode
+      )
+    } catch (error) {
+      const contractFailure = error instanceof WalletSnapshotContractError
+      throw new WalletSyncError(
+        contractFailure
+          ? 'The native wallet sync response does not match contract v1.'
+          : 'The native wallet synchronization failed.',
+        {
+          code: contractFailure
+            ? 'WALLET_SYNC_CONTRACT_MISMATCH'
+            : 'WALLET_SYNC_NATIVE_FAILURE',
+          cause: error,
+          details: Object.freeze({ mode })
+        }
+      )
+    }
+
+    if (sync.vanilla.status !== 'succeeded' || sync.colored.status !== 'succeeded') {
+      throw new WalletSyncError(
+        'The native wallet synchronization did not complete for both keychains.',
+        {
+          code: 'WALLET_SYNC_PARTIAL_FAILURE',
+          details: Object.freeze({
+            mode,
+            vanilla: sync.vanilla,
+            colored: sync.colored
+          })
+        }
+      )
+    }
+
+    return sync
   }
 
   /** @private */
