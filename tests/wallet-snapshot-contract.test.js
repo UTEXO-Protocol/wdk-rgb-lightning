@@ -193,6 +193,23 @@ describe('wallet snapshot response contract', () => {
       .toThrow('snapshot.extra')
   })
 
+  it('rejects decimal text outside the native u64 domain and unknown networks', () => {
+    const options = normalizeWalletSnapshotOptions()
+    expect(() => validateWalletSnapshotResponse(snapshot({
+      btc: {
+        vanilla: {
+          settled: '18446744073709551616',
+          future: '45',
+          spendable: '40'
+        },
+        colored: { settled: '5', future: '5', spendable: '5' }
+      }
+    }), options)).toThrow('snapshot.btc.vanilla.settled')
+    expect(() => validateWalletSnapshotResponse(snapshot({
+      network_before: { network: 'bitcoin', height: 100 }
+    }), options)).toThrow('snapshot.network_before.network')
+  })
+
   it('requires the bounded activity envelope only when requested', () => {
     const options = normalizeWalletSnapshotOptions({
       includeActivity: true,
@@ -259,6 +276,22 @@ describe('wallet snapshot response contract', () => {
 
     expect(() => validateWalletSnapshotResponse(value, options))
       .toThrow('snapshot.transfers[0].asset_id')
+  })
+
+  it('bounds RGB transfers across every requested asset', () => {
+    const options = normalizeWalletSnapshotOptions({
+      includeActivity: true,
+      assetIds: ['asset-1', 'asset-2'],
+      maxActivityItems: 1
+    })
+    const value = activitySnapshot()
+    value.transfers.push({
+      asset_id: 'asset-2',
+      transfers: [{ ...value.transfers[0].transfers[0], idx: 2 }]
+    })
+
+    expect(() => validateWalletSnapshotResponse(value, options))
+      .toThrow('snapshot.transfers')
   })
 
   it('requires activity fields to be absent when activity was not requested', () => {
@@ -350,8 +383,28 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
         .mockReturnValueOnce(snapshot({ capture_sequence: '8' }))
     }
     const result = await accountWith(node).refreshWalletSnapshot()
+    expect(node.syncWallet).toHaveBeenCalledTimes(2)
     expect(node.walletSnapshot).toHaveBeenCalledTimes(2)
     expect(result.snapshot.capture_sequence).toBe('8')
+  })
+
+  it('fails before the retry capture when re-synchronization fails', async () => {
+    const node = {
+      syncWallet: jest.fn()
+        .mockReturnValueOnce(syncResult())
+        .mockReturnValueOnce(syncResult({
+          vanilla: { status: 'failed', error_code: 'FAILED_BDK_SYNC' }
+        })),
+      walletSnapshot: jest.fn(() => snapshot({
+        capture_sequence: '7',
+        network_after: { network: 'regtest', height: 101 }
+      }))
+    }
+    const error = await accountWith(node).refreshWalletSnapshot().catch((reason) => reason)
+
+    expect(error).toBeInstanceOf(WalletSyncError)
+    expect(error.code).toBe('WALLET_SYNC_PARTIAL_FAILURE')
+    expect(node.walletSnapshot).toHaveBeenCalledTimes(1)
   })
 
   it('fails closed when both capture attempts cross a chain tip', async () => {

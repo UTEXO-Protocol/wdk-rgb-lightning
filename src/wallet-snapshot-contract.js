@@ -23,6 +23,7 @@ export const DEFAULT_WALLET_SNAPSHOT_OPTIONS = Object.freeze({
 })
 
 const DECIMAL_TEXT = /^(0|[1-9][0-9]*)$/
+const U64_MAX = 18_446_744_073_709_551_615n
 const HAS_OWN = (value, key) => Object.prototype.hasOwnProperty.call(value, key)
 
 export class WalletSnapshotContractError extends Error {
@@ -70,6 +71,7 @@ function decimal (value, path) {
   if (typeof value !== 'string' || !DECIMAL_TEXT.test(value)) {
     fail(path, 'must be an unsigned base-10 integer string')
   }
+  if (BigInt(value) > U64_MAX) fail(path, 'must fit in an unsigned 64-bit integer')
   return value
 }
 
@@ -203,7 +205,7 @@ export function validateWalletSyncResponse (value, expectedMode) {
 function network (value, path) {
   const item = record(value, path)
   exactKeys(item, ['network', 'height'], [], path)
-  text(item.network, `${path}.network`, 32)
+  oneOf(item.network, ['mainnet', 'testnet', 'regtest', 'signet'], `${path}.network`)
   integer(item.height, `${path}.height`, 0, 0xffffffff)
 }
 
@@ -412,6 +414,10 @@ export function validateWalletSnapshotResponse (value, options) {
     const transfers = array(snapshot.transfers, 'snapshot.transfers', options.maxAssets)
     transfers.forEach((entry, index) => snapshotTransfers(entry, `snapshot.transfers[${index}]`, options))
     assertUnique(transfers, 'asset_id', 'snapshot.transfers')
+    const transferCount = transfers.reduce((count, entry) => count + entry.transfers.length, 0)
+    if (transferCount > options.maxActivityItems) {
+      fail('snapshot.transfers', `must contain at most ${options.maxActivityItems} aggregate entries`)
+    }
   } else {
     for (const field of optional) {
       if (HAS_OWN(snapshot, field)) fail(`snapshot.${field}`, 'must be omitted when includeActivity is false')
