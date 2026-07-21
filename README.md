@@ -171,7 +171,7 @@ are async and forward to the active binding.
 | Group | Methods |
 |-------|---------|
 | Lifecycle | `unlock(request)`, `getBootstrap()`, `shutdown()`, `dispose()` |
-| Node info | `getNodeInfo()`, `getNetworkInfo()`, `sync()`, `getAddress()`, `getAddressState()`, `rotateAddress()` |
+| Node info | `getNodeInfo()`, `getNetworkInfo()`, `refreshWalletSnapshot(options?)`, `sync()` (legacy), `getAddress()`, `getAddressState()`, `rotateAddress()` |
 | Peers | `connectPeer(pubkey@host:port)`, `disconnectPeer(request)`, `listPeers()` |
 | Channels | `openChannel(request)`, `closeChannel(request)`, `listChannels()`, `getChannelId(tempIdHex)` |
 | Invoices | `createInvoice(request)`, `createLightningInvoice(request)`, `decodeInvoice(invoice)`, `getInvoiceStatus(invoice)` |
@@ -187,6 +187,18 @@ are async and forward to the active binding.
 | APay / LSP | `apayNew(hostNodeId)`, `bootstrapLsp({ peerPubkeyAndAddr, hostNodeId? })`, `getLspConfig()`, `createLsp(peer?)` |
 
 Notes:
+
+- **`refreshWalletSnapshot()` is the production balance/history refresh.** It
+  serializes native refreshes, coalesces identical requests, FullSyncs both
+  Vanilla and Colored keychains in `routine` mode, and FullScans both only in
+  explicit `recovery` mode. It validates the complete version-1 response,
+  preserves all monetary values as decimal strings, and retries one capture
+  if the chain tip changes between its before/after observations. The legacy
+  `sync()` remains for compatibility but only performs RLN's old Colored
+  FastSync and must not drive portfolio state.
+- **Lightning claimable value is not routing capacity.** The snapshot keeps
+  aggregate/per-channel claimable satoshis separate from inbound and outbound
+  capacity. Consumers must not relabel either capacity as wallet-owned value.
 
 - **`createInvoice` / `createLightningInvoice`** accept either RLN's native
   snake_case request or a camelCase convenience shape

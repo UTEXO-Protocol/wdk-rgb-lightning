@@ -9,6 +9,11 @@ while pre-`1.0`.
 ## [Unreleased]
 
 ### Added
+- **Versioned wallet refresh contract:** `account.refreshWalletSnapshot()`
+  serializes/coalesces refreshes, explicitly FullSyncs or recovery FullScans
+  both native keychains, validates bounded BigInt-safe snapshot DTOs, retries
+  one moving-tip capture, and reports partial sync, native, contract, and
+  coherence failures through `WalletSyncError` / `WalletSnapshotError`.
 - **First-class read-only account:** exported
   `WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly`, with
   all seven mandatory WDK reads plus node, channel, peer, invoice, payment,

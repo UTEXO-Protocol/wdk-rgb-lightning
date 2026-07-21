@@ -28,9 +28,20 @@ import {
   VssError,
   VssNotConfiguredError,
   ApayError,
+  WalletSyncError,
+  WalletSnapshotError,
   NotImplementedError,
   wrapError
 } from './errors.js'
+import {
+  WALLET_SNAPSHOT_CONTRACT_VERSION,
+  WalletSnapshotContractError,
+  isCoherentWalletSnapshot,
+  normalizeWalletSnapshotOptions,
+  validateWalletSnapshotResponse,
+  validateWalletSyncResponse,
+  walletSnapshotRequestKey
+} from './wallet-snapshot-contract.js'
 
 export { PENDING_ADDRESS }
 
@@ -56,6 +67,10 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     /** @private */ this._binding = bindings.binding
     /** @private @type {WalletAccountReadOnlyRgbLightning | null} */
     this._readOnlyAccount = null
+    /** @private @type {Promise<void>} */
+    this._walletSnapshotQueue = Promise.resolve()
+    /** @private @type {Map<string, Promise<object>>} */
+    this._walletSnapshotInFlight = new Map()
   }
 
   /** @private */
@@ -351,10 +366,174 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   // Node lifecycle — read methods are inherited from the read-only account
   // ==========================================================================
 
-  /** Force a sync of the on-chain wallet. */
+  /**
+   * Force the legacy Colored-only FastSync.
+   * @deprecated Use `refreshWalletSnapshot()` so both keychains are synced.
+   */
   async sync () {
     this._node.sync()
     return { ok: true }
+  }
+
+  /**
+   * Synchronize both native wallet keychains and capture one versioned,
+   * bounded snapshot. Identical concurrent requests coalesce, while different
+   * requests serialize so FullSync and FullScan cannot race each other.
+   *
+   * A snapshot whose before/after chain tip differs is captured once more.
+   * The method fails closed if the retry is also incoherent.
+   *
+   * @param {object} [options]
+   * @returns {Promise<object>}
+   */
+  refreshWalletSnapshot (options) {
+    const normalized = normalizeWalletSnapshotOptions(options)
+    const key = walletSnapshotRequestKey(normalized)
+    const current = this._walletSnapshotInFlight.get(key)
+    if (current) return current
+
+    const operation = this._walletSnapshotQueue
+      .then(() => this._refreshWalletSnapshot(normalized))
+    this._walletSnapshotQueue = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    this._walletSnapshotInFlight.set(key, operation)
+    operation.then(
+      () => this._clearWalletSnapshotFlight(key, operation),
+      () => this._clearWalletSnapshotFlight(key, operation)
+    )
+    return operation
+  }
+
+  /** @private */
+  _clearWalletSnapshotFlight (key, operation) {
+    if (this._walletSnapshotInFlight.get(key) === operation) {
+      this._walletSnapshotInFlight.delete(key)
+    }
+  }
+
+  /** @private */
+  async _refreshWalletSnapshot (options) {
+    const node = this._node
+    if (
+      typeof node.syncWallet !== 'function' ||
+      typeof node.walletSnapshot !== 'function'
+    ) {
+      throw new WalletSnapshotError(
+        'The installed RGB Lightning native binding does not support wallet snapshot contract v1.',
+        { code: 'WALLET_SNAPSHOT_UNSUPPORTED_BINDING' }
+      )
+    }
+
+    let sync
+    try {
+      sync = validateWalletSyncResponse(
+        await node.syncWallet({ mode: options.mode }),
+        options.mode
+      )
+    } catch (error) {
+      const contractFailure = error instanceof WalletSnapshotContractError
+      throw new WalletSyncError(
+        contractFailure
+          ? 'The native wallet sync response does not match contract v1.'
+          : 'The native wallet synchronization failed.',
+        {
+          code: contractFailure
+            ? 'WALLET_SYNC_CONTRACT_MISMATCH'
+            : 'WALLET_SYNC_NATIVE_FAILURE',
+          cause: error,
+          details: Object.freeze({ mode: options.mode })
+        }
+      )
+    }
+
+    if (sync.vanilla.status !== 'succeeded' || sync.colored.status !== 'succeeded') {
+      throw new WalletSyncError(
+        'The native wallet synchronization did not complete for both keychains.',
+        {
+          code: 'WALLET_SYNC_PARTIAL_FAILURE',
+          details: Object.freeze({
+            mode: options.mode,
+            vanilla: sync.vanilla,
+            colored: sync.colored
+          })
+        }
+      )
+    }
+
+    const first = await this._captureWalletSnapshot(node, options)
+    if (isCoherentWalletSnapshot(first)) {
+      return Object.freeze({
+        contractVersion: WALLET_SNAPSHOT_CONTRACT_VERSION,
+        sync,
+        snapshot: first
+      })
+    }
+
+    const retry = await this._captureWalletSnapshot(node, options)
+    if (BigInt(retry.capture_sequence) <= BigInt(first.capture_sequence)) {
+      throw new WalletSnapshotError(
+        'The native wallet snapshot retry did not advance its capture sequence.',
+        {
+          code: 'WALLET_SNAPSHOT_CONTRACT_MISMATCH',
+          details: Object.freeze({
+            firstCaptureSequence: first.capture_sequence,
+            retryCaptureSequence: retry.capture_sequence
+          })
+        }
+      )
+    }
+    if (!isCoherentWalletSnapshot(retry)) {
+      throw new WalletSnapshotError(
+        'The native wallet snapshot changed chain tip during both capture attempts.',
+        {
+          code: 'WALLET_SNAPSHOT_INCOHERENT',
+          details: Object.freeze({
+            first: Object.freeze({
+              before: first.network_before,
+              after: first.network_after,
+              captureSequence: first.capture_sequence
+            }),
+            retry: Object.freeze({
+              before: retry.network_before,
+              after: retry.network_after,
+              captureSequence: retry.capture_sequence
+            })
+          })
+        }
+      )
+    }
+
+    return Object.freeze({
+      contractVersion: WALLET_SNAPSHOT_CONTRACT_VERSION,
+      sync,
+      snapshot: retry
+    })
+  }
+
+  /** @private */
+  async _captureWalletSnapshot (node, options) {
+    try {
+      return validateWalletSnapshotResponse(
+        await node.walletSnapshot(options.nativeRequest),
+        options
+      )
+    } catch (error) {
+      if (error instanceof WalletSnapshotError) throw error
+      const contractFailure = error instanceof WalletSnapshotContractError
+      throw new WalletSnapshotError(
+        contractFailure
+          ? 'The native wallet snapshot does not match contract v1.'
+          : 'The native wallet snapshot could not be captured.',
+        {
+          code: contractFailure
+            ? 'WALLET_SNAPSHOT_CONTRACT_MISMATCH'
+            : 'WALLET_SNAPSHOT_NATIVE_FAILURE',
+          cause: error
+        }
+      )
+    }
   }
 
   // ==========================================================================

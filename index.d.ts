@@ -21,6 +21,169 @@ import WalletManager, { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 
 export type Network = 'mainnet' | 'testnet' | 'regtest' | 'signet'
 
+/** Integer encoded as base-10 text so values never cross JS's safe-number boundary. */
+export type DecimalString = `${bigint}`
+
+export type WalletSyncMode = 'routine' | 'recovery'
+
+export type WalletSyncKeychainResult =
+  | { status: 'succeeded' }
+  | { status: 'failed'; error_code: string }
+
+export interface WalletSyncResponse {
+  contract_version: 1
+  mode: WalletSyncMode
+  vanilla: WalletSyncKeychainResult
+  colored: WalletSyncKeychainResult
+}
+
+export interface WalletSnapshotOptions {
+  mode?: WalletSyncMode
+  assetIds?: string[]
+  maxAssets?: number
+  maxChannels?: number
+  maxActivityItems?: number
+  includeActivity?: boolean
+}
+
+export interface WalletSnapshotNetwork {
+  network: string
+  height: number
+}
+
+export interface WalletSnapshotBalance {
+  settled: DecimalString
+  future: DecimalString
+  spendable: DecimalString
+}
+
+export interface WalletSnapshotBtc {
+  vanilla: WalletSnapshotBalance
+  colored: WalletSnapshotBalance
+}
+
+export interface WalletSnapshotAssetBalance extends WalletSnapshotBalance {
+  offchain_outbound: DecimalString
+  offchain_inbound: DecimalString
+}
+
+export interface WalletSnapshotAsset {
+  asset_id: string
+  ticker: string
+  name: string
+  precision: number
+  balance: WalletSnapshotAssetBalance
+}
+
+export interface WalletSnapshotNode {
+  pubkey: string
+  num_channels: DecimalString
+  num_usable_channels: DecimalString
+  claimable_onchain_sat: DecimalString
+  eventual_close_fees_sat: DecimalString
+  pending_outbound_payments_sat: DecimalString
+  num_peers: DecimalString
+  latest_rgs_snapshot_timestamp: DecimalString | null
+}
+
+export interface WalletSnapshotChannel {
+  channel_id: string
+  peer_pubkey: string
+  status: 'Opening' | 'Opened' | 'Closing'
+  ready: boolean
+  capacity_sat: DecimalString
+  claimable_onchain_sat: DecimalString
+  outbound_capacity_msat: DecimalString
+  inbound_capacity_msat: DecimalString
+  next_outbound_htlc_limit_msat: DecimalString
+  next_outbound_htlc_minimum_msat: DecimalString
+  is_usable: boolean
+  public: boolean
+  funding_txid: string | null
+  peer_alias: string | null
+  short_channel_id: DecimalString | null
+  asset_id: string | null
+  asset_local_amount: DecimalString | null
+  asset_remote_amount: DecimalString | null
+  virtual_open_mode: string | null
+}
+
+export interface WalletSnapshotBlockTime {
+  height: number
+  timestamp: DecimalString
+}
+
+export interface WalletSnapshotTransaction {
+  transaction_type: 'RgbSend' | 'Drain' | 'CreateUtxos' | 'SendBtc' | 'Incoming'
+  txid: string
+  received: DecimalString
+  sent: DecimalString
+  fee: DecimalString
+  confirmation_time: WalletSnapshotBlockTime | null
+}
+
+export interface WalletSnapshotPayment {
+  amt_msat: DecimalString | null
+  asset_amount: DecimalString | null
+  asset_id: string | null
+  payment_hash: string
+  payment_type: 'Outbound' | 'InboundAutoClaim' | 'InboundHodl'
+  status: 'Pending' | 'Claimable' | 'Claiming' | 'Succeeded' | 'Cancelled' | 'Failed'
+  created_at: DecimalString
+  updated_at: DecimalString
+  payee_pubkey: string
+}
+
+export interface WalletSnapshotTransferEndpoint {
+  endpoint: string
+  transport_type: string
+  used: boolean
+}
+
+export interface WalletSnapshotTransfer {
+  idx: number
+  created_at: DecimalString
+  updated_at: DecimalString
+  status: string
+  requested_assignment: string | null
+  assignments: string[]
+  kind: string
+  txid: string | null
+  recipient_id: string | null
+  receive_utxo: string | null
+  change_utxo: string | null
+  expiration: DecimalString | null
+  transport_endpoints: WalletSnapshotTransferEndpoint[]
+}
+
+export interface WalletSnapshotAssetTransfers {
+  asset_id: string
+  transfers: WalletSnapshotTransfer[]
+}
+
+export interface WalletSnapshotResponse {
+  contract_version: 1
+  native_source: 'rgb-lightning-node-v0.9.0-beta.3+utexo-wallet-v1'
+  capture_sequence: DecimalString
+  started_at_ms: DecimalString
+  completed_at_ms: DecimalString
+  network_before: WalletSnapshotNetwork
+  network_after: WalletSnapshotNetwork
+  node: WalletSnapshotNode
+  btc: WalletSnapshotBtc
+  assets: WalletSnapshotAsset[]
+  channels: WalletSnapshotChannel[]
+  transactions?: WalletSnapshotTransaction[]
+  payments?: WalletSnapshotPayment[]
+  transfers?: WalletSnapshotAssetTransfers[]
+}
+
+export interface WalletRefreshResult {
+  contractVersion: 1
+  sync: WalletSyncResponse
+  snapshot: WalletSnapshotResponse
+}
+
 export interface Transaction {
   to: string
   value: number | bigint
@@ -366,7 +529,9 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   // Node info / network / sync
   getNodeInfo(): Promise<object>
   getNetworkInfo(): Promise<object>
+  /** @deprecated Uses the legacy Colored-only FastSync. */
   sync(): Promise<{ ok: true }>
+  refreshWalletSnapshot(options?: WalletSnapshotOptions): Promise<WalletRefreshResult>
 
   // Channels
   openChannel(request: OpenChannelRequest | object): Promise<object>
@@ -442,16 +607,19 @@ export default class WalletManagerRgbLightning extends WalletManager {
 // ───────────────────────────────────────────────────────────────────
 
 export class RgbLightningError extends Error {
-  constructor(message: string, opts?: { code?: string; cause?: unknown })
+  constructor(message: string, opts?: { code?: string; cause?: unknown; details?: unknown })
   code: string
   cause?: unknown
-  toJSON(): { name: string; code: string; message: string; cause: unknown }
+  details?: unknown
+  toJSON(): { name: string; code: string; message: string; details: unknown; cause: unknown }
 }
 export class UnlockError extends RgbLightningError {}
 export class AccountLockedError extends RgbLightningError {}
 export class VssError extends RgbLightningError {}
 export class VssNotConfiguredError extends VssError {}
 export class ApayError extends RgbLightningError {}
+export class WalletSyncError extends RgbLightningError {}
+export class WalletSnapshotError extends RgbLightningError {}
 export class NotImplementedError extends RgbLightningError {}
 
 // ───────────────────────────────────────────────────────────────────

@@ -13,6 +13,8 @@ import {
   VssError,
   VssNotConfiguredError,
   ApayError,
+  WalletSyncError,
+  WalletSnapshotError,
   NotImplementedError,
   wrapError
 } from '../src/errors.js'
@@ -25,11 +27,21 @@ describe('error hierarchy', () => {
     expect(new VssError('m')).toMatchObject({ name: 'VssError', code: 'VSS_ERROR' })
     expect(new VssNotConfiguredError()).toMatchObject({ name: 'VssNotConfiguredError', code: 'VSS_NOT_CONFIGURED' })
     expect(new ApayError('m')).toMatchObject({ name: 'ApayError', code: 'APAY_ERROR' })
+    expect(new WalletSyncError('m')).toMatchObject({ name: 'WalletSyncError', code: 'WALLET_SYNC_FAILED' })
+    expect(new WalletSnapshotError('m')).toMatchObject({ name: 'WalletSnapshotError', code: 'WALLET_SNAPSHOT_FAILED' })
     expect(new NotImplementedError('m')).toMatchObject({ name: 'NotImplementedError', code: 'NOT_IMPLEMENTED' })
   })
 
   it('keeps every subclass an instanceof the base (and Error)', () => {
-    for (const E of [UnlockError, AccountLockedError, VssError, ApayError, NotImplementedError]) {
+    for (const E of [
+      UnlockError,
+      AccountLockedError,
+      VssError,
+      ApayError,
+      WalletSyncError,
+      WalletSnapshotError,
+      NotImplementedError
+    ]) {
       const e = new E('x')
       expect(e).toBeInstanceOf(Error)
       expect(e).toBeInstanceOf(RgbLightningError)
@@ -48,12 +60,18 @@ describe('error hierarchy', () => {
       name: 'UnlockError',
       code: 'UNLOCK_FAILED',
       message: 'bad creds',
+      details: null,
       cause: { name: 'Error', message: 'root cause' }
     })
   })
 
   it('toJSON reports a null cause when none was provided', () => {
     expect(new VssError('x').toJSON().cause).toBeNull()
+  })
+
+  it('serializes structured error details without dropping them', () => {
+    const details = { vanilla: { status: 'failed' } }
+    expect(new WalletSyncError('x', { details }).toJSON().details).toBe(details)
   })
 })
 

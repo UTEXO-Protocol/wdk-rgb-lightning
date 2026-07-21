@@ -28,7 +28,7 @@
 export class RgbLightningError extends Error {
   /**
    * @param {string} message
-   * @param {{ code?: string, cause?: unknown }} [opts]
+   * @param {{ code?: string, cause?: unknown, details?: unknown }} [opts]
    */
   constructor (message, opts = {}) {
     super(message)
@@ -36,6 +36,7 @@ export class RgbLightningError extends Error {
     /** Stable, machine-readable error code. */
     this.code = opts.code ?? 'RGB_LIGHTNING_ERROR'
     if (opts.cause !== undefined) this.cause = opts.cause
+    if (opts.details !== undefined) this.details = opts.details
   }
 
   toJSON () {
@@ -43,6 +44,7 @@ export class RgbLightningError extends Error {
       name: this.name,
       code: this.code,
       message: this.message,
+      details: this.details ?? null,
       cause: this.cause instanceof Error
         ? { name: this.cause.name, message: this.cause.message }
         : (this.cause ?? null)
@@ -106,6 +108,30 @@ export class ApayError extends RgbLightningError {
   constructor (message, opts = {}) {
     super(message, { code: opts.code ?? 'APAY_ERROR', cause: opts.cause })
     this.name = 'ApayError'
+  }
+}
+
+/** Raised when either native wallet keychain fails an explicit sync. */
+export class WalletSyncError extends RgbLightningError {
+  constructor (message, opts = {}) {
+    super(message, {
+      code: opts.code ?? 'WALLET_SYNC_FAILED',
+      cause: opts.cause,
+      details: opts.details
+    })
+    this.name = 'WalletSyncError'
+  }
+}
+
+/** Raised when the native snapshot is unavailable, malformed, or incoherent. */
+export class WalletSnapshotError extends RgbLightningError {
+  constructor (message, opts = {}) {
+    super(message, {
+      code: opts.code ?? 'WALLET_SNAPSHOT_FAILED',
+      cause: opts.cause,
+      details: opts.details
+    })
+    this.name = 'WalletSnapshotError'
   }
 }
 
