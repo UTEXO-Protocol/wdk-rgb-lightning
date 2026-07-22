@@ -458,6 +458,14 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
 
     expect(error).toBeInstanceOf(WalletSyncError)
     expect(error.code).toBe(code)
+    if (code === 'WALLET_SYNC_CONTRACT_MISMATCH') {
+      expect(error.message).toContain('sync.contract_version must equal 1')
+      expect(error.details).toEqual({
+        mode: 'routine',
+        contractPath: 'sync.contract_version',
+        contractExpectation: 'must equal 1'
+      })
+    }
   })
 
   it.each([
@@ -476,6 +484,13 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
 
     expect(error).toBeInstanceOf(WalletSnapshotError)
     expect(error.code).toBe(code)
+    if (code === 'WALLET_SNAPSHOT_CONTRACT_MISMATCH') {
+      expect(error.message).toContain('snapshot.contract_version must equal 1')
+      expect(error.details).toEqual({
+        contractPath: 'snapshot.contract_version',
+        contractExpectation: 'must equal 1'
+      })
+    }
   })
 
   it('coalesces identical refreshes and serializes different modes', async () => {

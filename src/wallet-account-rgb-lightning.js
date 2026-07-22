@@ -555,14 +555,19 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       const contractFailure = error instanceof WalletSnapshotContractError
       throw new WalletSyncError(
         contractFailure
-          ? 'The native wallet sync response does not match contract v1.'
+          ? `The native wallet sync response does not match contract v1: ${error.message}.`
           : 'The native wallet synchronization failed.',
         {
           code: contractFailure
             ? 'WALLET_SYNC_CONTRACT_MISMATCH'
             : 'WALLET_SYNC_NATIVE_FAILURE',
           cause: error,
-          details: Object.freeze({ mode })
+          details: Object.freeze({
+            mode,
+            ...(contractFailure
+              ? { contractPath: error.path, contractExpectation: error.expectation }
+              : {})
+          })
         }
       )
     }
@@ -596,13 +601,19 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       const contractFailure = error instanceof WalletSnapshotContractError
       throw new WalletSnapshotError(
         contractFailure
-          ? 'The native wallet snapshot does not match contract v1.'
+          ? `The native wallet snapshot does not match contract v1: ${error.message}.`
           : 'The native wallet snapshot could not be captured.',
         {
           code: contractFailure
             ? 'WALLET_SNAPSHOT_CONTRACT_MISMATCH'
             : 'WALLET_SNAPSHOT_NATIVE_FAILURE',
-          cause: error
+          cause: error,
+          details: contractFailure
+            ? Object.freeze({
+              contractPath: error.path,
+              contractExpectation: error.expectation
+            })
+            : undefined
         }
       )
     }
