@@ -31,6 +31,7 @@ export class WalletSnapshotContractError extends Error {
     super(`${path} ${expectation}`)
     this.name = 'WalletSnapshotContractError'
     this.path = path
+    this.expectation = expectation
   }
 }
 
