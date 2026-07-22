@@ -159,6 +159,7 @@ and a regtest stack via Docker Compose — lives in
 | `virtualPeerPubkeys` | — | Trust list of peer node_ids allowed to open `trusted_no_broadcast` virtual channels (the LSP's node_id for APay). |
 | `permissiveSignerPolicy` | `true` | Loosen the VLS policy filter for in-process single-user use. |
 | `nodeSeedDerivation` | `auto` | New nodes use WDK's normalized BIP-39 seed directly; existing beta nodes retry the legacy identity only on an exact persisted-identity mismatch. Use `wdk-seed-v2` or `legacy-v1` to disable auto-detection. |
+| `autoUnlockRequest` | — | Optional typed node request for integrations that load `getAddress()` before exposing account extensions, including WDK React Native Core. Concurrent activation is coalesced and only the real native address is returned. Omit it for explicit/manual unlock. |
 | `vssUrl` / `vssAllowHttp` / `vssAllowEmptyRestore` | — | VSS cloud backup; see [below](#vss-cloud-backup). |
 | `lspBaseUrl` / `lspBearerToken` | — | LSP wiring for APay and the LSP client; see [below](#lsp-integration). |
 
@@ -216,7 +217,9 @@ Notes:
   it rejects with `AccountLockedError`; UI loaders can call
   `getAddressState()` for `{ status: 'locked', address: null }`. The WDK
   bindings initialize RLN with address reuse enabled so reads stay stable;
-  `rotateAddress()` is the explicit mutating operation for advancing it.
+  `rotateAddress()` is the explicit mutating operation for advancing it. A full
+  account configured with `autoUnlockRequest` first coalesces native activation
+  and then retries the real address; the read-only account contract is unchanged.
 - **`sendTransaction()` uses WDK's `{ to, value, feeRate?,
   confirmationTarget? }` input and `{ hash, fee }` result.** `sendBtc()` is
   the explicit low-level escape hatch for RLN's native request format.
