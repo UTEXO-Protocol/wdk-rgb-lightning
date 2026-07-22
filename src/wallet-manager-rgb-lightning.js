@@ -6,6 +6,7 @@
 
 import WalletManager from '@tetherto/wdk-wallet'
 import { mnemonicToSeedSync } from 'bip39'
+import { normalizeAutoUnlockRequest } from './node-unlock-request.js'
 import WalletAccountRgbLightning from './wallet-account-rgb-lightning.js'
 
 const MEMPOOL_SPACE_URL = 'https://mempool.space'
@@ -24,6 +25,7 @@ const MEMPOOL_SPACE_URL = 'https://mempool.space'
  *   proxyEndpoint?: string,
  *   announceAddresses?: string[],
  *   announceAlias?: string,
+ *   autoUnlockRequest?: object,
  *   nodeSeedDerivation?: 'auto'|'wdk-seed-v2'|'legacy-v1'
  * }} RgbLightningWalletConfig
  */
@@ -98,7 +100,8 @@ export default class WalletManagerRgbLightning extends WalletManager {
    * @param {RgbLightningWalletConfig} config
    */
   constructor (seed, config = {}) {
-    super(seed, config)
+    const { autoUnlockRequest, ...managerConfig } = config
+    super(seed, managerConfig)
 
     if (!config.network) throw new Error('network configuration is required.')
     if (!config.dataDir) {
@@ -109,6 +112,7 @@ export default class WalletManagerRgbLightning extends WalletManager {
     }
 
     /** @private */ this._network = config.network
+    /** @private */ this._autoUnlockRequest = normalizeAutoUnlockRequest(autoUnlockRequest)
     /** @private @type {IRgbLightningBinding | null} */
     this._binding = null
   }
@@ -174,7 +178,10 @@ export default class WalletManagerRgbLightning extends WalletManager {
         )
       }
 
-      this._accounts[index] = new WalletAccountRgbLightning({ binding })
+      this._accounts[index] = new WalletAccountRgbLightning({
+        binding,
+        autoUnlockRequest: this._autoUnlockRequest
+      })
     }
     return this._accounts[index]
   }

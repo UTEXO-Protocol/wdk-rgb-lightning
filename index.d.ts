@@ -388,6 +388,12 @@ export interface RgbLightningWalletConfig extends RgbLightningBindingConfig {
    * the legacy beta derivation only for an existing signer-identity mismatch.
    */
   nodeSeedDerivation?: 'auto' | 'wdk-seed-v2' | 'legacy-v1'
+  /**
+   * Optional node request used to activate the full account when an integration
+   * (including WDK React Native Core) loads its address before exposing account
+   * extension methods. The account returns only the real native address.
+   */
+  autoUnlockRequest?: RgbLightningNodeUnlockRequest
   bitcoindRpcUsername?: string
   bitcoindRpcPassword?: string
   bitcoindRpcHost?: string
@@ -398,6 +404,17 @@ export interface RgbLightningWalletConfig extends RgbLightningBindingConfig {
   announceAlias?: string
 }
 
+export interface RgbLightningNodeUnlockRequest {
+  bitcoind_rpc_username: string
+  bitcoind_rpc_password: string
+  bitcoind_rpc_host: string
+  bitcoind_rpc_port: number
+  indexer_url: string
+  proxy_endpoint: string
+  announce_addresses: string[]
+  announce_alias: string
+}
+
 // ───────────────────────────────────────────────────────────────────
 // Bindings (low-level; usually not constructed directly)
 // ───────────────────────────────────────────────────────────────────
@@ -405,7 +422,7 @@ export interface RgbLightningWalletConfig extends RgbLightningBindingConfig {
 export interface IRgbLightningBinding {
   ensureNode(): unknown
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
-  unlock(unlockRequest: object): void
+  unlock(unlockRequest: RgbLightningNodeUnlockRequest): void
   bootstrap(): object
   clearVssFence(password: string): void
   vssBackup(): { version: number }
@@ -490,14 +507,17 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
 }
 
 export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning {
-  constructor(bindings: { binding: IRgbLightningBinding })
+  constructor(bindings: {
+    binding: IRgbLightningBinding
+    autoUnlockRequest?: RgbLightningNodeUnlockRequest
+  })
 
   readonly index: 0
   readonly path: 'm'
   readonly keyPair: KeyPair
 
   // Lifecycle
-  unlock(unlockRequest: object): Promise<{ ok: true }>
+  unlock(unlockRequest: RgbLightningNodeUnlockRequest): Promise<{ ok: true }>
   getBootstrap(): Promise<object>
   shutdown(): Promise<{ ok: true }>
 

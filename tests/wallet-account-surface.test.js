@@ -24,6 +24,17 @@ import { UnlockError, AccountLockedError, ApayError } from '../src/errors.js'
 import { LspClient } from '../src/lsp-client.js'
 import { UtexoLsp } from '../src/utexo-lsp.js'
 
+const AUTO_UNLOCK_REQUEST = Object.freeze({
+  bitcoind_rpc_username: 'user',
+  bitcoind_rpc_password: 'password',
+  bitcoind_rpc_host: '127.0.0.1',
+  bitcoind_rpc_port: 18443,
+  indexer_url: 'tcp://127.0.0.1:50001',
+  proxy_endpoint: 'rpc://127.0.0.1:3000/json-rpc',
+  announce_addresses: Object.freeze([]),
+  announce_alias: 'wallet-test'
+})
+
 // Build a fake RLN node whose methods are jest.fn returning canned
 // values. Every method the account forwards to is present so we can
 // assert forwarding + arg pass-through.
@@ -100,8 +111,11 @@ function makeBinding (overrides = {}) {
   return binding
 }
 
-function makeAccount (bindingOverrides = {}) {
-  return new WalletAccountRgbLightning({ binding: makeBinding(bindingOverrides) })
+function makeAccount (bindingOverrides = {}, options = {}) {
+  return new WalletAccountRgbLightning({
+    binding: makeBinding(bindingOverrides),
+    ...options
+  })
 }
 
 describe('construction', () => {
@@ -154,6 +168,39 @@ describe('lifecycle', () => {
     expect(err).toBeInstanceOf(UnlockError)
     expect(err.message).toBe('Rln(NotInitialized): bad creds')
     expect(err.code).toBe('UNLOCK_FAILED')
+  })
+
+  it('coalesces concurrent unlock calls at the account boundary', async () => {
+    const unlock = jest.fn()
+    const account = makeAccount({ unlock })
+
+    await expect(Promise.all([
+      account.unlock(AUTO_UNLOCK_REQUEST),
+      account.unlock(AUTO_UNLOCK_REQUEST)
+    ])).resolves.toEqual([{ ok: true }, { ok: true }])
+
+    expect(unlock).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a conflicting concurrent unlock request', async () => {
+    let release
+    const pending = new Promise((resolve) => { release = resolve })
+    const unlock = jest.fn(() => pending)
+    const account = makeAccount({ unlock })
+    const first = account.unlock(AUTO_UNLOCK_REQUEST)
+    const conflicting = account.unlock({
+      ...AUTO_UNLOCK_REQUEST,
+      bitcoind_rpc_host: 'other-host'
+    })
+
+    await expect(conflicting).rejects.toMatchObject({
+      name: 'UnlockError',
+      code: 'UNLOCK_FAILED',
+      message: 'A different RGB Lightning unlock request is already in progress.'
+    })
+    release()
+    await expect(first).resolves.toEqual({ ok: true })
+    expect(unlock).toHaveBeenCalledTimes(1)
   })
 
   it('getBootstrap returns the binding bootstrap dictionary verbatim', async () => {
@@ -262,6 +309,44 @@ describe('getAddress', () => {
   it('throws AccountLockedError instead of returning a synthetic address', async () => {
     const account = makeAccount({ node: makeNode({ address: () => { throw new Error('NotInitialized') } }) })
     await expect(account.getAddress()).rejects.toBeInstanceOf(AccountLockedError)
+  })
+
+  it('coalesces configured activation and returns only the real native address', async () => {
+    let unlocked = false
+    const address = jest.fn(() => {
+      if (!unlocked) throw new Error('SdkNode not created — call unlock() first')
+      return { address: 'tb1qactivated' }
+    })
+    const unlock = jest.fn(() => { unlocked = true })
+    const account = makeAccount(
+      { node: makeNode({ address }), unlock },
+      { autoUnlockRequest: AUTO_UNLOCK_REQUEST }
+    )
+
+    await expect(Promise.all([
+      account.getAddress(),
+      account.getAddress()
+    ])).resolves.toEqual(['tb1qactivated', 'tb1qactivated'])
+
+    expect(unlock).toHaveBeenCalledTimes(1)
+    expect(unlock).toHaveBeenCalledWith(AUTO_UNLOCK_REQUEST)
+    expect(address).toHaveBeenCalledTimes(4)
+  })
+
+  it('does not hide an automatic activation failure behind an address marker', async () => {
+    const account = makeAccount(
+      {
+        node: makeNode({ address: () => { throw new Error('LockedNode') } }),
+        unlock: () => { throw new Error('indexer unavailable') }
+      },
+      { autoUnlockRequest: AUTO_UNLOCK_REQUEST }
+    )
+
+    await expect(account.getAddress()).rejects.toMatchObject({
+      name: 'UnlockError',
+      code: 'UNLOCK_FAILED',
+      message: 'indexer unavailable'
+    })
   })
 
   it('returns a non-throwing locked state for pre-unlock UI loaders', async () => {

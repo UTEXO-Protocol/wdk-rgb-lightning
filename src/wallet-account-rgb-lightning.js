@@ -19,11 +19,13 @@ import {
 } from './lsp-helpers.js'
 import { LspClient } from './lsp-client.js'
 import { UtexoLsp } from './utexo-lsp.js'
+import { normalizeAutoUnlockRequest } from './node-unlock-request.js'
 import WalletAccountReadOnlyRgbLightning, {
   createReadOnlyRgbLightningAdapter,
   PENDING_ADDRESS
 } from './wallet-account-read-only-rgb-lightning.js'
 import {
+  AccountLockedError,
   UnlockError,
   VssError,
   VssNotConfiguredError,
@@ -45,6 +47,28 @@ import {
 
 export { PENDING_ADDRESS }
 
+function sameUnlockRequest (left, right) {
+  if (left === right) return true
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false
+
+  const leftKeys = Object.keys(left).sort()
+  const rightKeys = Object.keys(right).sort()
+  if (leftKeys.length !== rightKeys.length) return false
+
+  return leftKeys.every((key, index) => {
+    if (key !== rightKeys[index]) return false
+    const leftValue = left[key]
+    const rightValue = right[key]
+    if (Array.isArray(leftValue) || Array.isArray(rightValue)) {
+      return Array.isArray(leftValue) &&
+        Array.isArray(rightValue) &&
+        leftValue.length === rightValue.length &&
+        leftValue.every((value, valueIndex) => value === rightValue[valueIndex])
+    }
+    return leftValue === rightValue
+  })
+}
+
 /**
  * Seed-isolated via RLN's `NativeExternalSigner`: the WDK secret manager
  * owns the BIP-39 mnemonic; the manager derives a 32-byte VLS node
@@ -57,7 +81,7 @@ export { PENDING_ADDRESS }
  */
 export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning {
   /**
-   * @param {{ binding: BareRgbLightningBinding }} bindings
+   * @param {{ binding: BareRgbLightningBinding, autoUnlockRequest?: object }} bindings
    */
   constructor (bindings) {
     if (!bindings || !bindings.binding) {
@@ -65,6 +89,9 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     }
     super(createReadOnlyRgbLightningAdapter(bindings.binding))
     /** @private */ this._binding = bindings.binding
+    /** @private */ this._autoUnlockRequest = normalizeAutoUnlockRequest(bindings.autoUnlockRequest)
+    /** @private @type {{ request: object, promise: Promise<{ ok: true }> } | null} */
+    this._unlockInFlight = null
     /** @private @type {WalletAccountReadOnlyRgbLightning | null} */
     this._readOnlyAccount = null
     /** @private @type {Promise<void>} */
@@ -90,19 +117,54 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * @param {Object} unlockRequest
    */
   async unlock (unlockRequest) {
-    try {
-      this._binding.unlock(unlockRequest)
-    } catch (e) {
-      // Wrap into a typed UnlockError so callers can branch on
-      // `err.name === 'UnlockError'` / `err.code` instead of
-      // substring-matching the RLN message. The original message is
-      // preserved verbatim and attached as `cause`.
-      throw wrapError(e, UnlockError)
+    if (this._unlockInFlight) {
+      if (!sameUnlockRequest(this._unlockInFlight.request, unlockRequest)) {
+        throw new UnlockError('A different RGB Lightning unlock request is already in progress.')
+      }
+      return this._unlockInFlight.promise
     }
-    // Return something non-undefined so the worklet's `safeStringify`
-    // produces a real string. The RN-side response schema rejects
-    // null/undefined results (see wdk-react-native-core schemas).
-    return { ok: true }
+
+    const operation = Promise.resolve().then(() => {
+      try {
+        this._binding.unlock(unlockRequest)
+      } catch (e) {
+        // Wrap into a typed UnlockError so callers can branch on
+        // `err.name === 'UnlockError'` / `err.code` instead of
+        // substring-matching the RLN message. The original message is
+        // preserved verbatim and attached as `cause`.
+        throw wrapError(e, UnlockError)
+      }
+      // Return something non-undefined so the worklet's `safeStringify`
+      // produces a real string. The RN-side response schema rejects
+      // null/undefined results (see wdk-react-native-core schemas).
+      return { ok: true }
+    })
+
+    this._unlockInFlight = { request: unlockRequest, promise: operation }
+    try {
+      return await operation
+    } finally {
+      if (this._unlockInFlight?.promise === operation) this._unlockInFlight = null
+    }
+  }
+
+  /**
+   * WDK React Native Core discovers an account by loading its address before
+   * exposing extension methods. When explicitly configured, activate the full
+   * RGB node at that boundary and then return only the real native address.
+   * Standalone and read-only consumers retain the ordinary locked error.
+   */
+  async getAddress () {
+    try {
+      return await super.getAddress()
+    } catch (error) {
+      if (!(error instanceof AccountLockedError) || !this._autoUnlockRequest) {
+        throw error
+      }
+    }
+
+    await this.unlock(this._autoUnlockRequest)
+    return super.getAddress()
   }
 
   /** ✅ Idempotent shutdown. */
