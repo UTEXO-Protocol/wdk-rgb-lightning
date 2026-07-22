@@ -159,6 +159,7 @@ and a regtest stack via Docker Compose — lives in
 | `virtualPeerPubkeys` | — | Trust list of peer node_ids allowed to open `trusted_no_broadcast` virtual channels (the LSP's node_id for APay). |
 | `permissiveSignerPolicy` | `true` | Loosen the VLS policy filter for in-process single-user use. |
 | `nodeSeedDerivation` | `auto` | New nodes use WDK's normalized BIP-39 seed directly; existing beta nodes retry the legacy identity only on an exact persisted-identity mismatch. Use `wdk-seed-v2` or `legacy-v1` to disable auto-detection. |
+| `autoUnlockRequest` | — | Optional typed node request for integrations that load `getAddress()` before exposing account extensions, including WDK React Native Core. Concurrent activation is coalesced and only the real native address is returned. Omit it for explicit/manual unlock. |
 | `vssUrl` / `vssAllowHttp` / `vssAllowEmptyRestore` | — | VSS cloud backup; see [below](#vss-cloud-backup). |
 | `lspBaseUrl` / `lspBearerToken` | — | LSP wiring for APay and the LSP client; see [below](#lsp-integration). |
 
@@ -171,7 +172,7 @@ are async and forward to the active binding.
 | Group | Methods |
 |-------|---------|
 | Lifecycle | `unlock(request)`, `getBootstrap()`, `shutdown()`, `dispose()` |
-| Node info | `getNodeInfo()`, `getNetworkInfo()`, `sync()`, `getAddress()`, `getAddressState()`, `rotateAddress()` |
+| Node info | `getNodeInfo()`, `getNetworkInfo()`, `refreshWalletSnapshot(options?)`, `sync()` (legacy), `getAddress()`, `getAddressState()`, `rotateAddress()` |
 | Peers | `connectPeer(pubkey@host:port)`, `disconnectPeer(request)`, `listPeers()` |
 | Channels | `openChannel(request)`, `closeChannel(request)`, `listChannels()`, `getChannelId(tempIdHex)` |
 | Invoices | `createInvoice(request)`, `createLightningInvoice(request)`, `decodeInvoice(invoice)`, `getInvoiceStatus(invoice)` |
@@ -187,6 +188,18 @@ are async and forward to the active binding.
 | APay / LSP | `apayNew(hostNodeId)`, `bootstrapLsp({ peerPubkeyAndAddr, hostNodeId? })`, `getLspConfig()`, `createLsp(peer?)` |
 
 Notes:
+
+- **`refreshWalletSnapshot()` is the production balance/history refresh.** It
+  serializes native refreshes, coalesces identical requests, FullSyncs both
+  Vanilla and Colored keychains in `routine` mode, and FullScans both only in
+  explicit `recovery` mode. It validates the complete version-1 response,
+  preserves all monetary values as decimal strings, and retries one capture
+  if the chain tip changes between its before/after observations. The legacy
+  `sync()` remains for compatibility but only performs RLN's old Colored
+  FastSync and must not drive portfolio state.
+- **Lightning claimable value is not routing capacity.** The snapshot keeps
+  aggregate/per-channel claimable satoshis separate from inbound and outbound
+  capacity. Consumers must not relabel either capacity as wallet-owned value.
 
 - **`createInvoice` / `createLightningInvoice`** accept either RLN's native
   snake_case request or a camelCase convenience shape
@@ -204,7 +217,9 @@ Notes:
   it rejects with `AccountLockedError`; UI loaders can call
   `getAddressState()` for `{ status: 'locked', address: null }`. The WDK
   bindings initialize RLN with address reuse enabled so reads stay stable;
-  `rotateAddress()` is the explicit mutating operation for advancing it.
+  `rotateAddress()` is the explicit mutating operation for advancing it. A full
+  account configured with `autoUnlockRequest` first coalesces native activation
+  and then retries the real address; the read-only account contract is unchanged.
 - **`sendTransaction()` uses WDK's `{ to, value, feeRate?,
   confirmationTarget? }` input and `{ hash, fee }` result.** `sendBtc()` is
   the explicit low-level escape hatch for RLN's native request format.

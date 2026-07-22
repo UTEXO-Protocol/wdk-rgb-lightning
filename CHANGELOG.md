@@ -9,6 +9,11 @@ while pre-`1.0`.
 ## [Unreleased]
 
 ### Added
+- **Versioned wallet refresh contract:** `account.refreshWalletSnapshot()`
+  serializes/coalesces refreshes, explicitly FullSyncs or recovery FullScans
+  both native keychains, validates bounded BigInt-safe snapshot DTOs, retries
+  one moving-tip capture, and reports partial sync, native, contract, and
+  coherence failures through `WalletSyncError` / `WalletSnapshotError`.
 - **First-class read-only account:** exported
   `WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly`, with
   all seven mandatory WDK reads plus node, channel, peer, invoice, payment,
@@ -92,6 +97,10 @@ while pre-`1.0`.
   shape.
 
 ### Fixed
+- Wallet snapshot validation now canonicalizes only recognized legacy native
+  network casing (for example, `Regtest` to `regtest`) before enforcing the
+  strict v1 contract. This keeps source-PR installs compatible with published
+  beta.14 native prebuilds while unknown network names still fail closed.
 - WDK conformance for `index`, `path`, `keyPair`, `sign()`, `getBalance()`,
   `getTokenBalance()`, `sendTransaction()`, quotes, and confirmed receipt
   semantics. Balance failures are no longer silently converted to zero unless

@@ -19,20 +19,55 @@ import {
 } from './lsp-helpers.js'
 import { LspClient } from './lsp-client.js'
 import { UtexoLsp } from './utexo-lsp.js'
+import { normalizeAutoUnlockRequest } from './node-unlock-request.js'
 import WalletAccountReadOnlyRgbLightning, {
   createReadOnlyRgbLightningAdapter,
   PENDING_ADDRESS
 } from './wallet-account-read-only-rgb-lightning.js'
 import {
+  AccountLockedError,
   UnlockError,
   VssError,
   VssNotConfiguredError,
   ApayError,
+  WalletSyncError,
+  WalletSnapshotError,
   NotImplementedError,
   wrapError
 } from './errors.js'
+import {
+  WALLET_SNAPSHOT_CONTRACT_VERSION,
+  WalletSnapshotContractError,
+  isCoherentWalletSnapshot,
+  normalizeWalletSnapshotOptions,
+  validateWalletSnapshotResponse,
+  validateWalletSyncResponse,
+  walletSnapshotRequestKey
+} from './wallet-snapshot-contract.js'
 
 export { PENDING_ADDRESS }
+
+function sameUnlockRequest (left, right) {
+  if (left === right) return true
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false
+
+  const leftKeys = Object.keys(left).sort()
+  const rightKeys = Object.keys(right).sort()
+  if (leftKeys.length !== rightKeys.length) return false
+
+  return leftKeys.every((key, index) => {
+    if (key !== rightKeys[index]) return false
+    const leftValue = left[key]
+    const rightValue = right[key]
+    if (Array.isArray(leftValue) || Array.isArray(rightValue)) {
+      return Array.isArray(leftValue) &&
+        Array.isArray(rightValue) &&
+        leftValue.length === rightValue.length &&
+        leftValue.every((value, valueIndex) => value === rightValue[valueIndex])
+    }
+    return leftValue === rightValue
+  })
+}
 
 /**
  * Seed-isolated via RLN's `NativeExternalSigner`: the WDK secret manager
@@ -46,7 +81,7 @@ export { PENDING_ADDRESS }
  */
 export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning {
   /**
-   * @param {{ binding: BareRgbLightningBinding }} bindings
+   * @param {{ binding: BareRgbLightningBinding, autoUnlockRequest?: object }} bindings
    */
   constructor (bindings) {
     if (!bindings || !bindings.binding) {
@@ -54,8 +89,15 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     }
     super(createReadOnlyRgbLightningAdapter(bindings.binding))
     /** @private */ this._binding = bindings.binding
+    /** @private */ this._autoUnlockRequest = normalizeAutoUnlockRequest(bindings.autoUnlockRequest)
+    /** @private @type {{ request: object, promise: Promise<{ ok: true }> } | null} */
+    this._unlockInFlight = null
     /** @private @type {WalletAccountReadOnlyRgbLightning | null} */
     this._readOnlyAccount = null
+    /** @private @type {Promise<void>} */
+    this._walletSnapshotQueue = Promise.resolve()
+    /** @private @type {Map<string, Promise<object>>} */
+    this._walletSnapshotInFlight = new Map()
   }
 
   /** @private */
@@ -75,19 +117,54 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * @param {Object} unlockRequest
    */
   async unlock (unlockRequest) {
-    try {
-      this._binding.unlock(unlockRequest)
-    } catch (e) {
-      // Wrap into a typed UnlockError so callers can branch on
-      // `err.name === 'UnlockError'` / `err.code` instead of
-      // substring-matching the RLN message. The original message is
-      // preserved verbatim and attached as `cause`.
-      throw wrapError(e, UnlockError)
+    if (this._unlockInFlight) {
+      if (!sameUnlockRequest(this._unlockInFlight.request, unlockRequest)) {
+        throw new UnlockError('A different RGB Lightning unlock request is already in progress.')
+      }
+      return this._unlockInFlight.promise
     }
-    // Return something non-undefined so the worklet's `safeStringify`
-    // produces a real string. The RN-side response schema rejects
-    // null/undefined results (see wdk-react-native-core schemas).
-    return { ok: true }
+
+    const operation = Promise.resolve().then(() => {
+      try {
+        this._binding.unlock(unlockRequest)
+      } catch (e) {
+        // Wrap into a typed UnlockError so callers can branch on
+        // `err.name === 'UnlockError'` / `err.code` instead of
+        // substring-matching the RLN message. The original message is
+        // preserved verbatim and attached as `cause`.
+        throw wrapError(e, UnlockError)
+      }
+      // Return something non-undefined so the worklet's `safeStringify`
+      // produces a real string. The RN-side response schema rejects
+      // null/undefined results (see wdk-react-native-core schemas).
+      return { ok: true }
+    })
+
+    this._unlockInFlight = { request: unlockRequest, promise: operation }
+    try {
+      return await operation
+    } finally {
+      if (this._unlockInFlight?.promise === operation) this._unlockInFlight = null
+    }
+  }
+
+  /**
+   * WDK React Native Core discovers an account by loading its address before
+   * exposing extension methods. When explicitly configured, activate the full
+   * RGB node at that boundary and then return only the real native address.
+   * Standalone and read-only consumers retain the ordinary locked error.
+   */
+  async getAddress () {
+    try {
+      return await super.getAddress()
+    } catch (error) {
+      if (!(error instanceof AccountLockedError) || !this._autoUnlockRequest) {
+        throw error
+      }
+    }
+
+    await this.unlock(this._autoUnlockRequest)
+    return super.getAddress()
   }
 
   /** ✅ Idempotent shutdown. */
@@ -351,10 +428,195 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   // Node lifecycle — read methods are inherited from the read-only account
   // ==========================================================================
 
-  /** Force a sync of the on-chain wallet. */
+  /**
+   * Force the legacy Colored-only FastSync.
+   * @deprecated Use `refreshWalletSnapshot()` so both keychains are synced.
+   */
   async sync () {
     this._node.sync()
     return { ok: true }
+  }
+
+  /**
+   * Synchronize both native wallet keychains and capture one versioned,
+   * bounded snapshot. Identical concurrent requests coalesce, while different
+   * requests serialize so FullSync and FullScan cannot race each other.
+   *
+   * A snapshot whose before/after chain tip differs is captured once more.
+   * The method fails closed if the retry is also incoherent.
+   *
+   * @param {object} [options]
+   * @returns {Promise<object>}
+   */
+  refreshWalletSnapshot (options) {
+    const normalized = normalizeWalletSnapshotOptions(options)
+    const key = walletSnapshotRequestKey(normalized)
+    const current = this._walletSnapshotInFlight.get(key)
+    if (current) return current
+
+    const operation = this._walletSnapshotQueue
+      .then(() => this._refreshWalletSnapshot(normalized))
+    this._walletSnapshotQueue = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    this._walletSnapshotInFlight.set(key, operation)
+    operation.then(
+      () => this._clearWalletSnapshotFlight(key, operation),
+      () => this._clearWalletSnapshotFlight(key, operation)
+    )
+    return operation
+  }
+
+  /** @private */
+  _clearWalletSnapshotFlight (key, operation) {
+    if (this._walletSnapshotInFlight.get(key) === operation) {
+      this._walletSnapshotInFlight.delete(key)
+    }
+  }
+
+  /** @private */
+  async _refreshWalletSnapshot (options) {
+    const node = this._node
+    if (
+      typeof node.syncWallet !== 'function' ||
+      typeof node.walletSnapshot !== 'function'
+    ) {
+      throw new WalletSnapshotError(
+        'The installed RGB Lightning native binding does not support wallet snapshot contract v1.',
+        { code: 'WALLET_SNAPSHOT_UNSUPPORTED_BINDING' }
+      )
+    }
+
+    let sync = await this._synchronizeWalletForSnapshot(node, options.mode)
+
+    const first = await this._captureWalletSnapshot(node, options)
+    if (isCoherentWalletSnapshot(first)) {
+      return Object.freeze({
+        contractVersion: WALLET_SNAPSHOT_CONTRACT_VERSION,
+        sync,
+        snapshot: first
+      })
+    }
+
+    // A moving chain tip can leave the first wallet sync behind the retry
+    // capture. Synchronize both keychains again before accepting new-tip data.
+    sync = await this._synchronizeWalletForSnapshot(node, options.mode)
+    const retry = await this._captureWalletSnapshot(node, options)
+    if (BigInt(retry.capture_sequence) <= BigInt(first.capture_sequence)) {
+      throw new WalletSnapshotError(
+        'The native wallet snapshot retry did not advance its capture sequence.',
+        {
+          code: 'WALLET_SNAPSHOT_CONTRACT_MISMATCH',
+          details: Object.freeze({
+            firstCaptureSequence: first.capture_sequence,
+            retryCaptureSequence: retry.capture_sequence
+          })
+        }
+      )
+    }
+    if (!isCoherentWalletSnapshot(retry)) {
+      throw new WalletSnapshotError(
+        'The native wallet snapshot changed chain tip during both capture attempts.',
+        {
+          code: 'WALLET_SNAPSHOT_INCOHERENT',
+          details: Object.freeze({
+            first: Object.freeze({
+              before: first.network_before,
+              after: first.network_after,
+              captureSequence: first.capture_sequence
+            }),
+            retry: Object.freeze({
+              before: retry.network_before,
+              after: retry.network_after,
+              captureSequence: retry.capture_sequence
+            })
+          })
+        }
+      )
+    }
+
+    return Object.freeze({
+      contractVersion: WALLET_SNAPSHOT_CONTRACT_VERSION,
+      sync,
+      snapshot: retry
+    })
+  }
+
+  /** @private */
+  async _synchronizeWalletForSnapshot (node, mode) {
+    let sync
+    try {
+      sync = validateWalletSyncResponse(
+        await node.syncWallet({ mode }),
+        mode
+      )
+    } catch (error) {
+      const contractFailure = error instanceof WalletSnapshotContractError
+      throw new WalletSyncError(
+        contractFailure
+          ? `The native wallet sync response does not match contract v1: ${error.message}.`
+          : 'The native wallet synchronization failed.',
+        {
+          code: contractFailure
+            ? 'WALLET_SYNC_CONTRACT_MISMATCH'
+            : 'WALLET_SYNC_NATIVE_FAILURE',
+          cause: error,
+          details: Object.freeze({
+            mode,
+            ...(contractFailure
+              ? { contractPath: error.path, contractExpectation: error.expectation }
+              : {})
+          })
+        }
+      )
+    }
+
+    if (sync.vanilla.status !== 'succeeded' || sync.colored.status !== 'succeeded') {
+      throw new WalletSyncError(
+        'The native wallet synchronization did not complete for both keychains.',
+        {
+          code: 'WALLET_SYNC_PARTIAL_FAILURE',
+          details: Object.freeze({
+            mode,
+            vanilla: sync.vanilla,
+            colored: sync.colored
+          })
+        }
+      )
+    }
+
+    return sync
+  }
+
+  /** @private */
+  async _captureWalletSnapshot (node, options) {
+    try {
+      return validateWalletSnapshotResponse(
+        await node.walletSnapshot(options.nativeRequest),
+        options
+      )
+    } catch (error) {
+      if (error instanceof WalletSnapshotError) throw error
+      const contractFailure = error instanceof WalletSnapshotContractError
+      throw new WalletSnapshotError(
+        contractFailure
+          ? `The native wallet snapshot does not match contract v1: ${error.message}.`
+          : 'The native wallet snapshot could not be captured.',
+        {
+          code: contractFailure
+            ? 'WALLET_SNAPSHOT_CONTRACT_MISMATCH'
+            : 'WALLET_SNAPSHOT_NATIVE_FAILURE',
+          cause: error,
+          details: contractFailure
+            ? Object.freeze({
+              contractPath: error.path,
+              contractExpectation: error.expectation
+            })
+            : undefined
+        }
+      )
+    }
   }
 
   // ==========================================================================

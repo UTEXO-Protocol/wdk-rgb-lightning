@@ -14,6 +14,16 @@ const MNEMONIC = 'abandon abandon abandon abandon abandon abandon abandon abando
 const WDK_SEED_HEX = '5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4'
 const NODE_SEED_V2 = WDK_SEED_HEX.slice(0, 64)
 const NODE_SEED_V1 = 'd6560f02547828d8d76fc84ea68e74dcccea5599e735cee1fa5f2742289cda58'
+const AUTO_UNLOCK_REQUEST = {
+  bitcoind_rpc_username: 'user',
+  bitcoind_rpc_password: 'password',
+  bitcoind_rpc_host: '127.0.0.1',
+  bitcoind_rpc_port: 18443,
+  indexer_url: 'tcp://127.0.0.1:50001',
+  proxy_endpoint: 'rpc://127.0.0.1:3000/json-rpc',
+  announce_addresses: [],
+  announce_alias: 'wallet-test'
+}
 
 class FakeBinding {
   static instances = []
@@ -68,6 +78,30 @@ describe('WalletManagerRgbLightning', () => {
     expect(await manager.getAccount()).toBe(account)
     expect(await manager.getAccountByPath('m')).toBe(account)
     expect(FakeBinding.instances).toHaveLength(1)
+  })
+
+  it('validates and isolates the optional automatic activation request', async () => {
+    const manager = new TestManager(MNEMONIC, {
+      network: 'regtest',
+      dataDir: '/wallet',
+      autoUnlockRequest: AUTO_UNLOCK_REQUEST
+    })
+    const account = await manager.getAccount()
+    const binding = FakeBinding.instances[0]
+
+    expect(account._autoUnlockRequest).toEqual(AUTO_UNLOCK_REQUEST)
+    expect(account._autoUnlockRequest).not.toBe(AUTO_UNLOCK_REQUEST)
+    expect(Object.isFrozen(account._autoUnlockRequest)).toBe(true)
+    expect(Object.isFrozen(account._autoUnlockRequest.announce_addresses)).toBe(true)
+    expect(binding._config.autoUnlockRequest).toBeUndefined()
+  })
+
+  it('rejects malformed automatic activation requests without exposing values', () => {
+    expect(() => new TestManager(MNEMONIC, {
+      network: 'regtest',
+      dataDir: '/wallet',
+      autoUnlockRequest: { ...AUTO_UNLOCK_REQUEST, bitcoind_rpc_port: 0 }
+    })).toThrow('autoUnlockRequest.bitcoind_rpc_port must be a valid TCP port')
   })
 
   it('supports explicit v2-only and legacy-only modes', async () => {
