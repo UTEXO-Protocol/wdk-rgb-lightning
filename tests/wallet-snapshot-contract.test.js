@@ -210,6 +210,29 @@ describe('wallet snapshot response contract', () => {
     }), options)).toThrow('snapshot.network_before.network')
   })
 
+  it('canonicalizes recognized legacy native network casing without mutating input', () => {
+    const options = normalizeWalletSnapshotOptions()
+    const value = snapshot({
+      network_before: { network: 'Regtest', height: 100 },
+      network_after: { network: 'REGTEST', height: 100 }
+    })
+
+    const result = validateWalletSnapshotResponse(value, options)
+
+    expect(result.network_before.network).toBe('regtest')
+    expect(result.network_after.network).toBe('regtest')
+    expect(value.network_before.network).toBe('Regtest')
+    expect(value.network_after.network).toBe('REGTEST')
+  })
+
+  it('does not reinterpret an unknown mixed-case network', () => {
+    const options = normalizeWalletSnapshotOptions()
+
+    expect(() => validateWalletSnapshotResponse(snapshot({
+      network_before: { network: 'Bitcoin', height: 100 }
+    }), options)).toThrow('snapshot.network_before.network')
+  })
+
   it('requires the bounded activity envelope only when requested', () => {
     const options = normalizeWalletSnapshotOptions({
       includeActivity: true,
