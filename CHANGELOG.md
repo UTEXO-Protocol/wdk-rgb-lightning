@@ -36,6 +36,10 @@ while pre-`1.0`.
   identity mismatch, preserving existing node identities.
 
 ### Fixed
+- Wallet snapshot validation now canonicalizes only recognized legacy native
+  network casing (for example, `Regtest` to `regtest`) before enforcing the
+  strict v1 contract. This keeps source-PR installs compatible with published
+  beta.14 native prebuilds while unknown network names still fail closed.
 - WDK conformance for `index`, `path`, `keyPair`, `sign()`, `getBalance()`,
   `getTokenBalance()`, `sendTransaction()`, quotes, and confirmed receipt
   semantics. Balance failures are no longer silently converted to zero unless

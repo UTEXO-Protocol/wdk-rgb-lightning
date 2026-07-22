@@ -25,6 +25,7 @@ export const DEFAULT_WALLET_SNAPSHOT_OPTIONS = Object.freeze({
 const DECIMAL_TEXT = /^(0|[1-9][0-9]*)$/
 const U64_MAX = 18_446_744_073_709_551_615n
 const HAS_OWN = (value, key) => Object.prototype.hasOwnProperty.call(value, key)
+const CANONICAL_NETWORKS = Object.freeze(['mainnet', 'testnet', 'regtest', 'signet'])
 
 export class WalletSnapshotContractError extends Error {
   constructor (path, expectation) {
@@ -206,8 +207,31 @@ export function validateWalletSyncResponse (value, expectedMode) {
 function network (value, path) {
   const item = record(value, path)
   exactKeys(item, ['network', 'height'], [], path)
-  oneOf(item.network, ['mainnet', 'testnet', 'regtest', 'signet'], `${path}.network`)
+  oneOf(item.network, CANONICAL_NETWORKS, `${path}.network`)
   integer(item.height, `${path}.height`, 0, 0xffffffff)
+}
+
+function canonicalNetworkName (value) {
+  if (typeof value !== 'string') return value
+  const canonical = value.toLowerCase()
+  return CANONICAL_NETWORKS.includes(canonical) ? canonical : value
+}
+
+function normalizeLegacyNetworkNames (value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+
+  let normalized = value
+  for (const field of ['network_before', 'network_after']) {
+    const networkInfo = value[field]
+    if (!networkInfo || typeof networkInfo !== 'object' || Array.isArray(networkInfo)) continue
+
+    const networkName = canonicalNetworkName(networkInfo.network)
+    if (networkName === networkInfo.network) continue
+
+    if (normalized === value) normalized = { ...value }
+    normalized[field] = { ...networkInfo, network: networkName }
+  }
+  return normalized
 }
 
 function balance (value, path, includeOffchain) {
@@ -366,7 +390,10 @@ function assertUnique (rows, key, path) {
 }
 
 export function validateWalletSnapshotResponse (value, options) {
-  const snapshot = record(value, 'snapshot')
+  // Native beta.14 artifacts serialize Rust's Network Debug value (for
+  // example, "Regtest"). Normalize only recognized names at this boundary;
+  // strict contract validation below still rejects every unknown value.
+  const snapshot = record(normalizeLegacyNetworkNames(value), 'snapshot')
   const required = [
     'contract_version', 'native_source', 'capture_sequence', 'started_at_ms',
     'completed_at_ms', 'network_before', 'network_after', 'node', 'btc',
