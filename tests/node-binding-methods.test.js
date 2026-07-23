@@ -19,9 +19,8 @@ function makeBinding (overrides = {}) {
   return new NodeRgbLightningBinding({ network: 'regtest', dataDir: '/d', ...overrides })
 }
 
-// Real RLN AsyncOrderNewResponse shape (snake_case) — see
-// utexo-rgb-wdk-demo node-demo LnExt.ts getApayNew + testCases t113.
-// `apayNew` must passthrough this exact object reference unchanged.
+// Representative native AsyncOrderNewResponse used to verify that apayNew
+// preserves the response object and its snake_case fields.
 function realAsyncOrderNewResponse () {
   return {
     request_id: 'req-7f3a',
@@ -36,8 +35,7 @@ function realAsyncOrderNewResponse () {
   }
 }
 
-// Real signer bootstrap payload — see LnExt.ts getBootstrap /
-// binding-interface.js ('node_id, xpubs, master_fp'). NOT `{ booted }`.
+// Representative native signer bootstrap payload.
 function realBootstrapPayload () {
   return {
     node_id: '03beef',
@@ -113,9 +111,6 @@ describe('attachExternalSigner', () => {
     }
   })
 
-  // Kills the mutant that hardcodes NativeExternalSigner.create(seedHex,
-  // 'mainnet', false): asserts the seed, the CONFIGURED network ('regtest')
-  // and the permissive-policy `?? true` DEFAULT are passed through verbatim.
   it('passes the seed, configured network and permissive-policy default to NativeExternalSigner.create', () => {
     const created = { bootstrap: jest.fn(), destroy: jest.fn() }
     const spy = jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(created)
@@ -130,8 +125,7 @@ describe('attachExternalSigner', () => {
     }
   })
 
-  // Differentiates the `permissiveSignerPolicy ?? true` default from an
-  // explicit override: an explicit `false` must reach create as the 3rd arg.
+  // An explicit false value must not be replaced by the default.
   it('forwards an explicit permissiveSignerPolicy=false instead of the default', () => {
     const spy = jest.spyOn(rln.NativeExternalSigner, 'create')
       .mockReturnValue({ bootstrap: jest.fn(), destroy: jest.fn() })
@@ -169,18 +163,14 @@ describe('attachExternalSigner', () => {
     expect(() => b.attachExternalSigner('seed-b')).toThrow('a different signer is already attached')
   })
 
-  // Preserve the `this._seedHex &&` short-circuit around the retained-secret
-  // comparison. When a signer is attached
-  // out-of-band with NO _seedHex recorded, re-attaching must return
-  // silently (the falsy guard wins). Dropping the short-circuit would
-  // make `undefined !== 'seed-x'` true and wrongly throw.
+  // An out-of-band signer has no retained seed to compare.
   it('returns silently when a signer is attached but _seedHex is falsy', () => {
     const b = makeBinding()
     const preexisting = fakeSigner()
     b._signer = preexisting
     expect(b._seedHex).toBeUndefined()
     expect(() => b.attachExternalSigner('seed-x')).not.toThrow()
-    // No new signer created and the seed is NOT recorded by the no-op path.
+    // The no-op path retains the existing signer without recording a seed.
     expect(b._signer).toBe(preexisting)
     expect(b._seedHex).toBeUndefined()
   })
@@ -372,9 +362,6 @@ describe('unlock', () => {
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
   })
 
-  // Exercises the false arm of `e && e.message ? e.message : e`: a thrown
-  // string has no `.message`, so the message is `String(e)` itself. A
-  // thrown 'Conflict' string must still be swallowed via includes('Conflict').
   it('swallows a thrown string containing Conflict (no .message) and proceeds', () => {
     const b = makeBinding()
     const node = fakeNode()
@@ -387,8 +374,6 @@ describe('unlock', () => {
     expect(b._sdkInitDone).toBe(true)
   })
 
-  // Counterpart: a thrown string WITHOUT 'Conflict' (still no .message)
-  // must be rethrown and must not reach unlock.
   it('rethrows a thrown string without Conflict (no .message) and does not unlock', () => {
     const b = makeBinding()
     const node = fakeNode()
@@ -408,9 +393,6 @@ describe('bootstrap', () => {
     expect(() => b.bootstrap()).toThrow('attachExternalSigner')
   })
 
-  // Kills the mutant that discards the signer's payload and returns a
-  // hardcoded object: asserts the EXACT real bootstrap payload reference
-  // (node_id / xpubs / master_fingerprint) is returned unchanged.
   it('returns the signer bootstrap payload unchanged (same reference)', () => {
     const b = makeBinding()
     const signer = fakeSigner()
@@ -476,8 +458,6 @@ describe('vssBackup', () => {
     expect(b._lastVssVersion).toBeNull()
   })
 
-  // A null node result must short-circuit before the property-existence check,
-  // leave _lastVssVersion untouched, and be returned verbatim.
   it('returns null and leaves _lastVssVersion untouched when the node returns null', () => {
     const b = makeBinding()
     const node = fakeNode()
@@ -497,10 +477,6 @@ describe('vssBackup', () => {
 })
 
 describe('apayNew', () => {
-  // Kills the mutant that ignores the node result and returns a hardcoded
-  // object: asserts the EXACT real AsyncOrderNewResponse reference (with
-  // request_id / order_id / status / unused_hashes ...) is passed through
-  // unchanged, plus the host node id is forwarded.
   it('forwards the host node id and returns the node AsyncOrderNewResponse unchanged', () => {
     const b = makeBinding()
     const node = fakeNode()

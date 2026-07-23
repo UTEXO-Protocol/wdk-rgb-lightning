@@ -61,9 +61,9 @@ while pre-`1.0`.
   `enableVirtualChannelsV0`) for async-payments against a production
   LSP: every mobile client must list the LSP's node_id so RLN's
   `allows_peer` accepts the `trusted_no_broadcast` virtual channel.
-  Per Yurii's Signet LSP setup. The native layer already accepted the
-  field via the init JSON, so no native rebuild; forwarded only when a
-  non-empty array. Also documents `virtual_open_mode:
+  The native layer already accepted the field via the init JSON, so no
+  native rebuild; forwarded only when a non-empty array. Also documents
+  `virtual_open_mode:
   'trusted_no_broadcast'` on `openChannel` and the 3_000_000-msat RGB
   HTLC minimum (`MIN_AMT_MSAT`).
 - **TypeScript declarations.** Ship a hand-authored `index.d.ts`
@@ -148,8 +148,8 @@ production hardening from the Unreleased section.
   waitForPeerMs, pollIntervalMs })` — opt-in one-shot LSP
   bootstrap. Connects the peer, polls `listPeers` until the noise
   handshake settles, then calls `apayNew`. Replaces the manual
-  three-call sequence and addresses Renat's May 27 dev-plan items 3
-  + 4 (connectPeer + apay/new during SDK init).
+  three-call sequence for peer connection, readiness polling, and
+  optional APay registration.
 - `account.vssBackup()` — force an immediate VSS backup flush.
   Returns `{ version }` of the snapshot just persisted. For app-
   controlled checkpoints (e.g. fsync-before-suspend). Backed by
@@ -190,7 +190,7 @@ CHANGELOG brought to beta quality.
 - `clearVssFence(password)` and VSS init options (`vssUrl`,
   `vssAllowHttp`, `vssAllowEmptyRestore`) on the wallet manager.
 - `apayNew(hostNodeId)` for receiver-side async-payments (APay)
-  registration against an LSP (upstream RLN PR #51).
+  registration through the native RLN binding.
 - `min_final_cltv_expiry_delta` documented on `createInvoice`.
 - Apache-2.0 `LICENSE` file.
 - This `CHANGELOG.md` (Keep a Changelog format).
@@ -208,7 +208,7 @@ CHANGELOG brought to beta quality.
 
 ### Added
 - Extended `IWalletAccount` surface to cover the full RLN method set
-  (PR #5).
+  exposed by the native binding.
 
 ## [0.1.0-alpha.1] — 2026-05-20
 

@@ -6,7 +6,7 @@
 
 import { toUint64String } from './lsp-utils.js'
 
-// Generic LUD-06 (Lightning Address) client. NOT utexo-lsp specific:
+// Generic LUD-06 (Lightning Address) client, independent of utexo-lsp:
 // any LNURL-pay server that follows the spec works. We split this out
 // from LspClient so a wallet can pay an external Lightning Address
 // (e.g. `alice@getalby.com`) without any utexo-lsp knowledge.
@@ -15,7 +15,7 @@ import { toUint64String } from './lsp-utils.js'
 //   https://github.com/lnurl/luds/blob/luds/16.md   (Lightning Address)
 //   https://github.com/lnurl/luds/blob/luds/06.md   (LNURL-pay)
 //
-// We deliberately do NOT verify the BOLT11 invoice's description-hash
+// We deliberately do not verify the BOLT11 invoice's description-hash
 // matches the metadata here — that's the responsibility of the caller
 // once it decodes the invoice via the local RLN node. Doing it here
 // would force a duplicate bolt11 parser into this package.

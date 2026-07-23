@@ -53,13 +53,9 @@ function makeLspClient (body) {
   return { client, fetch }
 }
 
-// A *real* LspClient (so it survives `asLspClient`'s `instanceof LspClient`
-// gate) whose bridge method is stubbed to return an EXACT raw response
-// object. This is the only way to feed the helper a shape the real
-// `camelCaseLspResponse` would never emit — e.g. snake_case-ONLY (no
-// camelCase synthesized alongside it), or a dual-keyed object whose
-// snake/camel values intentionally DIFFER — which is what actually
-// exercises the `res.lnInvoice ?? res.ln_invoice` fallback/precedence.
+// Use a real LspClient because `asLspClient` validates the instance. Stubbing
+// one bridge method allows tests to exercise raw snake_case responses and
+// camelCase precedence independently of response normalization.
 function makeStubbedLspClient (method, raw) {
   const client = new LspClient({ baseUrl: 'https://lsp.example', fetch: jest.fn() })
   const spy = jest.spyOn(client, method).mockResolvedValue(raw)
@@ -130,11 +126,8 @@ describe('payLightningAddress', () => {
     expect(account.sendPayment).toHaveBeenCalledWith({ invoice: BOLT11, amt_msat: huge.toString() })
   })
 
-  it('coerces a bigint EXACTLY equal to MAX_SAFE_INTEGER to a Number (inclusive boundary)', async () => {
-    // toUint64 uses `v <= MAX_SAFE_INTEGER ? Number(v) : String(v)`. The
-    // boundary value itself must still become a Number. If the comparison
-    // were `<` (exclusive), MAX_SAFE_INTEGER would fall to the string arm
-    // and amt_msat would be '9007199254740991' instead of the number.
+  it('coerces a bigint equal to MAX_SAFE_INTEGER to a Number', async () => {
+    // MAX_SAFE_INTEGER is the inclusive upper bound for numeric output.
     const boundary = BigInt(Number.MAX_SAFE_INTEGER)
     const fetch = makeLnurlFetch({ maxSendable: (boundary + 1n).toString() })
     const account = { sendPayment: jest.fn(async () => ({})) }
@@ -154,8 +147,6 @@ describe('payLightningAddress', () => {
   it('rejects an amount that is not a non-negative integer', async () => {
     const fetch = makeLnurlFetch()
     const account = { sendPayment: jest.fn(async () => ({})) }
-    // The bad amount only trips toUint64 after a successful resolve, so
-    // sendPayment must never be reached.
     await expect(
       payLightningAddress(account, 'g@host.example', {}, { fetch })
     ).rejects.toThrow('amountMsat must be a non-negative integer')
@@ -188,10 +179,7 @@ describe('requestLspRgbDeposit', () => {
   })
 
   it('uses a supplied lnInvoice and forwards it to lightningReceive', async () => {
-    // Wire shape is snake_case in BOTH directions (the real utexo-lsp
-    // returns { ln_invoice, rgb_invoice, mapping_id }); the real LspClient
-    // synthesizes the camelCase the helper consumes. Body is asserted
-    // snake_case too.
+    // Requests and server responses use snake_case on the wire.
     const { client, fetch } = makeLspClient({ ln_invoice: BOLT11, rgb_invoice: 'rgb:zzz', mapping_id: 42 })
     const account = {}
     const out = await requestLspRgbDeposit(account, { lsp: client, lnInvoice: BOLT11, rgb })
@@ -202,12 +190,7 @@ describe('requestLspRgbDeposit', () => {
     expect(out).toEqual({ lnInvoice: BOLT11, rgbInvoice: 'rgb:zzz', mappingId: 42 })
   })
 
-  it('falls back to snake_case fields when the response is snake_case-ONLY', async () => {
-    // The REAL utexo-lsp returns snake_case JSON; the helper must read it
-    // even if (hypothetically) no camelCase alias is present. Feeding a
-    // snake-ONLY raw object forces the `?? res.ln_invoice` fallback arm to
-    // be the one taken — dropping those fallbacks makes every field
-    // undefined and this assertion fails.
+  it('falls back to snake_case fields when camelCase aliases are absent', async () => {
     const { client, spy } = makeStubbedLspClient('lightningReceive', {
       ln_invoice: BOLT11,
       rgb_invoice: 'rgb:snake',
@@ -219,14 +202,11 @@ describe('requestLspRgbDeposit', () => {
   })
 
   it('prefers camelCase over snake_case on a realistic dual-keyed response', async () => {
-    // The real LspClient.camelCaseLspResponse spreads the raw snake_case
-    // body AND adds camelCase aliases, so the helper sees BOTH keys. Pin
-    // the precedence: when they DIFFER, camelCase wins. Reordering the
-    // operands to `res.ln_invoice ?? res.lnInvoice` would pick the WRONG_*
-    // snake values and fail every assertion below.
+    // Normalized responses retain the raw keys, so camelCase must take
+    // precedence when both forms are present.
     const { client, spy } = makeStubbedLspClient('lightningReceive', {
-      ln_invoice: 'WRONG_LN',
-      rgb_invoice: 'WRONG_RGB',
+      ln_invoice: 'lnbc-from-snake-case',
+      rgb_invoice: 'rgb:from-snake-case',
       mapping_id: -1,
       lnInvoice: BOLT11,
       rgbInvoice: 'rgb:right',
@@ -259,9 +239,8 @@ describe('requestLspRgbDeposit', () => {
   })
 
   it('prefers account.createInvoice over account.lnInvoice when both exist', async () => {
-    // pickInvoiceMinter must try createInvoice FIRST. With both present,
-    // swapping the precedence (checking lnInvoice first) would call the
-    // wrong minter — so we assert createInvoice ran and lnInvoice did not.
+    // createInvoice is the primary WDK method; lnInvoice is a compatibility
+    // fallback.
     const { client, fetch } = makeLspClient({ ln_invoice: BOLT11, rgb_invoice: 'rgb:abc', mapping_id: 1 })
     const account = {
       createInvoice: jest.fn(async () => BOLT11),
@@ -273,8 +252,6 @@ describe('requestLspRgbDeposit', () => {
 
     expect(account.createInvoice).toHaveBeenCalledWith(lnInvoiceRequest)
     expect(account.lnInvoice).not.toHaveBeenCalled()
-    // The BOLT11 actually forwarded to the LSP must be createInvoice's,
-    // not lnInvoice's — guards against the wrong minter winning silently.
     expect(JSON.parse(fetch.mock.calls[0][1].body).ln_invoice).toBe(BOLT11)
   })
 
@@ -293,11 +270,7 @@ describe('requestLspRgbDeposit', () => {
   })
 
   it('throws the clean mint error (not a TypeError) when the minter returns null', async () => {
-    // `invoice = typeof minted === 'string' ? minted : minted?.invoice`.
-    // The optional chain matters: if the guard were `minted.invoice`,
-    // a null return would throw "Cannot read properties of null". The
-    // helper must instead surface its own descriptive mint error. Pin
-    // that the optional-chaining branch produces undefined -> clean throw.
+    // Null is normalized to the module's descriptive validation error.
     const { client } = makeLspClient({})
     const account = { createInvoice: jest.fn(async () => null) }
     await expect(requestLspRgbDeposit(account, { lsp: client, lnInvoiceRequest: {}, rgb }))
@@ -305,9 +278,7 @@ describe('requestLspRgbDeposit', () => {
   })
 
   it('throws the clean mint error when the minter returns a number', async () => {
-    // A non-string, non-object primitive (number) also hits `minted?.invoice`
-    // -> undefined -> the descriptive throw. Differentiates a number from
-    // the `{ noInvoiceHere: true }` object case so both branches are pinned.
+    // Unsupported primitive responses use the same validation error.
     const { client } = makeLspClient({})
     const account = { createInvoice: jest.fn(async () => 42) }
     await expect(requestLspRgbDeposit(account, { lsp: client, lnInvoiceRequest: {}, rgb }))
@@ -397,11 +368,7 @@ describe('payRgbViaLsp', () => {
     })
   })
 
-  it('falls back to snake_case fields when onchainSend returns snake-ONLY', async () => {
-    // Snake-ONLY raw forces the `issued.ln_invoice` / `issued.rgb_invoice`
-    // / `issued.mapping_id` fallback arms to be the ones taken. Dropping
-    // them leaves lnInvoice undefined (so sendPayment gets undefined and
-    // the DTO mismatches), which this assertion catches.
+  it('falls back to snake_case fields when onchainSend camelCase aliases are absent', async () => {
     const { client, spy } = makeStubbedLspClient('onchainSend', {
       ln_invoice: BOLT11,
       rgb_invoice: 'rgb:snk',
@@ -422,14 +389,10 @@ describe('payRgbViaLsp', () => {
   })
 
   it('prefers camelCase over snake_case on a dual-keyed onchainSend response', async () => {
-    // Realistic post-normalization response carries BOTH keys. Pin the
-    // precedence in `issued.lnInvoice ?? issued.ln_invoice`: reordering to
-    // `ln_invoice ?? lnInvoice` would pay WRONG_LN instead of BOLT11 and
-    // emit the WRONG_* fields in the DTO. Differing values prove which arm
-    // is taken; the sendPayment arg pins the exact invoice handed onward.
+    // Normalized responses retain both key styles; camelCase is canonical.
     const { client, spy } = makeStubbedLspClient('onchainSend', {
-      ln_invoice: 'WRONG_LN',
-      rgb_invoice: 'WRONG_RGB',
+      ln_invoice: 'lnbc-from-snake-case',
+      rgb_invoice: 'rgb:from-snake-case',
       mapping_id: -1,
       lnInvoice: BOLT11,
       rgbInvoice: 'rgb:right',

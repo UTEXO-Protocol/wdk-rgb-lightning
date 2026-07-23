@@ -41,7 +41,7 @@ describe('WalletAccountRgbLightning._classifyRecipient', () => {
     expect(classify('bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4')).toBe('btc-address')
     expect(classify('tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx')).toBe('btc-address')
     expect(classify('1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa')).toBe('btc-address')
-    // 64 hex chars is NOT a pubkey (needs 66) -> treated as an address.
+    // A compressed pubkey requires 66 hexadecimal characters.
     expect(classify('a'.repeat(64))).toBe('btc-address')
   })
 

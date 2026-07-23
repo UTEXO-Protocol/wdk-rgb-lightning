@@ -43,7 +43,7 @@ describe('node seed derivation', () => {
     expect(wdkSeedToNodeSeedHex(seed)).toBe(NODE_SEED_V2)
   })
 
-  it('pins the exact legacy beta derivation for existing node identities', () => {
+  it('preserves the legacy beta derivation for existing node identities', () => {
     const seed = Uint8Array.from(Buffer.from(WDK_SEED_HEX, 'hex'))
     expect(legacyWdkSeedToNodeSeedHex(seed)).toBe(NODE_SEED_V1)
   })

@@ -89,7 +89,7 @@
  *   a batch of pre-allocated payment hashes to the LSP, which then
  *   accepts payments addressed to those hashes on the wallet's behalf
  *   while the wallet is offline. Argument is the LSP's node_id (hex).
- *   Returns the AsyncOrderNewResponse from upstream PR #51.
+ *   Returns the native AsyncOrderNewResponse unchanged.
  * @property {() => void} shutdown - Idempotently release the node handle and
  *   destroy the signer.
  */

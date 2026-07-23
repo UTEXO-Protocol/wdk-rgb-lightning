@@ -79,7 +79,7 @@ export class LspError extends Error {
 /** Default request timeout if the caller doesn't override. */
 const DEFAULT_TIMEOUT_MS = 15_000
 
-/** Max response body we'll buffer (1 MiB). Mirrors the LSP's own cap. */
+/** Maximum UTF-8 response body accepted from the LSP (1 MiB). */
 const MAX_RESPONSE_BYTES = 1 << 20
 
 /**
@@ -436,14 +436,7 @@ export class LspClient {
         throw new LspError(path, 0, '', cause)
       }
 
-      // Read at most MAX_RESPONSE_BYTES. WHATWG Response doesn't expose
-      // a hard byte cap, so we accept the body in full but reject
-      // anything suspiciously large. Avoids OOM on a misconfigured LSP
-      // that returns megabytes of HTML.
-      const text = await res.text()
-      if (text.length > MAX_RESPONSE_BYTES) {
-        throw new LspError(path, res.status, `response too large (${text.length} bytes)`)
-      }
+      const text = await readResponseText(res, path)
 
       if (!res.ok) {
         if (canRetry && RETRY_STATUSES.has(res.status) && attempt < this._maxRetries) {
@@ -487,6 +480,58 @@ export class LspClient {
 
 function wait (ms) { return new Promise((resolve) => setTimeout(resolve, ms)) }
 function backoffMs (attempt) { return RETRY_BASE_MS * Math.pow(2, attempt) }
+
+async function readResponseText (res, path) {
+  const body = res && res.body
+  if (!body || typeof body.getReader !== 'function') {
+    const text = await res.text()
+    assertResponseSize(path, res.status, new TextEncoder().encode(text).byteLength)
+    return text
+  }
+
+  const reader = body.getReader()
+  const chunks = []
+  let byteLength = 0
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      const chunk = value instanceof Uint8Array
+        ? value
+        : new Uint8Array(value.buffer ?? value, value.byteOffset ?? 0, value.byteLength)
+      byteLength += chunk.byteLength
+      if (byteLength > MAX_RESPONSE_BYTES) {
+        try {
+          await reader.cancel()
+        } catch {}
+        assertResponseSize(path, res.status, byteLength)
+      }
+      chunks.push(chunk)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  const bytes = new Uint8Array(byteLength)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(bytes)
+}
+
+function assertResponseSize (path, status, byteLength) {
+  if (byteLength > MAX_RESPONSE_BYTES) {
+    throw new LspError(
+      path,
+      status,
+      `response too large (${byteLength} bytes; maximum ${MAX_RESPONSE_BYTES})`
+    )
+  }
+}
 
 function isNonEmptyString (v) {
   return typeof v === 'string' && v.length > 0

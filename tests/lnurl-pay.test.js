@@ -130,9 +130,6 @@ describe('fetchDiscovery', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
     const [url, init] = fetch.mock.calls[0]
     expect(url).toBe('https://getalby.com/.well-known/lnurlp/alice')
-    // The default headers object is exactly { Accept: 'application/json' };
-    // since no caller headers are merged here, asserting the whole shape
-    // catches a dropped/renamed Accept key.
     expect(init.headers).toEqual({ Accept: 'application/json' })
     expect(init.signal === undefined || typeof init.signal === 'object').toBe(true)
   })
@@ -223,16 +220,10 @@ describe('fetchDiscovery', () => {
   })
 
   it('rejects minSendable=0 but accepts minSendable=1 (min <= 0 boundary)', async () => {
-    // Isolates the `min <= 0` sub-clause. With min=0, max=100000 every other
-    // clause (min==null, max==null, min>max) is false, so ONLY `min <= 0`
-    // fires the throw. Mutating `<=` to `<` would make `0 < 0` false and
-    // wrongly ACCEPT a zero floor — this asserts the rejection directly.
     const zeroFetch = jest.fn(async () => makeResponse({ body: discoveryDoc({ minSendable: 0 }) }))
     await expect(fetchDiscovery('a@b.com', { fetch: zeroFetch }))
       .rejects.toThrow(/invalid sendable range min=0 max=100000/)
 
-    // And the smallest positive floor (1) must pass the guard, proving the
-    // clause is exactly `<= 0` and not e.g. `<= 1`.
     const oneFetch = jest.fn(async () => makeResponse({ body: discoveryDoc({ minSendable: 1 }) }))
     await expect(fetchDiscovery('a@b.com', { fetch: oneFetch }))
       .resolves.toMatchObject({ minSendable: 1 })
@@ -355,9 +346,6 @@ describe('resolveAddressToInvoice', () => {
   })
 
   it('uses ? for the first param and & between params when the callback has no query', async () => {
-    // The base callback has NO query string, so appendQuery must start with '?'
-    // and join the comment with '&'. This pins the `?` vs `&` separator choice
-    // for the comment branch independently of the already-has-query test above.
     const fetch = twoStepFetch(discoveryDoc(), { pr: 'lnbc1...' })
     const out = await resolveAddressToInvoice('a@b.com', 5000, { fetch, comment: 'hi there' })
     expect(out.callbackUrl).toBe('https://b.com/lnurlp/cb?amount=5000&comment=hi+there')
@@ -365,8 +353,6 @@ describe('resolveAddressToInvoice', () => {
   })
 
   it('omits the comment param entirely when no comment is supplied', async () => {
-    // The `...(opts.comment ? { comment } : {})` branch: with no comment the
-    // callback URL carries amount only and NO comment key.
     const fetch = twoStepFetch(discoveryDoc(), { pr: 'lnbc1...' })
     const out = await resolveAddressToInvoice('a@b.com', 5000, { fetch })
     expect(out.callbackUrl).toBe('https://b.com/lnurlp/cb?amount=5000')
@@ -393,9 +379,6 @@ describe('resolveAddressToInvoice', () => {
   })
 
   it('accepts an amount exactly equal to minSendable (inclusive lower bound)', async () => {
-    // discoveryDoc() has minSendable=1000. Paying exactly 1000 must succeed:
-    // the guard is `amount < min` (strict). Mutating `<` to `<=` would reject
-    // this boundary and the second (callback) fetch would never happen.
     const fetch = twoStepFetch(discoveryDoc(), { pr: 'lnbc1...' })
     const out = await resolveAddressToInvoice('a@b.com', 1000, { fetch })
     expect(out.pr).toBe('lnbc1...')
@@ -404,9 +387,6 @@ describe('resolveAddressToInvoice', () => {
   })
 
   it('accepts an amount exactly equal to maxSendable (inclusive upper bound)', async () => {
-    // discoveryDoc() has maxSendable=100000. Paying exactly 100000 must
-    // succeed: the guard is `amount > max` (strict). Mutating `>` to `>=`
-    // would reject this boundary and skip the callback fetch.
     const fetch = twoStepFetch(discoveryDoc(), { pr: 'lnbc1...' })
     const out = await resolveAddressToInvoice('a@b.com', 100000, { fetch })
     expect(out.pr).toBe('lnbc1...')
@@ -415,7 +395,6 @@ describe('resolveAddressToInvoice', () => {
   })
 
   it('rejects an amount one below minSendable but accepts the boundary', async () => {
-    // Pins the strict-inequality edge: 999 (min-1) rejected, 1000 (min) ok.
     const below = twoStepFetch(discoveryDoc(), { pr: 'lnbc1...' })
     await expect(resolveAddressToInvoice('a@b.com', 999, { fetch: below }))
       .rejects.toThrow(/outside server range \[1000, 100000\]/)
@@ -423,7 +402,6 @@ describe('resolveAddressToInvoice', () => {
   })
 
   it('rejects an amount one above maxSendable but accepts the boundary', async () => {
-    // Pins the strict-inequality edge: 100001 (max+1) rejected.
     const above = twoStepFetch(discoveryDoc(), { pr: 'lnbc1...' })
     await expect(resolveAddressToInvoice('a@b.com', 100001, { fetch: above }))
       .rejects.toThrow(/outside server range \[1000, 100000\]/)
@@ -472,33 +450,23 @@ describe('resolveAddressToInvoice', () => {
   })
 
   it('truncates an over-long missing-pr body to 197 chars + an ellipsis', async () => {
-    // A callback response with NO pr whose JSON serialization is far longer
-    // than 200 chars, forcing truncate() to fire. The pad value contains no
-    // double quotes so the serialized JSON shape is predictable.
+    // The padding contains no quotes, keeping the serialized length stable.
     const longBody = { routes: [], note: 'x'.repeat(500) }
     const serialized = JSON.stringify(longBody)
     expect(serialized.length).toBeGreaterThan(200)
     const fetch = twoStepFetch(discoveryDoc(), longBody)
     const err = await resolveAddressToInvoice('a@b.com', 5000, { fetch }).catch((e) => e)
     expect(err).toBeInstanceOf(LnurlPayError)
-    // Exact contract: first 197 chars of the serialized body, then '…'.
     const expectedTruncation = serialized.slice(0, 197) + '…'
     expect(err.message).toBe(`LUD-06 callback missing 'pr': ${expectedTruncation}`)
-    // Kills slice(0, 150)+'!!!' and any other cap/marker mutation.
     expect(err.message).toContain('…')
-    expect(err.message).not.toContain('!!!')
     expect(err.message.endsWith('…')).toBe(true)
-    // The truncated body must include exactly 197 chars of payload after the
-    // fixed prefix, so a 150-char cap (47 fewer chars) would change the length.
     const payload = err.message.slice("LUD-06 callback missing 'pr': ".length)
-    expect(payload).toHaveLength(198) // 197 chars + the single ellipsis char
+    expect(payload).toHaveLength(198)
     expect(payload.slice(0, 197)).toBe(serialized.slice(0, 197))
   })
 
-  it('does NOT truncate a short missing-pr body', async () => {
-    // Guards the s.length > 200 boundary: a sub-200-char body passes through
-    // verbatim with no ellipsis, so flipping > to >= or changing the cap is
-    // observable here too.
+  it('does not truncate a short missing-pr body', async () => {
     const shortBody = { routes: [] }
     const serialized = JSON.stringify(shortBody)
     expect(serialized.length).toBeLessThanOrEqual(200)
@@ -524,9 +492,7 @@ describe('resolveAddressToInvoice', () => {
 })
 
 describe('timeout signal selection', () => {
-  // The happy paths above exercise the AbortSignal.timeout branch. Here we
-  // temporarily blank out AbortSignal.timeout to drive the AbortController
-  // fallback, and also blank out AbortController to hit the undefined path.
+  // Exercise runtime feature fallbacks unavailable in the current Node process.
   let savedTimeout
 
   beforeEach(() => {

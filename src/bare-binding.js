@@ -75,16 +75,13 @@ export class BareRgbLightningBinding {
       network: config.network,
       max_media_upload_size_mb: config.maxMediaUploadSizeMb ?? 5,
       enable_virtual_channels_v0: config.enableVirtualChannelsV0 ?? false,
-      // WDK reads must not allocate a fresh address on every call. Pin the
-      // current address; full accounts rotate it explicitly.
+      // WDK reads reuse the current address; full accounts rotate it
+      // explicitly.
       reuse_addresses: true
     }
-    // Virtual-channels-v0 trust list. When the LSP opens (or the device
-    // opens against the LSP) a `trusted_no_broadcast` virtual channel,
-    // the device must list the LSP's node_id here or RLN's `allows_peer`
-    // rejects the channel. Production APay requires this — see Yurii's
-    // Signet LSP setup: every mobile client sets enableVirtualChannelsV0
-    // + virtualPeerPubkeys=[LSP node_id]. Forwarded only when non-empty.
+    // Trusted no-broadcast channels require virtual-channel support and an
+    // explicit trust entry for the peer's node ID. Forward the trust list
+    // only when configured.
     if (Array.isArray(config.virtualPeerPubkeys) && config.virtualPeerPubkeys.length > 0) {
       this._initRequest.virtual_peer_pubkeys = config.virtualPeerPubkeys
     }

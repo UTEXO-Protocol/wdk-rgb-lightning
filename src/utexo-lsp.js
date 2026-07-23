@@ -521,7 +521,7 @@ export class UtexoLsp {
   }
 
   _sleep (ms, signal) {
-    // NB: do NOT unref() — this is a deliberate poll-interval wait and
+    // Do not unref this timer: it is a deliberate poll-interval wait and
     // must keep the event loop alive until it resolves or aborts.
     return new Promise((resolve, reject) => {
       const t = setTimeout(resolve, ms)
