@@ -1,6 +1,12 @@
 import type WalletManager from '@tetherto/wdk-wallet'
 import type { IWalletAccount, IWalletAccountReadOnly } from '@tetherto/wdk-wallet'
 
+import {
+  BareRgbLightningBinding,
+  LnurlPayError,
+  NodeRgbLightningBinding
+} from '../index.js'
+
 import type WalletManagerRgbLightning from '../index.js'
 import type {
   IRgbLightningBinding,
@@ -35,6 +41,15 @@ const payAddressOptions: PayAddressOptions = {
   allowCrossHostCallback: true
 }
 const minimumLiquidity: number = liquidityError.minMsat
+const nodeHealth: string = NodeRgbLightningBinding.healthcheck()
+const bareHealth: string = BareRgbLightningBinding.healthcheck()
+const lnurlError = new LnurlPayError('request failed', {
+  status: 502,
+  body: 'bad gateway',
+  cause: new Error('connection reset')
+})
+const lnurlStatus: number | undefined = lnurlError.status
+const lnurlBody: string | undefined = lnurlError.body
 
 binding.ensureNode()
 // @ts-expect-error IRgbLightningBinding exposes ensureNode(), not a node property.
@@ -43,3 +58,7 @@ binding.node
 void lnurlOptions
 void payAddressOptions
 void minimumLiquidity
+void nodeHealth
+void bareHealth
+void lnurlStatus
+void lnurlBody

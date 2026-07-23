@@ -22,7 +22,7 @@ const NativeExternalSigner = {
   })
 }
 
-const uniffiHealthcheck = () => true
+const uniffiHealthcheck = () => 'unsupported-in-node-binding'
 const uniffiIsInitialized = () => false
 const sdkInitialize = () => {}
 const sdkShutdown = () => {}

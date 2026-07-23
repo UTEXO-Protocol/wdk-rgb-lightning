@@ -266,8 +266,12 @@ describe('BareRgbLightningBinding', () => {
     expect(node.vssClearFence).toHaveBeenCalledWith({ password: 'pw' })
     expect(node.apayNew).toHaveBeenCalledWith('02host')
 
-    node.vssBackup.mockReturnValueOnce({ version: 'unknown' }).mockReturnValueOnce(null)
+    node.vssBackup
+      .mockReturnValueOnce({ version: 'unknown' })
+      .mockReturnValueOnce('unexpected')
+      .mockReturnValueOnce(null)
     expect(binding.vssBackup()).toEqual({ version: 'unknown' })
+    expect(binding.vssBackup()).toBe('unexpected')
     expect(binding.vssBackup()).toBeNull()
     expect(binding.vssStatus().lastBackupVersion).toBe(7)
     expect(makeBinding().vssStatus()).toEqual({
@@ -320,7 +324,7 @@ describe('BareRgbLightningBinding', () => {
   })
 
   it('exposes the native module lifecycle passthroughs', () => {
-    expect(BareRgbLightningBinding.healthcheck()).toBe(true)
+    expect(BareRgbLightningBinding.healthcheck()).toBe('rgb_lightning_node_uniffi_ready')
     expect(BareRgbLightningBinding.isInitialized()).toBe(false)
     expect(() => BareRgbLightningBinding.initialize({})).not.toThrow()
     expect(() => BareRgbLightningBinding.shutdownGlobal()).not.toThrow()

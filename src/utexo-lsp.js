@@ -21,10 +21,20 @@
 import { LspClient } from './lsp-client.js'
 import { parseLightningAddress, resolveAddressToInvoice } from './lnurl-pay.js'
 
+/** @typedef {import('./lnurl-pay.js').LnurlPayError} LnurlPayError */
+/** @typedef {import('./lsp-client.js').LspError} LspError */
+
 // ── Errors ───────────────────────────────────────────────────────────────────
 
 /** No usable RGB channel for the asset materialised before `timeoutMs`. */
 export class LspChannelTimeoutError extends Error {
+  /**
+   * Create an error for an RGB channel-readiness timeout.
+   *
+   * @param {string} assetId - RGB asset ID that never obtained a usable
+   *   channel.
+   * @param {number} elapsedMs - Time spent waiting, in milliseconds.
+   */
   constructor (assetId, elapsedMs) {
     super(`No usable RGB channel for ${assetId} after ${Math.round(elapsedMs / 1000)}s`)
     this.name = 'LspChannelTimeoutError'
@@ -35,6 +45,13 @@ export class LspChannelTimeoutError extends Error {
 
 /** Outbound liquidity on the LSP channel stayed below the requested floor. */
 export class LspLiquidityTimeoutError extends Error {
+  /**
+   * Create an error for an outbound-liquidity timeout.
+   *
+   * @param {number} minMsat - Required outbound liquidity in millisatoshis.
+   * @param {number} elapsedMs - Time spent waiting, in milliseconds.
+   * @param {string} peerPubkey - LSP peer public key.
+   */
   constructor (minMsat, elapsedMs, peerPubkey) {
     super(`Outbound liquidity for ${peerPubkey} stayed below ${minMsat} msat after ${Math.round(elapsedMs / 1000)}s`)
     this.name = 'LspLiquidityTimeoutError'
@@ -46,6 +63,12 @@ export class LspLiquidityTimeoutError extends Error {
 
 /** Settlement reached a terminal non-success state (Failed / Expired). */
 export class LspSettlementError extends Error {
+  /**
+   * Create an error for terminal non-success settlement.
+   *
+   * @param {string} step - Settlement step that failed.
+   * @param {string} status - Terminal non-success settlement status.
+   */
   constructor (step, status) {
     super(`Settlement ended with status "${status}" at step ${step}`)
     this.name = 'LspSettlementError'
@@ -56,7 +79,12 @@ export class LspSettlementError extends Error {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Build the `pubkey@host:port` string `connectPeer` accepts. */
+/**
+ * Build the `pubkey@host:port` string accepted by `connectPeer`.
+ *
+ * @param {object} peer - LSP peer connection details.
+ * @returns {string} - Canonical Lightning peer URI.
+ */
 export function peerUri (peer) {
   return `${peer.peerPubkey}@${peer.peerHost}:${peer.peerPort}`
 }
@@ -65,8 +93,11 @@ export function peerUri (peer) {
  * Canonicalise the many status shapes RLN / the LSP emit into the four
  * receive states. Accepts a bare string (`'Succeeded'`) or an object
  * (`{ status }` from `getInvoiceStatus`).
- * @param {string|{status?:string}|null|undefined} raw
- * @returns {'Pending'|'Succeeded'|'Failed'|'Expired'}
+ *
+ * @param {string|{status?:string}|null|undefined} raw - Native or LSP status
+ *   value.
+ * @returns {'Pending'|'Succeeded'|'Failed'|'Expired'} - Canonical receive
+ *   status.
  */
 export function normalizeReceiveStatus (raw) {
   const s = (typeof raw === 'object' && raw !== null ? raw.status : raw) ?? ''
@@ -85,12 +116,17 @@ const DEFAULT_POLL_INTERVAL_MS = 2_000
 
 export class UtexoLsp {
   /**
-   * @param {object} account  A WalletAccountRgbLightning (or compatible)
+   * Create composed LSP flows for one wallet account and one LSP peer.
+   *
+   * @param {object} account - A `WalletAccountRgbLightning` or compatible
    *   exposing connectPeer, sync, listChannels, createLightningInvoice,
    *   getInvoiceStatus, sendPayment, getNodeInfo, apayNew, listPayments,
    *   claimHodlInvoice.
-   * @param {object} peer      LspPeer: `{ baseUrl, peerPubkey, peerHost,
+   * @param {object} peer - LSP peer details: `{ baseUrl, peerPubkey, peerHost,
    *   peerPort, bearerToken?, timeoutMs?, allowHttp? }`.
+   * @throws {TypeError} - If the account or peer base URL is missing or
+   *   malformed.
+   * @throws {Error} - If the LSP client rejects an insecure HTTP origin.
    */
   constructor (account, peer) {
     if (account == null) throw new TypeError('UtexoLsp: account required')
@@ -113,6 +149,9 @@ export class UtexoLsp {
   /**
    * Connect to the LSP's Lightning node. Idempotent — the account's
    * `connectPeer` already swallows RLN's `Conflict` on a known peer.
+   *
+   * @returns {Promise<object>} - Account peer-connection result.
+   * @throws {Error} - If the account cannot connect to the LSP peer.
    */
   async connect () {
     return this.account.connectPeer(peerUri(this.peer))
@@ -122,10 +161,15 @@ export class UtexoLsp {
 
   /**
    * Poll `listChannels` until a usable RGB channel for `assetId` exists.
-   * @param {string} assetId
-   * @param {object} [opts]  WaitOptions (timeoutMs, pollIntervalMs, signal, onProgress, onEachPoll).
-   * @returns {Promise<object>}  ChannelReadyInfo.
-   * @throws {LspChannelTimeoutError}
+   *
+   * @param {string} assetId - RGB asset ID to wait for.
+   * @param {object} [opts] - Wait options including timeout, poll interval,
+   *   abort signal, progress callback, and per-poll hook.
+   * @returns {Promise<object>} - Channel readiness details.
+   * @throws {LspChannelTimeoutError} - If no usable channel appears before
+   *   the deadline.
+   * @throws {Error} - If the operation is aborted or account synchronization
+   *   fails.
    */
   async waitForChannel (assetId, opts = {}) {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_CHANNEL_TIMEOUT_MS
@@ -153,12 +197,18 @@ export class UtexoLsp {
    * the on-chain sender; the LSP pays `lnInvoice` once the RGB transfer
    * settles.
    *
-   * @param {object} opts
-   * @param {string} opts.assetId
-   * @param {number} [opts.amountSats]      LN amount (sats) for the BOLT11. Omit for amountless.
-   * @param {number} [opts.amountRgb]       RGB units bound to the invoice.
-   * @param {number} [opts.expirySeconds=3600]
-   * @returns {Promise<{ lnInvoice:string, rgbInvoice:string, mappingId:string }>}
+   * @param {object} opts - Receive request.
+   * @param {string} opts.assetId - RGB asset ID to receive.
+   * @param {number} [opts.amountSats] - Lightning amount in satoshis. Omit for
+   *   an amountless BOLT11 invoice.
+   * @param {number} [opts.amountRgb] - RGB units bound to the invoice.
+   * @param {number} [opts.expirySeconds] - Invoice lifetime in seconds.
+   *   Defaults to `3600`.
+   * @returns {Promise<{ lnInvoice:string, rgbInvoice:string, mappingId:string }>} - Paired
+   *   invoices and LSP bridge mapping ID.
+   * @throws {TypeError} - If `assetId` is missing or malformed.
+   * @throws {LspError} - If the LSP bridge request fails.
+   * @throws {Error} - If local invoice creation fails or returns no invoice.
    */
   async receiveAsset (opts = {}) {
     if (typeof opts.assetId !== 'string' || opts.assetId.length === 0) {
@@ -197,10 +247,14 @@ export class UtexoLsp {
 
   /**
    * Poll `getInvoiceStatus(lnInvoice)` until terminal.
-   * @param {string} lnInvoice
-   * @param {object} [opts]  WaitOptions.
-   * @returns {Promise<'settled'|'timed_out'>}
-   * @throws {LspSettlementError} on Failed / Expired.
+   *
+   * @param {string} lnInvoice - BOLT11 invoice whose settlement is monitored.
+   * @param {object} [opts] - Wait options.
+   * @returns {Promise<'settled'|'timed_out'>} - Settlement outcome.
+   * @throws {LspSettlementError} - If settlement reaches `Failed` or
+   *   `Expired`.
+   * @throws {Error} - If the operation is aborted or account synchronization
+   *   fails.
    */
   async awaitReceiveSettlement (lnInvoice, opts = {}) {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_SETTLEMENT_TIMEOUT_MS
@@ -227,9 +281,14 @@ export class UtexoLsp {
 
   /**
    * Poll until outbound balance on the LSP channel ≥ `minMsat`.
-   * @param {number} minMsat
-   * @param {object} [opts]  WaitOptions.
-   * @throws {LspLiquidityTimeoutError}
+   *
+   * @param {number} minMsat - Required outbound liquidity in millisatoshis.
+   * @param {object} [opts] - Wait options.
+   * @returns {Promise<void>} - Resolves when sufficient liquidity is visible.
+   * @throws {LspLiquidityTimeoutError} - If liquidity stays below the floor
+   *   until the deadline.
+   * @throws {Error} - If the operation is aborted or account synchronization
+   *   fails.
    */
   async waitForOutboundLiquidity (minMsat, opts = {}) {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_CHANNEL_TIMEOUT_MS
@@ -259,10 +318,15 @@ export class UtexoLsp {
    * to the LSP, then pays the LN invoice the LSP returns. The LSP runs
    * `sendrgb` to the recipient once the LN payment settles.
    *
-   * @param {object} opts
-   * @param {string} opts.rgbInvoice
-   * @param {object} [opts.ln]  LN params (`{ amtMsat, expirySec, assetId?, assetAmount? }`).
-   * @returns {Promise<{ lnInvoice:string, rgbInvoice:string, mappingId:string, sendResult:any }>}
+   * @param {object} opts - Send request.
+   * @param {string} opts.rgbInvoice - Recipient's on-chain RGB invoice.
+   * @param {object} [opts.ln] - Lightning parameters including `amtMsat`,
+   *   `expirySec`, `assetId`, and `assetAmount`.
+   * @returns {Promise<{ lnInvoice:string, rgbInvoice:string, mappingId:string, sendResult:any }>} - Paired
+   *   invoices, mapping ID, and account payment result.
+   * @throws {TypeError} - If `rgbInvoice` or Lightning parameters are invalid.
+   * @throws {LspError} - If the LSP bridge request fails.
+   * @throws {Error} - If the account payment fails.
    */
   async sendAsset (opts = {}) {
     if (typeof opts.rgbInvoice !== 'string' || opts.rgbInvoice.length === 0) {
@@ -287,13 +351,18 @@ export class UtexoLsp {
    * through the shared resolver so a same-named LSP user cannot be paid
    * by mistake.
    *
-   * @param {object} opts
-   * @param {string} opts.address          `user@host`.
-   * @param {bigint|number|string} opts.amtMsat
-   * @param {object} [opts.asset]          `{ assetId, assetAmount }`.
-   * @param {boolean} [opts.allowCrossHostCallback=false]
-   *   Permit a delegated LNURL callback on a different host.
-   * @returns {Promise<{ invoice:string, sendResult:any }>}
+   * @param {object} opts - Lightning Address payment request.
+   * @param {string} opts.address - Lightning Address in `user@host` form.
+   * @param {bigint|number|string} opts.amtMsat - Payment amount in
+   *   millisatoshis.
+   * @param {object} [opts.asset] - Optional RGB asset ID and amount.
+   * @param {boolean} [opts.allowCrossHostCallback] - Permit delegated LNURL
+   *   callbacks on another host. Defaults to `false`.
+   * @returns {Promise<{ invoice:string, sendResult:any }>} - Resolved invoice
+   *   and account payment result.
+   * @throws {TypeError} - If the Lightning Address or uint64 amount is invalid.
+   * @throws {LnurlPayError} - If standard LNURL resolution fails.
+   * @throws {Error} - If no invoice is returned or the account payment fails.
    */
   async payAddress (opts = {}) {
     const address = opts.address
@@ -341,7 +410,11 @@ export class UtexoLsp {
    * the auto-assigned Lightning Address for this wallet's pubkey. Call
    * once after first unlock to enable offline receive.
    *
-   * @returns {Promise<{ username:string, domain:string, address:string }>}
+   * @returns {Promise<{ username:string, domain:string, address:string }>} - Auto-assigned
+   *   Lightning Address components and full address.
+   * @throws {LspError} - If LSP information or address lookup fails.
+   * @throws {Error} - If the wallet is locked, the LSP response is malformed,
+   *   or APay registration fails.
    */
   async enableLightningAddress () {
     const nodeInfo = await this.account.getNodeInfo()
@@ -366,7 +439,8 @@ export class UtexoLsp {
    * `claimHodlInvoice`. Use after unlock to settle invoices that arrived
    * while offline.
    *
-   * @returns {Promise<Array<{ paymentHash:string, claimed:boolean, error?:string }>>}
+   * @returns {Promise<Array<{ paymentHash:string, claimed:boolean, error?:string }>>} - Per-payment
+   *   claim outcomes.
    */
   async claimPendingPayments () {
     const payments = await this._listPayments()
@@ -447,7 +521,7 @@ export class UtexoLsp {
   }
 
   _sleep (ms, signal) {
-    // NB: do NOT unref() — this is a deliberate poll-interval wait and
+    // Do not unref this timer: it is a deliberate poll-interval wait and
     // must keep the event loop alive until it resolves or aborts.
     return new Promise((resolve, reject) => {
       const t = setTimeout(resolve, ms)

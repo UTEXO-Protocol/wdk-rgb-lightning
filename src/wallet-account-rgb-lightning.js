@@ -68,7 +68,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   // ==========================================================================
 
   /**
-   * ✅ Bring the node online with an attached external signer. Accepts
+   * Bring the node online with an attached external signer. Accepts
    * `JsonSdkExternalUnlockRequest` (bitcoind RPC creds, indexer URL,
    * proxy, announce — no `password`). The signer was attached by
    * the manager at account-construction time.
@@ -90,7 +90,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     return { ok: true }
   }
 
-  /** ✅ Idempotent shutdown. */
+  /** Idempotent shutdown. */
   async shutdown () {
     this._binding.shutdown()
     return { ok: true }
@@ -101,7 +101,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * node died holding it. Authenticates with the wallet password.
    * Throws if VSS isn't configured (no `vssUrl` at construction).
    *
-   * Recovery flow only — DO NOT call while another live node may still
+   * Recovery flow only. Do not call while another live node may still
    * hold the fence. Doing so corrupts the shared VSS state. See the VSS
    * docs section "Single-writer ownership" for the contract.
    *
@@ -171,8 +171,8 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * while this wallet is offline. The LSP later forwards the funds when
    * the wallet comes back online, redeeming the pre-allocated hash.
    *
-   * Backed by upstream rgb-lightning-node PR #51 (`apay_new` UniFFI
-   * method). Requires bare ≥ v0.1.0-beta.11 / nodejs ≥ v0.1.0-beta.7.
+   * Delegates to the native binding's `apayNew` method. Compatible native
+   * binding versions are enforced by this package's peer dependencies.
    *
    * @param {string} hostNodeId  - LSP's node_id (hex, 33-byte compressed secp256k1).
    * @returns {Promise<object>}  AsyncOrderNewResponse:
@@ -189,20 +189,16 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   }
 
   /**
-   * One-shot LSP bootstrap. Renat's dev plan (May 27, items 3 + 4)
-   * called for `/connectpeer` and `apay/new` to fire automatically as
-   * part of SDK init. Rather than coupling them to `unlock()` — where
-   * an LSP-handshake hiccup would block the rest of the wallet from
-   * coming up — we expose them as one explicit opt-in method the
-   * consumer calls after `unlock()` returns.
+   * One-shot LSP bootstrap for consumers that want to connect the LSP peer
+   * and optionally register for APay after unlock. Keeping this separate
+   * from `unlock()` prevents a transient LSP failure from blocking wallet
+   * startup.
    *
    * Flow:
    *   1. `connectPeer(peerPubkeyAndAddr)` to dial the LSP's RLN node.
    *   2. Poll `listPeers` until the peer shows up (max `waitForPeerMs`).
-   *      Necessary because RLN's `connectPeer` returns once the TCP
-   *      handshake completes, but the noise handshake + the LDK peer
-   *      table update lag ~5–30 s on real networks (this is the same
-   *      race t22 in the E2E suite documents).
+   *      `connectPeer` can return before the encrypted handshake and LDK
+   *      peer-table update are visible to `listPeers`.
    *   3. Optionally `apayNew(hostNodeId)` to register as an async-pay
    *      recipient with the LSP. Skipped if `hostNodeId` is undefined.
    *
@@ -253,11 +249,8 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     // apayNew before the peer is "ready" reliably triggers
     // Rln(Conflict): /apay/new timed out waiting for host response.
     //
-    // Defensive shape handling: listPeers historically returned a
-    // raw Vec<Peer> JSON array, but post-dev-merge the bare/nodejs
-    // bindings wrap it as `{ peers: [...] }` to match RLN's HTTP
-    // response shape (t22 in the E2E suite reads `.peers`). Accept
-    // either.
+    // Compatible native bindings may return either a raw peer array or an
+    // object with a `peers` array.
     const deadline = Date.now() + Math.max(0, Number(waitForPeerMs) || 0)
     const pollMs = Math.max(100, Number(pollIntervalMs) || 1000)
     let peerVisible = false
@@ -358,7 +351,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   }
 
   // ==========================================================================
-  // Channels — ✅ all wired
+  // Channels
   // ==========================================================================
 
   /**
@@ -386,7 +379,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   }
 
   // ==========================================================================
-  // Peers — ✅ all wired
+  // Peers
   // ==========================================================================
 
   /** @param {string} peerPubkeyAndAddr - "<pubkey>@<host>:<port>" */
@@ -415,7 +408,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   }
 
   // ==========================================================================
-  // BOLT11 invoices — ✅ wired
+  // BOLT11 invoices
   // ==========================================================================
 
   /**
@@ -518,7 +511,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     }
   }
 
-  // Hodl invoices — 🚧 (request shape is upstream-defined; passthrough kept simple)
+  // HODL invoices
   /** @param {Object} request */
   async cancelHodlInvoice (request) {
     this._node.cancelHodlInvoice(request)
@@ -529,7 +522,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   async claimHodlInvoice (request) { return this._node.claimHodlInvoice(request) }
 
   // ==========================================================================
-  // Payments — ✅ wired
+  // Payments
   // ==========================================================================
 
   /** @param {Object} request - JsonSendPaymentRequest (invoice, amt_msat?, asset_id?, ...) */
@@ -538,14 +531,11 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   /** @param {Object} request - JsonKeysendRequest (dest_pubkey, amt_msat, asset_id?, ...) */
   async keysend (request) { return this._node.keysend(request) }
 
-  // Atomic-swap surface (`makerInit` / `makerExecute` / `taker` /
-  // `listSwaps` / `getSwap`) is intentionally NOT exposed at the WDK
-  // layer — Renat scoped it out for this module (2026-04-30). The
-  // bare addon still passes through to the C-FFI for any other
-  // consumer that wants it.
+  // Atomic swaps are outside this module's WDK account contract. Lower-level
+  // consumers can access that surface through the native binding.
 
   // ==========================================================================
-  // RGB asset issuance + transfers — ✅ wired
+  // RGB asset issuance and transfers
   // ==========================================================================
 
   /** @param {Object} request */
@@ -609,7 +599,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   async postAssetMedia (request) { return this._node.postAssetMedia(request) }
 
   // ==========================================================================
-  // BTC ops — ✅ wired
+  // Bitcoin operations
   // ==========================================================================
 
   /** Raw RLN send-btc escape hatch for callers that already own the native request shape. */
@@ -666,7 +656,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   }
 
   // ==========================================================================
-  // Onion messages / signing / diagnostics — ✅ wired
+  // Onion messages, signing, and diagnostics
   // ==========================================================================
 
   /** @param {Object} request - JsonSendOnionMessageRequest */
@@ -764,7 +754,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       case 'rgb-invoice': {
         // RGB send. The recipient IS the rgb invoice, which encodes the
         // recipient_id, the asset, and — crucially — the receiver's
-        // consignment transport endpoints. RLN's `sendRgb` does NOT
+        // consignment transport endpoints. RLN's `sendRgb` does not
         // re-derive any of these: it requires a nested `recipient_groups`
         // request with explicit `transport_endpoints` (the flat
         // `{ recipient_id, amount, asset_id }` shape this used to build is

@@ -27,8 +27,11 @@
  */
 export class RgbLightningError extends Error {
   /**
-   * @param {string} message
-   * @param {{ code?: string, cause?: unknown }} [opts]
+   * Create an error for an RLN-backed account operation.
+   *
+   * @param {string} message - Human-readable failure description.
+   * @param {{ code?: string, cause?: unknown }} [opts] - Optional stable error
+   *   code and originating failure.
    */
   constructor (message, opts = {}) {
     super(message)
@@ -132,10 +135,11 @@ export class NotImplementedError extends RgbLightningError {
  * unchanged, so wrapping is idempotent across nested call sites.
  *
  * @template {RgbLightningError} T
- * @param {unknown} err              The caught value.
- * @param {new (msg: string, opts?: object) => T} ErrorClass  Target class.
- * @param {{ code?: string }} [opts]
- * @returns {T}
+ * @param {unknown} err - The caught value.
+ * @param {new (msg: string, opts?: object) => T} ErrorClass - Target error
+ *   class.
+ * @param {{ code?: string }} [opts] - Optional stable error-code override.
+ * @returns {T} - The original target error or a newly wrapped instance.
  */
 export function wrapError (err, ErrorClass, opts = {}) {
   if (err instanceof ErrorClass) return err
