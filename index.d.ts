@@ -290,39 +290,123 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
 // ───────────────────────────────────────────────────────────────────
 
 export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
+  /**
+   * Creates a read-only RGB Lightning account backed by a query-only adapter.
+   *
+   * @param reader - The adapter that supplies the account's read operations.
+   * @throws {TypeError} If the adapter is missing or omits a required WDK read method.
+   */
   protected constructor(reader: object)
+
+  /** Returns the account's public signer bootstrap metadata. */
   getBootstrap(): Promise<object>
+
+  /** Returns the local VSS configuration and backup status without contacting the server. */
   vssStatus(): Promise<VssStatus>
+
+  /** Returns identity and runtime information for the Lightning node. */
   getNodeInfo(): Promise<object>
+
+  /** Returns the node's current Bitcoin network and chain information. */
   getNetworkInfo(): Promise<object>
+
+  /**
+   * Returns the account's stable current Bitcoin receive address.
+   *
+   * @throws {AccountLockedError} If the RGB Lightning node is locked.
+   */
   getAddress(): Promise<string>
+
+  /** Returns the current address or a non-throwing locked state. */
   getAddressState(): Promise<{ status: 'ready'; address: string } | { status: 'locked'; address: null }>
+
+  /** Returns all Lightning channels known to the node. */
   listChannels(): Promise<object>
+
+  /** Resolves a temporary channel ID to its permanent channel ID. */
   getChannelId(temporaryChannelIdHex: string): Promise<object>
+
+  /** Returns all Lightning peers known to the node. */
   listPeers(): Promise<object>
+
+  /** Decodes a BOLT11 Lightning invoice without paying it. */
   decodeInvoice(invoice: string): Promise<object>
+
+  /** Returns the node's current status for a Lightning invoice. */
   getInvoiceStatus(invoice: string): Promise<object>
+
+  /** Returns the node's Lightning payment history. */
   listPayments(): Promise<object>
+
+  /** Returns one Lightning payment by hash and payment type. */
   getPayment(paymentHashHex: string, paymentType: RgbPaymentType): Promise<object>
+
+  /** Returns RGB assets, optionally filtered by asset schema. */
   listAssets(filterAssetSchemas?: string[]): Promise<object>
+
+  /** Returns the settled and spendable balances for an RGB asset. */
   getAssetBalance(assetId: string): Promise<object>
+
+  /** Returns metadata for an RGB asset. */
   getAssetMetadata(assetId: string): Promise<object>
+
+  /**
+   * Returns transfers associated with one RGB asset.
+   *
+   * @throws {TypeError} If the asset ID is empty.
+   */
   listTransfers(assetId: string): Promise<object>
+
+  /** Returns RGB transfers associated with an on-chain transaction ID. */
   listTransfersByTxid(txid: string): Promise<object>
+
+  /** Decodes an RGB invoice without creating a transfer. */
   decodeRgbInvoice(invoice: string): Promise<object>
+
+  /** Returns RGB asset media identified by its content digest. */
   getAssetMedia(digest: string): Promise<object>
+
+  /** Returns the spendable vanilla Bitcoin balance in satoshis. */
   getBalance(skipSync?: boolean): Promise<bigint>
+
+  /** Returns the complete native Bitcoin balance breakdown. */
   getBalanceDetails(skipSync?: boolean): Promise<object>
+
+  /** Returns the spendable balance for an RGB asset in its base unit. */
   getTokenBalance(assetId: string): Promise<bigint>
+
+  /** Returns the account's on-chain Bitcoin transaction history. */
   getTransactions(skipSync?: boolean): Promise<object>
+
+  /** Returns on-chain Bitcoin transactions matching a transaction ID. */
   getTransactionsByTxid(txid: string, skipSync?: boolean): Promise<object>
+
+  /** Returns the account's unspent Bitcoin outputs. */
   listUnspents(skipSync?: boolean): Promise<object>
+
+  /** Estimates the Bitcoin fee rate for a confirmation target. */
   estimateFee(blocks: number): Promise<object>
+
+  /**
+   * Verifies a Lightning message signature for this account.
+   *
+   * @throws {AccountLockedError} If the RGB Lightning node is locked.
+   */
   verify(message: string, signature: string): Promise<boolean>
+
+  /** Checks whether an indexer URL is reachable and compatible with the node. */
   checkIndexerUrl(indexerUrl: string): Promise<object>
+
+  /** Checks whether an RGB proxy endpoint is reachable. */
   checkProxyEndpoint(proxyEndpoint: string): Promise<object>
+
+  /** Quotes the fee for a generic Lightning, Bitcoin, or RGB transfer. */
   quoteTransfer(options: TransferOptions): Promise<QuoteResult>
+
+  /** Quotes an approximate fee for a standard on-chain Bitcoin transaction. */
   quoteSendTransaction(tx: Transaction): Promise<QuoteResult>
+
+  /** Returns a terminal Bitcoin, RGB, or Lightning receipt, or null if pending or unknown. */
   getTransactionReceipt(hash: string): Promise<unknown | null>
 }
 

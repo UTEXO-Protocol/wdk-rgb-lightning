@@ -124,7 +124,14 @@ export function createReadOnlyRgbLightningAdapter (binding) {
  * full account or its mutating binding surface.
  */
 export default class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
-  /** @param {object} reader */
+  /**
+   * Creates a read-only RGB Lightning account backed by a query-only adapter.
+   *
+   * @param {object} reader - The adapter that supplies the account's read
+   *   operations.
+   * @throws {TypeError} If the adapter is missing or does not implement every
+   *   required WDK read method.
+   */
   constructor (reader) {
     super()
 
@@ -137,21 +144,60 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
       }
     }
 
-    /** @protected */
+    /**
+     * The query-only adapter used by this account.
+     *
+     * @protected
+     * @type {object}
+     */
     this._reader = reader
   }
 
+  /**
+   * Returns the account's public signer bootstrap metadata.
+   *
+   * @returns {Promise<object>} The native bootstrap payload, including the
+   *   node ID, account xpubs, and master fingerprint.
+   */
   async getBootstrap () { return this._reader.bootstrap() }
 
+  /**
+   * Returns the local VSS configuration and backup status.
+   *
+   * This query does not contact the VSS server.
+   *
+   * @returns {Promise<{
+   *   configured: boolean,
+   *   url: string | null,
+   *   allowHttp: boolean,
+   *   lastBackupVersion: number | null
+   * }>} The local VSS status.
+   */
   async vssStatus () { return this._reader.vssStatus() }
 
+  /**
+   * Returns identity and runtime information for the Lightning node.
+   *
+   * @returns {Promise<object>} The native node information response.
+   */
   async getNodeInfo () { return this._reader.nodeInfo() }
 
+  /**
+   * Returns the node's current Bitcoin network and chain information.
+   *
+   * @returns {Promise<object>} The native network information response.
+   */
   async getNetworkInfo () { return this._reader.networkInfo() }
 
   /**
-   * Returns the stable current receive address. Address rotation is an
-   * explicit full-account operation and is intentionally absent here.
+   * Returns the account's stable current Bitcoin receive address.
+   *
+   * Address rotation is an explicit full-account operation and is
+   * intentionally absent from the read-only account.
+   *
+   * @returns {Promise<string>} The current receive address.
+   * @throws {AccountLockedError} If the RGB Lightning node is locked.
+   * @throws {Error} If the node returns an invalid address.
    */
   async getAddress () {
     let result
@@ -171,6 +217,16 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
     return address
   }
 
+  /**
+   * Returns the current address or a non-throwing locked state.
+   *
+   * Errors unrelated to the account's lock state are propagated.
+   *
+   * @returns {Promise<
+   *   {status: 'ready', address: string} |
+   *   {status: 'locked', address: null}
+   * >} The current address state.
+   */
   async getAddressState () {
     try {
       return { status: 'ready', address: await this.getAddress() }
@@ -180,32 +236,99 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
     }
   }
 
+  /**
+   * Returns all Lightning channels known to the node.
+   *
+   * @returns {Promise<object>} The native channel-list response.
+   */
   async listChannels () { return this._reader.listChannels() }
 
+  /**
+   * Resolves a temporary channel ID to its permanent channel ID.
+   *
+   * @param {string} temporaryChannelIdHex - The temporary channel ID in
+   *   hexadecimal form.
+   * @returns {Promise<object>} The native channel ID lookup response.
+   */
   async getChannelId (temporaryChannelIdHex) {
     return this._reader.getChannelId(temporaryChannelIdHex)
   }
 
+  /**
+   * Returns all Lightning peers known to the node.
+   *
+   * @returns {Promise<object>} The native peer-list response.
+   */
   async listPeers () { return this._reader.listPeers() }
 
+  /**
+   * Decodes a BOLT11 Lightning invoice without paying it.
+   *
+   * @param {string} invoice - The BOLT11 invoice to decode.
+   * @returns {Promise<object>} The decoded invoice response.
+   */
   async decodeInvoice (invoice) { return this._reader.decodeInvoice(invoice) }
 
+  /**
+   * Returns the node's current status for a Lightning invoice.
+   *
+   * @param {string} invoice - The BOLT11 invoice to inspect.
+   * @returns {Promise<object>} The native invoice status response.
+   */
   async getInvoiceStatus (invoice) { return this._reader.invoiceStatus(invoice) }
 
+  /**
+   * Returns the node's Lightning payment history.
+   *
+   * @returns {Promise<object>} The native payment-list response.
+   */
   async listPayments () { return this._reader.listPayments() }
 
+  /**
+   * Returns one Lightning payment by hash and payment type.
+   *
+   * @param {string} paymentHashHex - The payment hash in hexadecimal form.
+   * @param {'Outbound' | 'InboundAutoClaim' | 'InboundHodl'} paymentType - The
+   *   native payment type.
+   * @returns {Promise<object>} The native payment response.
+   */
   async getPayment (paymentHashHex, paymentType) {
     return this._reader.getPayment(paymentHashHex, paymentType)
   }
 
+  /**
+   * Returns RGB assets, optionally filtered by asset schema.
+   *
+   * @param {string[]} [filterAssetSchemas] - Asset schema names to include.
+   * @returns {Promise<object>} The native asset-list response.
+   */
   async listAssets (filterAssetSchemas) {
     return this._reader.listAssets(filterAssetSchemas)
   }
 
+  /**
+   * Returns the settled and spendable balances for an RGB asset.
+   *
+   * @param {string} assetId - The RGB asset ID.
+   * @returns {Promise<object>} The native asset balance response.
+   */
   async getAssetBalance (assetId) { return this._reader.assetBalance(assetId) }
 
+  /**
+   * Returns metadata for an RGB asset.
+   *
+   * @param {string} assetId - The RGB asset ID.
+   * @returns {Promise<object>} The native asset metadata response.
+   */
   async getAssetMetadata (assetId) { return this._reader.assetMetadata(assetId) }
 
+  /**
+   * Returns transfers associated with one RGB asset.
+   *
+   * @param {string} assetId - The RGB asset ID.
+   * @returns {Promise<object>} The native transfer-list response.
+   * @throws {TypeError} If the asset ID is empty or is not a string.
+   */
   async listTransfers (assetId) {
     if (typeof assetId !== 'string' || assetId.length === 0) {
       throw new TypeError('listTransfers(assetId) requires a non-empty RGB asset id')
@@ -213,15 +336,41 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
     return this._reader.listTransfers(assetId)
   }
 
+  /**
+   * Returns RGB transfers associated with an on-chain transaction ID.
+   *
+   * @param {string} txid - The Bitcoin transaction ID.
+   * @returns {Promise<object>} The native transfer lookup response.
+   */
   async listTransfersByTxid (txid) {
     return this._reader.listTransfersByTxid(txid)
   }
 
+  /**
+   * Decodes an RGB invoice without creating a transfer.
+   *
+   * @param {string} invoice - The RGB invoice to decode.
+   * @returns {Promise<object>} The decoded RGB invoice response.
+   */
   async decodeRgbInvoice (invoice) { return this._reader.decodeRgbInvoice(invoice) }
 
+  /**
+   * Returns RGB asset media identified by its content digest.
+   *
+   * @param {string} digest - The media content digest.
+   * @returns {Promise<object>} The native asset media response.
+   */
   async getAssetMedia (digest) { return this._reader.getAssetMedia(digest) }
 
-  /** @returns {Promise<bigint>} Spendable vanilla balance in satoshis. */
+  /**
+   * Returns the spendable vanilla Bitcoin balance in satoshis.
+   *
+   * A locked account reports zero so callers can render its pre-unlock state.
+   *
+   * @param {boolean} [skipSync=false] - Whether to skip a network sync before
+   *   reading the balance.
+   * @returns {Promise<bigint>} The spendable balance in satoshis.
+   */
   async getBalance (skipSync = false) {
     try {
       const result = await this._reader.btcBalance(Boolean(skipSync))
@@ -232,29 +381,83 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
     }
   }
 
+  /**
+   * Returns the complete native Bitcoin balance breakdown.
+   *
+   * @param {boolean} [skipSync=false] - Whether to skip a network sync before
+   *   reading the balance.
+   * @returns {Promise<object>} The native Bitcoin balance response.
+   */
   async getBalanceDetails (skipSync = false) {
     return this._reader.btcBalance(Boolean(skipSync))
   }
 
+  /**
+   * Returns the spendable balance for an RGB asset.
+   *
+   * The settled balance is used when the native response does not expose a
+   * separate spendable value.
+   *
+   * @param {string} assetId - The RGB asset ID.
+   * @returns {Promise<bigint>} The asset balance in its base unit.
+   */
   async getTokenBalance (assetId) {
     const result = await this.getAssetBalance(assetId)
     return BigInt(result?.spendable ?? result?.settled ?? 0)
   }
 
+  /**
+   * Returns the account's on-chain Bitcoin transaction history.
+   *
+   * @param {boolean} [skipSync=false] - Whether to skip a network sync before
+   *   reading transactions.
+   * @returns {Promise<object>} The native transaction-list response.
+   */
   async getTransactions (skipSync = false) {
     return this._reader.listTransactions(Boolean(skipSync))
   }
 
+  /**
+   * Returns on-chain Bitcoin transactions matching a transaction ID.
+   *
+   * @param {string} txid - The Bitcoin transaction ID.
+   * @param {boolean} [skipSync=false] - Whether to skip a network sync before
+   *   reading transactions.
+   * @returns {Promise<object>} The native transaction lookup response.
+   */
   async getTransactionsByTxid (txid, skipSync = false) {
     return this._reader.listTransactionsByTxid(txid, Boolean(skipSync))
   }
 
+  /**
+   * Returns the account's unspent Bitcoin outputs.
+   *
+   * @param {boolean} [skipSync=false] - Whether to skip a network sync before
+   *   reading unspent outputs.
+   * @returns {Promise<object>} The native unspent-output response.
+   */
   async listUnspents (skipSync = false) {
     return this._reader.listUnspents(Boolean(skipSync))
   }
 
+  /**
+   * Estimates the Bitcoin fee rate for a confirmation target.
+   *
+   * @param {number} blocks - The target number of blocks until confirmation.
+   * @returns {Promise<object>} The native fee estimate response.
+   */
   async estimateFee (blocks) { return this._reader.estimateFee(blocks) }
 
+  /**
+   * Verifies a Lightning message signature for this account.
+   *
+   * @param {string} message - The original message.
+   * @param {string} signature - The signature to verify.
+   * @returns {Promise<boolean>} Whether the signature is valid.
+   * @throws {TypeError} If the message or signature has an invalid type or is
+   *   empty where prohibited.
+   * @throws {AccountLockedError} If the RGB Lightning node is locked.
+   */
   async verify (message, signature) {
     if (typeof message !== 'string') throw new TypeError('verify(message, signature) requires a string message')
     if (typeof signature !== 'string' || signature.length === 0) {
@@ -272,15 +475,38 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
     return typeof result === 'boolean' ? result : result?.valid === true
   }
 
+  /**
+   * Checks whether an indexer URL is reachable and compatible with the node.
+   *
+   * @param {string} indexerUrl - The indexer URL to check.
+   * @returns {Promise<object>} The native indexer diagnostic response.
+   */
   async checkIndexerUrl (indexerUrl) {
     return this._reader.checkIndexerUrl(indexerUrl)
   }
 
+  /**
+   * Checks whether an RGB proxy endpoint is reachable.
+   *
+   * @param {string} proxyEndpoint - The RGB proxy endpoint to check.
+   * @returns {Promise<{ok: true}>} A success result after the native check
+   *   completes.
+   */
   async checkProxyEndpoint (proxyEndpoint) {
     await this._reader.checkProxyEndpoint(proxyEndpoint)
     return { ok: true }
   }
 
+  /**
+   * Classifies a recipient for the generic transfer quote router.
+   *
+   * @protected
+   * @param {string} recipient - A BOLT11 invoice, Lightning node public key,
+   *   Bitcoin address, or RGB invoice.
+   * @returns {'bolt11' | 'ln-pubkey' | 'btc-address' | 'rgb-invoice'} The
+   *   recipient category.
+   * @throws {Error} If the recipient is empty or is not a string.
+   */
   static _classifyRecipient (recipient) {
     if (typeof recipient !== 'string' || recipient.length === 0) {
       throw new Error('transfer: recipient must be a non-empty string')
@@ -292,6 +518,18 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
     return 'btc-address'
   }
 
+  /**
+   * Quotes the fee for a generic Lightning, Bitcoin, or RGB transfer.
+   *
+   * Lightning quotes use a proportional routing allowance. Bitcoin and RGB
+   * quotes use the on-chain fee estimator.
+   *
+   * @param {TransferOptions} options - The transfer options.
+   * @returns {Promise<{fee: bigint}>} The estimated fee in millisatoshis for
+   *   Lightning recipients or satoshis for on-chain recipients.
+   * @throws {Error} If the options or recipient are invalid.
+   * @throws {TypeError} If a Lightning amount is not a non-negative integer.
+   */
   async quoteTransfer (options) {
     if (!options || typeof options !== 'object') {
       throw new Error('quoteTransfer: options must be { recipient, amount, token? }')
@@ -310,6 +548,17 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
     })
   }
 
+  /**
+   * Quotes an approximate fee for a standard on-chain Bitcoin transaction.
+   *
+   * The quote uses a stable 141-vbyte transaction size and either the supplied
+   * fee rate or a rate estimated for the requested confirmation target.
+   *
+   * @param {Transaction} [tx={}] - The transaction and optional fee settings.
+   * @returns {Promise<{fee: bigint}>} The estimated fee in satoshis.
+   * @throws {TypeError} If the effective fee rate is not a positive finite
+   *   number.
+   */
   async quoteSendTransaction (tx = {}) {
     const confirmationTarget = tx.confirmationTarget ?? 6
     const feeRate = tx.feeRate ?? await this._defaultFeeRate(confirmationTarget)
@@ -320,6 +569,18 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
     return { fee: BigInt(Math.ceil(numericRate * APPROX_BTC_TX_VBYTES)) }
   }
 
+  /**
+   * Returns a terminal receipt from the account's Bitcoin, RGB, or Lightning
+   * read models.
+   *
+   * Pending, unconfirmed, and unknown operations return null.
+   *
+   * @param {string} hash - A Bitcoin transaction ID, RGB transfer transaction
+   *   ID, or Lightning payment hash.
+   * @returns {Promise<unknown | null>} The terminal native record, or null when
+   *   no terminal record exists.
+   * @throws {Error} If the hash is empty or is not a string.
+   */
   async getTransactionReceipt (hash) {
     if (typeof hash !== 'string' || hash.length === 0) {
       throw new Error('getTransactionReceipt: hash is required')
@@ -341,6 +602,13 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
     return payment && !isPendingPayment(payment) ? payment : null
   }
 
+  /**
+   * Resolves a positive fee rate and falls back to the package default.
+   *
+   * @protected
+   * @param {number} blocks - The target number of blocks until confirmation.
+   * @returns {Promise<number>} The fee rate in satoshis per virtual byte.
+   */
   async _defaultFeeRate (blocks) {
     try {
       const result = await this.estimateFee(blocks)
