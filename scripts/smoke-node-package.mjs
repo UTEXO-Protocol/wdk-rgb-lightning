@@ -26,6 +26,22 @@ function run (command, args, options = {}) {
   }
 }
 
+function runAndCapture (command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    ...options
+  })
+
+  if (result.status !== 0) {
+    throw new Error(
+      `${command} ${args.join(' ')} exited with ${result.status}:\n` +
+      (result.stderr || result.stdout)
+    )
+  }
+  return result.stdout.trim()
+}
+
 function minimumVersion (range, packageName) {
   const match = /^>=([^ ]+)/.exec(range)
   if (!match) {
@@ -78,10 +94,6 @@ try {
       }
     }, null, 2) + '\n'
   )
-  writeFileSync(
-    path.join(temporaryRoot, '.npmrc'),
-    'strict-allow-scripts=true\n'
-  )
 
   run(npmExecutable, [
     'install',
@@ -91,6 +103,44 @@ try {
     packageSpec,
     `${nativePackage}@${nativeVersion}`
   ], { cwd: temporaryRoot })
+
+  const runtimeInstallations = runAndCapture(
+    npmExecutable,
+    ['ls', 'bare-node-runtime', '--parseable', '--all'],
+    { cwd: temporaryRoot }
+  ).split('\n').filter(Boolean)
+  if (runtimeInstallations.length !== 1) {
+    throw new Error(
+      'Expected one bare-node-runtime installation, found ' +
+      runtimeInstallations.length
+    )
+  }
+
+  const npmMajor = Number(
+    runAndCapture(npmExecutable, ['--version'], { cwd: temporaryRoot })
+      .split('.')[0]
+  )
+  if (!Number.isInteger(npmMajor)) {
+    throw new Error('npm returned an invalid version')
+  }
+  if (npmMajor >= 12) {
+    const policy = JSON.parse(
+      runAndCapture(
+        npmExecutable,
+        ['install-scripts', 'ls', '--json'],
+        { cwd: temporaryRoot }
+      )
+    )
+    if (!Array.isArray(policy.allowScripts)) {
+      throw new Error('npm returned an invalid install-script policy')
+    }
+    if (policy.allowScripts.length > 0) {
+      throw new Error(
+        'Unreviewed dependency install scripts remain:\n' +
+        JSON.stringify(policy.allowScripts, null, 2)
+      )
+    }
+  }
 
   if (verifySignatures) {
     run(npmExecutable, ['audit', 'signatures'], { cwd: temporaryRoot })
