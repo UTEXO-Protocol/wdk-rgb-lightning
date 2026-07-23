@@ -40,24 +40,8 @@ function isExternalSignerIdentityMismatch (message) {
     /external signer identity does not match persisted (?:node identity|key_source\.json)/i.test(message)
 }
 
-/**
- * @typedef {Object} BareRgbLightningBindingConfig
- * @property {'mainnet'|'testnet'|'regtest'|'signet'} network
- * @property {string} dataDir            - persistent SQLite + LDK channel state path
- * @property {number} [daemonListeningPort=0]
- * @property {number} [ldkPeerListeningPort=0]
- * @property {number} [maxMediaUploadSizeMb=5]
- * @property {boolean} [enableVirtualChannelsV0=false]
- * @property {string[]} [virtualPeerPubkeys] - trusted virtual-channel peer node IDs
- * @property {boolean} [permissiveSignerPolicy=true] - VLS policy filter;
- *   pass `false` to enforce the full simple policy. Defaults to
- *   permissive for in-process use.
- * @property {string} [vssUrl]               - opt-in VSS cloud backup URL
- * @property {boolean} [vssAllowHttp=false]  - allow http:// for non-loopback
- * @property {boolean} [vssAllowEmptyRestore=false] - tolerate failed restore
- * @property {string} [lspBaseUrl]           - LSP base URL for APay (internal)
- * @property {string} [lspBearerToken]       - LSP `/internal/*` bearer
- */
+/** @typedef {import('./binding-interface.js').IRgbLightningBinding} IRgbLightningBinding */
+/** @typedef {import('./binding-interface.js').RgbLightningBindingConfig} RgbLightningBindingConfig */
 
 /**
  * Thin wrapper around `SdkNode` + `NativeExternalSigner`. Holds both
@@ -72,9 +56,16 @@ function isExternalSignerIdentityMismatch (message) {
  *                                                  next:        attach+unlock
  *   4. `binding.ensureNode()`                    - cached SdkNode handle
  *   5. `binding.shutdown()`                      - idempotent stop
+ *
+ * @implements {IRgbLightningBinding}
  */
 export class BareRgbLightningBinding {
-  /** @param {BareRgbLightningBindingConfig} config */
+  /**
+   * Create a Bare runtime binding and stage its native init request.
+   *
+   * @param {RgbLightningBindingConfig} config - RGB Lightning node
+   *   configuration.
+   */
   constructor (config) {
     this._config = config
     this._initRequest = {
@@ -123,8 +114,9 @@ export class BareRgbLightningBinding {
   }
 
   /**
-   * Construct the `SdkNode`. Idempotent.
-   * @returns {SdkNode}
+   * Construct the native `SdkNode` once and return the cached handle.
+   *
+   * @returns {SdkNode} - The cached or newly created native node.
    */
   ensureNode () {
     if (!this._node) {
@@ -134,14 +126,16 @@ export class BareRgbLightningBinding {
   }
 
   /**
-   * Build the in-process VLS signer from a host-supplied 32-byte seed.
-   * Must be called before `unlock()`. Idempotent — repeat calls with
-   * the same seed are no-ops; calling with a different seed mid-session
-   * throws (would imply a wallet swap and invalidate the on-disk
-   * key-source file).
+   * Build the in-process VLS signer from host-supplied seed material. Repeat
+   * calls with the same seed are no-ops; a different seed is rejected to avoid
+   * swapping wallets against the persisted key-source identity.
    *
-   * @param {string} seedHex - 64-char hex string (32 BIP-32 entropy bytes)
-   * @param {string} [fallbackSeedHex] - legacy identity fallback for existing data dirs
+   * @param {string} seedHex - 64-character hex string containing 32 bytes of
+   *   BIP-32 entropy.
+   * @param {string} [fallbackSeedHex] - Legacy identity fallback for existing
+   *   data directories.
+   * @throws {Error} - If a different signer is already attached or native
+   *   signer construction fails.
    */
   attachExternalSigner (seedHex, fallbackSeedHex) {
     if (this._signer) {
@@ -169,16 +163,14 @@ export class BareRgbLightningBinding {
   }
 
   /**
-   * Bring the node online. On the first call against a fresh dataDir,
-   * runs `initWithNativeExternalSigner` to write the key-source file;
-   * on subsequent calls (key-source already on disk) RLN throws
-   * `Rln(Conflict)` from init which we swallow as the expected
-   * "already-initialised" signal. Then runs
-   * `unlockWithNativeExternalSigner` which attaches + unlocks in one
-   * call.
+   * Initialize or reattach the signer, then bring the native node online. An
+   * init conflict on an existing data directory is treated as the expected
+   * already-initialized signal before unlock proceeds.
    *
-   * @param {Object} unlockRequest - JsonSdkExternalUnlockRequest
-   *   (bitcoind RPC creds + indexer + proxy; no password)
+   * @param {object} unlockRequest - Native `JsonSdkExternalUnlockRequest`
+   *   containing backend connection settings.
+   * @throws {Error} - If no signer is attached or native initialization or
+   *   unlock fails.
    */
   unlock (unlockRequest) {
     const node = this.ensureNode()
@@ -235,8 +227,10 @@ export class BareRgbLightningBinding {
   }
 
   /**
-   * Returns the bootstrap dictionary for the currently-attached signer
-   * (node_id, xpubs, master_fingerprint). Throws if no signer attached.
+   * Return the bootstrap dictionary for the currently attached signer.
+   *
+   * @returns {object} - Native external-signer bootstrap payload.
+   * @throws {Error} - If no signer is attached or bootstrap generation fails.
    */
   bootstrap () {
     if (!this._signer) {
@@ -247,10 +241,11 @@ export class BareRgbLightningBinding {
 
   /**
    * Take over a stale VSS ownership fence after a previous node died
-   * holding it. Authenticates with the wallet password. Throws
-   * `Rln(FailedVssInit)` if VSS isn't configured or the takeover fails.
+   * holding it. Authenticates with the wallet password.
    *
-   * @param {string} password
+   * @param {string} password - Wallet password used to authenticate the VSS
+   *   fence takeover.
+   * @throws {Error} - If VSS is not configured or the native takeover fails.
    */
   clearVssFence (password) {
     const node = this.ensureNode()
@@ -258,19 +253,19 @@ export class BareRgbLightningBinding {
   }
 
   /**
-   * Force an immediate VSS backup flush. Returns `{ version }` JSON
-   * where version is the snapshot index just persisted. Throws if VSS
-   * isn't configured (`vssUrl` unset at construction) or the flush
-   * fails (server unreachable, auth rejected). Useful for app-
-   * controlled checkpoints rather than relying on the implicit
-   * on-write flush.
+   * Force an immediate VSS backup flush. Returns the snapshot index just
+   * persisted, allowing app-controlled checkpoints instead of relying only on
+   * implicit on-write flushes.
    *
-   * @returns {{version: number}}
+   * @returns {{version: number}} - Persisted VSS snapshot version.
+   * @throws {Error} - If VSS is not configured or the backup flush fails.
    */
   vssBackup () {
     const node = this.ensureNode()
     const r = node.vssBackup()
-    if (r && typeof r.version === 'number') this._lastVssVersion = r.version
+    if (r && typeof r === 'object' && 'version' in r && typeof r.version === 'number') {
+      this._lastVssVersion = r.version
+    }
     return r
   }
 
@@ -284,7 +279,8 @@ export class BareRgbLightningBinding {
    * server version, call `vssBackup()` (it flushes and returns the
    * fresh `{ version }`).
    *
-   * @returns {{ configured: boolean, url: string|null, allowHttp: boolean, lastBackupVersion: number|null }}
+   * @returns {{ configured: boolean, url: string|null, allowHttp: boolean, lastBackupVersion: number|null }} - Local
+   *   VSS configuration and last observed backup version.
    */
   vssStatus () {
     return {
@@ -296,23 +292,24 @@ export class BareRgbLightningBinding {
   }
 
   /**
-   * Register this node with an LSP as an async-payments (APay) recipient.
-   * Used for offline-receive over Lightning Address — the wallet uploads
-   * a batch of pre-allocated payment hashes to the LSP, which then
-   * accepts Lightning payments addressed to those hashes on the wallet's
-   * behalf, even while the wallet is offline.
+   * Register this node with an LSP as an APay recipient so the LSP can accept
+   * Lightning payments for it while it is offline.
    *
-   * @param {string} hostNodeId  - LSP's node_id (hex, 33-byte compressed secp256k1)
-   * @returns {object}  AsyncOrderNewResponse — request_id, host_node_id,
-   *   protocol_version, order_id, status, accepted_through_index,
-   *   next_index_expected, unused_hashes, refill_batch_size, first_hash_index
+   * @param {string} hostNodeId - LSP node ID (hex-encoded, 33-byte compressed
+   *   secp256k1 public key).
+   * @returns {object} - Native `AsyncOrderNewResponse`.
+   * @throws {Error} - If native APay registration fails.
    */
   apayNew (hostNodeId) {
     const node = this.ensureNode()
     return node.apayNew(hostNodeId)
   }
 
-  /** Best-effort shutdown. Idempotent. */
+  /**
+   * Stop the node and destroy the signer. The operation is idempotent.
+   *
+   * @throws {Error} - If native node shutdown or signer destruction fails.
+   */
   shutdown () {
     let failure
     if (this._node) {
@@ -341,15 +338,15 @@ export class BareRgbLightningBinding {
     if (failure) throw failure
   }
 
-  /** @returns {string} */
+  /** @returns {string} - Native module health status. */
   static healthcheck () { return uniffiHealthcheck() }
 
-  /** @returns {boolean} */
+  /** @returns {boolean} - Whether the native SDK is globally initialized. */
   static isInitialized () { return uniffiIsInitialized() }
 
-  /** @param {Object} request - module-level JsonSdkInitRequest */
+  /** @param {object} request - Module-level `JsonSdkInitRequest`. */
   static initialize (request) { return sdkInitialize(request) }
 
-  /** Module-level shutdown (releases the static tokio runtime). */
+  /** Release the native module's global runtime. */
   static shutdownGlobal () { return sdkShutdown() }
 }

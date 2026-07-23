@@ -262,7 +262,7 @@ export class NodeRgbLightningBinding implements IRgbLightningBinding {
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
   shutdown(): void
-  static healthcheck(): unknown
+  static healthcheck(): string
   static isInitialized(): boolean
   static initialize(request: object): void
   static shutdownGlobal(): void
@@ -279,7 +279,7 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
   shutdown(): void
-  static healthcheck(): unknown
+  static healthcheck(): string
   static isInitialized(): boolean
   static initialize(request: object): void
   static shutdownGlobal(): void
@@ -489,8 +489,8 @@ export interface LspBridgeResult {
 
 export class LspClient {
   constructor(opts: LspClientOptions)
-  health(opts?: { timeoutMs?: number }): Promise<object>
-  getInfo(opts?: { timeoutMs?: number }): Promise<object>
+  health(opts?: { timeoutMs?: number }): Promise<object | null>
+  getInfo(opts?: { timeoutMs?: number }): Promise<object | null>
   lnurlDiscovery(username: string, opts?: { timeoutMs?: number }): Promise<LnurlPayDiscovery>
   lnurlCallback(username: string, amountMsat: bigint | number | string, opts?: { assetId?: string; assetAmount?: bigint | number | string; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[] }>
   /** Full LUD-06 resolution routed through this LSP's baseUrl (discovery + callback). */
@@ -540,8 +540,10 @@ export function fetchDiscovery(addr: string, opts?: Pick<LnurlPayOptions, 'fetch
 export function resolveAddressToInvoice(addr: string, amountMsat: bigint | number | string, opts?: LnurlPayOptions): Promise<{ pr: string; routes?: unknown[]; discovery: LnurlPayDiscovery; callbackUrl: string }>
 
 export class LnurlPayError extends Error {
+  constructor(message: string, opts?: { status?: number; body?: string; cause?: unknown })
   status?: number
   body?: string
+  cause?: unknown
 }
 
 // ───────────────────────────────────────────────────────────────────

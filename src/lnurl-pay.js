@@ -27,6 +27,13 @@ import { toUint64String } from './lsp-utils.js'
  * the message.
  */
 export class LnurlPayError extends Error {
+  /**
+   * Create an error for a malformed LNURL response or failed request.
+   *
+   * @param {string} message - Human-readable failure description.
+   * @param {{ status?: number, body?: string, cause?: unknown }} [opts] - Optional
+   *   HTTP response context and originating failure.
+   */
   constructor (message, { status = 0, body = '', cause } = {}) {
     super(message)
     this.name = 'LnurlPayError'
@@ -49,10 +56,13 @@ const DEFAULT_TIMEOUT_MS = 15_000
  * those are almost always dev/regtest. `.onion` per LUD-16 always uses
  * http.
  *
- * @param {string} addr
- * @param {object} [opts]
- * @param {boolean} [opts.allowHttp]
- * @returns {{ username:string, host:string, discoveryUrl:string }}
+ * @param {string} addr - Lightning Address in `user@host` form.
+ * @param {object} [opts] - Address parsing options.
+ * @param {boolean} [opts.allowHttp] - Whether non-loopback hosts may use
+ *   plain HTTP. Defaults to `false`.
+ * @returns {{ username:string, host:string, discoveryUrl:string }} - Canonical
+ *   address components and discovery URL.
+ * @throws {LnurlPayError} - If the address or host is malformed.
  */
 export function parseLightningAddress (addr, opts = {}) {
   if (typeof addr !== 'string' || addr.length === 0) {
@@ -101,14 +111,20 @@ function isLoopback (host) {
  * compute `metadata` hash from the returned `metadata` string when
  * checking the invoice's description-hash anchor.
  *
- * @param {string} addr Lightning Address (`user@host`) OR a full URL
+ * @param {string} addr - Lightning Address (`user@host`) or a full URL
  *                      to a `/.well-known/lnurlp/<user>` endpoint
  *                      (useful for `LspClient.lnurlDiscovery` callers
  *                      who already have an LSP URL).
- * @param {object} [opts]
- * @param {typeof fetch} [opts.fetch]
- * @param {number} [opts.timeoutMs]
- * @param {boolean} [opts.allowHttp]
+ * @param {object} [opts] - Discovery request options.
+ * @param {typeof fetch} [opts.fetch] - Fetch implementation. Defaults to the
+ *   runtime's global `fetch`.
+ * @param {number} [opts.timeoutMs] - Request timeout in milliseconds.
+ *   Defaults to 15 seconds.
+ * @param {boolean} [opts.allowHttp] - Whether non-loopback hosts may use
+ *   plain HTTP. Defaults to `false`.
+ * @returns {Promise<LnurlPayDiscovery>} - Validated LUD-06 discovery document.
+ * @throws {LnurlPayError} - If fetching fails or the discovery document is
+ *   malformed.
  */
 export async function fetchDiscovery (addr, opts = {}) {
   const fetcher = opts.fetch ?? globalThis.fetch
@@ -131,20 +147,28 @@ export async function fetchDiscovery (addr, opts = {}) {
  * can verify the description-hash anchor against the returned invoice
  * after decoding it.
  *
- * @param {string} addr
- * @param {bigint|number|string} amountMsat
- * @param {object} [opts]
- * @param {typeof fetch} [opts.fetch]
- * @param {number} [opts.timeoutMs]
- * @param {boolean} [opts.allowHttp]
- * @param {boolean} [opts.allowCrossHostCallback=false]
- *   Permit a callback on a host other than the discovery endpoint.
- *   Disabled by default to prevent a discovery document from redirecting
- *   the follow-up callback request to an unrelated host.
- * @param {string} [opts.comment]   LUD-12 comment (server-policy gated).
- * @param {string} [opts.assetId]   Optional RGB asset extension.
- * @param {bigint|number|string} [opts.assetAmount]
- * @returns {Promise<{ pr:string, routes:Array, discovery:LnurlPayDiscovery, callbackUrl:string }>}
+ * @param {string} addr - Lightning Address in `user@host` form or discovery
+ *   endpoint URL.
+ * @param {bigint|number|string} amountMsat - Amount to request, in
+ *   millisatoshis.
+ * @param {object} [opts] - LNURL resolution options.
+ * @param {typeof fetch} [opts.fetch] - Fetch implementation. Defaults to the
+ *   runtime's global `fetch`.
+ * @param {number} [opts.timeoutMs] - Per-request timeout in milliseconds.
+ *   Defaults to 15 seconds.
+ * @param {boolean} [opts.allowHttp] - Whether non-loopback hosts may use
+ *   plain HTTP. Defaults to `false`.
+ * @param {boolean} [opts.allowCrossHostCallback] - Permit a callback on a
+ *   different host than discovery. Defaults to `false` to prevent discovery
+ *   documents from redirecting the follow-up request to an unrelated host.
+ * @param {string} [opts.comment] - LUD-12 comment, subject to server policy.
+ * @param {string} [opts.assetId] - Optional RGB asset extension.
+ * @param {bigint|number|string} [opts.assetAmount] - Optional RGB asset
+ *   amount.
+ * @returns {Promise<{ pr:string, routes:Array, discovery:LnurlPayDiscovery, callbackUrl:string }>} - BOLT11
+ *   invoice, route hints, discovery document, and callback URL.
+ * @throws {LnurlPayError} - If discovery or callback fetching fails, the
+ *   amount is outside the advertised range, or a response is malformed.
  */
 export async function resolveAddressToInvoice (addr, amountMsat, opts = {}) {
   const fetcher = opts.fetch ?? globalThis.fetch
@@ -317,11 +341,11 @@ function timeoutSignal (ms) {
 function truncate (s) { return s.length > 200 ? s.slice(0, 197) + '…' : s }
 
 /**
- * @typedef {object} LnurlPayDiscovery
- * @property {'payRequest'} tag
- * @property {string} callback
- * @property {number|string} minSendable
- * @property {number|string} maxSendable
- * @property {string} metadata             JSON string per LUD-06.
- * @property {number|string} [commentAllowed]
+ * @typedef {Object} LnurlPayDiscovery
+ * @property {'payRequest'} tag - LUD-06 request type.
+ * @property {string} callback - URL used to request a BOLT11 invoice.
+ * @property {number|string} minSendable - Minimum amount in millisatoshis.
+ * @property {number|string} maxSendable - Maximum amount in millisatoshis.
+ * @property {string} metadata - LUD-06 metadata JSON string.
+ * @property {number|string} [commentAllowed] - Maximum LUD-12 comment length.
  */

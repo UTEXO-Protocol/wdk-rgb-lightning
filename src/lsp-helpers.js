@@ -18,6 +18,9 @@ import { LspClient } from './lsp-client.js'
 import { resolveAddressToInvoice } from './lnurl-pay.js'
 import { toUint64 } from './lsp-utils.js'
 
+/** @typedef {import('./lnurl-pay.js').LnurlPayError} LnurlPayError */
+/** @typedef {import('./lsp-client.js').LspError} LspError */
+
 /**
  * Pay a Lightning Address end-to-end.
  *
@@ -25,24 +28,33 @@ import { toUint64 } from './lsp-utils.js'
  *    `alice@getalby.com`, not just utexo-lsp Lightning Addresses).
  * 2. Hand the returned BOLT11 invoice to the account's `sendPayment`.
  *
- * @param {object} account                  Anything with `sendPayment({ invoice })`.
- * @param {string} addr                     `user@host` Lightning Address.
- * @param {bigint|number|string} amountMsat
- * @param {object} [opts]
- * @param {typeof fetch} [opts.fetch]
- * @param {number} [opts.timeoutMs]
- * @param {boolean} [opts.allowHttp]        Allow http on non-loopback hosts (regtest).
- * @param {boolean} [opts.allowCrossHostCallback]
- * @param {string} [opts.comment]           LUD-12 comment.
- * @param {string} [opts.assetId]           Optional RGB asset extension.
- * @param {bigint|number|string} [opts.assetAmount]
- * @param {boolean} [opts.skipAmount]       Don't pass `amt_msat` to sendPayment.
- * @param {(invoice:string, discovery:object) => void|Promise<void>} [opts.beforePay]
- *                                          Hook to inspect the LSP-issued invoice
- *                                          before paying (e.g. to verify the
- *                                          description-hash anchor against
- *                                          discovery.metadata).
- * @returns {Promise<{ invoice:string, sendResult:any, discovery:object, callbackUrl:string }>}
+ * @param {object} account - Account-like object exposing
+ *   `sendPayment({ invoice })`.
+ * @param {string} addr - Lightning Address in `user@host` form.
+ * @param {bigint|number|string} amountMsat - Amount to pay, in millisatoshis.
+ * @param {object} [opts] - LNURL resolution and payment options.
+ * @param {typeof fetch} [opts.fetch] - Fetch implementation used for LNURL
+ *   requests.
+ * @param {number} [opts.timeoutMs] - Per-request timeout in milliseconds.
+ * @param {boolean} [opts.allowHttp] - Whether non-loopback hosts may use
+ *   plain HTTP.
+ * @param {boolean} [opts.allowCrossHostCallback] - Whether a callback may use
+ *   a different host than discovery.
+ * @param {string} [opts.comment] - Optional LUD-12 comment.
+ * @param {string} [opts.assetId] - Optional RGB asset extension.
+ * @param {bigint|number|string} [opts.assetAmount] - Optional RGB asset
+ *   amount.
+ * @param {boolean} [opts.skipAmount] - Whether to omit `amt_msat` from the
+ *   account payment request.
+ * @param {(invoice:string, discovery:object) => void|Promise<void>} [opts.beforePay] - Hook
+ *   that can inspect the LSP-issued invoice before payment, for example
+ *   to verify its description-hash anchor against discovery metadata.
+ * @returns {Promise<{ invoice:string, sendResult:any, discovery:object, callbackUrl:string }>} - Invoice,
+ *   account payment result, discovery document, and callback URL.
+ * @throws {TypeError} - If the account does not expose `sendPayment` or an
+ *   integer payment field is invalid.
+ * @throws {LnurlPayError} - If LNURL discovery or resolution fails.
+ * @throws {Error} - If the pre-payment hook or account payment fails.
  */
 export async function payLightningAddress (account, addr, amountMsat, opts = {}) {
   if (account == null || typeof account.sendPayment !== 'function') {
@@ -68,14 +80,24 @@ export async function payLightningAddress (account, addr, amountMsat, opts = {})
  *      wallet's BOLT11 invoice. Wallet observes completion via
  *      `account.getInvoiceStatus(lnInvoice)`.
  *
- * @param {object} account
- * @param {object} args
- * @param {string|LspClient} args.lsp           LSP base URL or pre-built client.
- * @param {string} [args.lnInvoice]             Existing BOLT11 invoice; if omitted, we mint one via account.
- * @param {object} [args.lnInvoiceRequest]      Override for the lnInvoice mint call. Required if lnInvoice omitted.
- * @param {object} args.rgb                     RGB params (assetId, assignment, durationSeconds, witness).
- * @param {object} [args.lspOpts]               Forwarded to new LspClient if lsp is a string.
- * @returns {Promise<{ lnInvoice:string, rgbInvoice:string, mappingId:number }>}
+ * @param {object} account - Account-like object used to mint the local BOLT11
+ *   invoice.
+ * @param {object} args - Deposit request.
+ * @param {string|LspClient} args.lsp - LSP base URL or pre-built client.
+ * @param {string} [args.lnInvoice] - Existing BOLT11 invoice. When omitted,
+ *   the helper creates one through `account`.
+ * @param {object} [args.lnInvoiceRequest] - Request passed to the account's
+ *   invoice minter. Required when `lnInvoice` is omitted.
+ * @param {object} args.rgb - RGB parameters including `assetId`, assignment,
+ *   duration, and witness mode.
+ * @param {object} [args.lspOpts] - Options forwarded when constructing an
+ *   `LspClient` from a URL.
+ * @returns {Promise<{ lnInvoice:string, rgbInvoice:string, mappingId:number }>} - Paired
+ *   invoices and LSP bridge mapping ID.
+ * @throws {TypeError} - If required account, invoice, LSP, or RGB inputs are
+ *   missing or malformed.
+ * @throws {LspError} - If the LSP request fails.
+ * @throws {Error} - If local invoice creation fails or returns no invoice.
  */
 export async function requestLspRgbDeposit (account, { lsp, lnInvoice, lnInvoiceRequest, rgb, lspOpts } = {}) {
   if (account == null) throw new TypeError('requestLspRgbDeposit: account required')
@@ -115,13 +137,20 @@ export async function requestLspRgbDeposit (account, { lsp, lnInvoice, lnInvoice
  * Caller is responsible for `ln.amtMsat` / `ln.expirySec` — the LSP
  * does not auto-quote.
  *
- * @param {object} account
- * @param {object} args
- * @param {string|LspClient} args.lsp
- * @param {string} args.rgbInvoice
- * @param {object} args.ln                 `{ amtMsat, expirySec, assetId?, assetAmount?, … }`
- * @param {object} [args.lspOpts]
- * @returns {Promise<{ lnInvoice:string, rgbInvoice:string, mappingId:number, sendResult:any }>}
+ * @param {object} account - Account-like object exposing `sendPayment`.
+ * @param {object} args - Bridge payment request.
+ * @param {string|LspClient} args.lsp - LSP base URL or pre-built client.
+ * @param {string} args.rgbInvoice - Recipient's RGB invoice.
+ * @param {object} args.ln - Lightning parameters such as `amtMsat`,
+ *   `expirySec`, `assetId`, and `assetAmount`.
+ * @param {object} [args.lspOpts] - Options forwarded when constructing an
+ *   `LspClient` from a URL.
+ * @returns {Promise<{ lnInvoice:string, rgbInvoice:string, mappingId:number, sendResult:any }>} - Paired
+ *   invoices, bridge mapping ID, and account payment result.
+ * @throws {TypeError} - If required account, LSP, RGB invoice, or Lightning
+ *   inputs are missing or malformed.
+ * @throws {LspError} - If the LSP request fails.
+ * @throws {Error} - If the account payment fails.
  */
 export async function payRgbViaLsp (account, { lsp, rgbInvoice, ln, lspOpts } = {}) {
   if (account == null || typeof account.sendPayment !== 'function') {

@@ -17,7 +17,7 @@ const NativeExternalSigner = {
   })
 }
 
-const uniffiHealthcheck = () => true
+const uniffiHealthcheck = () => 'rgb_lightning_node_uniffi_ready'
 const uniffiIsInitialized = () => false
 const sdkInitialize = () => {}
 const sdkShutdown = () => {}

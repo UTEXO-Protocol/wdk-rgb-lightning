@@ -467,9 +467,17 @@ describe('vssBackup', () => {
     expect(b._lastVssVersion).toBeNull()
   })
 
-  // Covers the falsy-`r` arm of `if (r && typeof r.version === 'number')`:
-  // a null node result must short-circuit on `r &&` (no version read), leave
-  // _lastVssVersion untouched, and be returned verbatim.
+  it('returns a primitive native result without treating it as a snapshot', () => {
+    const b = makeBinding()
+    const node = fakeNode()
+    node.vssBackup.mockReturnValue('unexpected')
+    b._node = node
+    expect(b.vssBackup()).toBe('unexpected')
+    expect(b._lastVssVersion).toBeNull()
+  })
+
+  // A null node result must short-circuit before the property-existence check,
+  // leave _lastVssVersion untouched, and be returned verbatim.
   it('returns null and leaves _lastVssVersion untouched when the node returns null', () => {
     const b = makeBinding()
     const node = fakeNode()
@@ -592,7 +600,7 @@ describe('shutdown', () => {
 
 describe('static module passthroughs', () => {
   it('healthcheck calls the addon uniffiHealthcheck', () => {
-    expect(NodeRgbLightningBinding.healthcheck()).toBe(true)
+    expect(NodeRgbLightningBinding.healthcheck()).toBe('unsupported-in-node-binding')
   })
 
   it('isInitialized calls the addon uniffiIsInitialized', () => {

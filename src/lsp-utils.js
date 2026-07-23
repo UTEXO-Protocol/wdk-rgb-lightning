@@ -13,6 +13,13 @@ const UINT64_MAX = (1n << 64n) - 1n
  * Convert a JS integer to the JSON representation accepted by uint64 fields.
  * Safe numbers stay numbers; larger bigint values and numeric strings stay
  * strings so JSON serialization cannot lose precision.
+ *
+ * @param {number|bigint|string} value - Unsigned integer to normalize.
+ * @param {string} [field] - Field name included in validation errors. Defaults
+ *   to `value`.
+ * @returns {number|string} - A JSON-safe uint64 representation.
+ * @throws {TypeError} - If `value` is negative, fractional, malformed, unsafe
+ *   as a number, or larger than uint64.
  */
 export function toUint64 (value, field = 'value') {
   if (typeof value === 'number') {
@@ -30,10 +37,29 @@ export function toUint64 (value, field = 'value') {
   throw uint64TypeError(field)
 }
 
+/**
+ * Convert a JS integer to a base-10 uint64 string.
+ *
+ * @param {number|bigint|string} value - Unsigned integer to normalize.
+ * @param {string} [field] - Field name included in validation errors. Defaults
+ *   to `value`.
+ * @returns {string} - Base-10 uint64 text.
+ * @throws {TypeError} - If `value` cannot be represented as uint64.
+ */
 export function toUint64String (value, field = 'value') {
   return String(toUint64(value, field))
 }
 
+/**
+ * Convert a JS integer to an unsigned 32-bit number.
+ *
+ * @param {number|bigint|string} value - Unsigned integer to normalize.
+ * @param {string} [field] - Field name included in validation errors. Defaults
+ *   to `value`.
+ * @returns {number} - The normalized uint32 value.
+ * @throws {TypeError} - If `value` is malformed, fractional, negative, or
+ *   larger than uint32.
+ */
 export function toUint32 (value, field = 'value') {
   let number
   if (typeof value === 'number' || typeof value === 'bigint') {
@@ -49,7 +75,12 @@ export function toUint32 (value, field = 'value') {
   return number
 }
 
-/** Map the LSP's snake_case response keys onto the public camelCase shape. */
+/**
+ * Map the LSP's snake_case response keys onto the public camelCase shape.
+ *
+ * @param {*} raw - LSP response value.
+ * @returns {*} - The response with known camelCase aliases added.
+ */
 export function camelCaseLspResponse (raw) {
   if (!raw || typeof raw !== 'object') return raw
   const out = { ...raw }
@@ -59,6 +90,13 @@ export function camelCaseLspResponse (raw) {
   return out
 }
 
+/**
+ * Map public Lightning parameters to the LSP wire shape.
+ *
+ * @param {object} ln - Public camelCase Lightning parameters.
+ * @returns {object} - LSP snake_case Lightning parameters.
+ * @throws {TypeError} - If an integer field is outside its uint range.
+ */
 export function snakeCaseLnParams (ln) {
   const out = {}
   if (ln.amtMsat !== undefined) out.amt_msat = toUint64(ln.amtMsat, 'ln.amtMsat')
@@ -73,6 +111,13 @@ export function snakeCaseLnParams (ln) {
   return out
 }
 
+/**
+ * Map public RGB parameters to the LSP wire shape.
+ *
+ * @param {object} rgb - Public camelCase RGB parameters.
+ * @returns {object} - LSP snake_case RGB parameters.
+ * @throws {TypeError} - If an integer field is outside uint32.
+ */
 export function snakeCaseRgbParams (rgb) {
   const out = {
     asset_id: rgb.assetId,
