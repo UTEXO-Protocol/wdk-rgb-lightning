@@ -1,0 +1,9 @@
+node_modules/
+coverage/
+tests/
+scripts/
+.github/
+jest.setup.js
+tsconfig.types.json
+RELEASING.md
+*.tgz

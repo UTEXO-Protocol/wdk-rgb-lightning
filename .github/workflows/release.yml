@@ -1,111 +1,88 @@
 name: Release
 
 on:
-  # Triggered by rgb-lightning-node after a new SDK release
-  repository_dispatch:
-    types: [rln-release]
-
-  # Manual trigger
-  workflow_dispatch:
-    inputs:
-      rln_version:
-        description: 'RLN version to pin (e.g., 0.3.0-beta.2)'
-        required: true
-        type: string
-
-  # Tag-based release (manual version bump + tag push)
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to finalize (for example, v0.1.0-beta.15)'
+        required: true
+        type: string
 
-permissions:
-  contents: write
-  id-token: write # required for npm publish --provenance
+permissions: {}
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Publish npm package
+  stage:
+    name: Validate and stage npm package
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Resolve RLN version
-        id: rln
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
-            VERSION="${{ github.event.client_payload.version }}"
-            echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
-            echo "auto=true" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            VERSION="${{ inputs.rln_version }}"
-            echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
-            echo "auto=true" >> $GITHUB_OUTPUT
-          else
-            echo "auto=false" >> $GITHUB_OUTPUT
-          fi
-
-      # NOTE: binding peerDependencies are intentionally NOT derived from the
-      # RLN SDK version. The native binding packages
-      # (@utexo/rgb-lightning-node-{bare,nodejs}) carry their own npm version
-      # line (0.1.0-beta.x), decoupled from the RLN SDK release tag
-      # (0.6.0-beta.x). Bump those peerDeps by hand when a new binding is cut.
+      - name: Checkout tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
-          registry-url: 'https://registry.npmjs.org/'
+          node-version: '24.18.0'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
 
-      - name: Wait for required native binding releases
-        if: steps.rln.outputs.auto == 'true'
+      - name: Pin npm
+        run: npm install --global npm@12.0.1
+
+      - name: Validate release tag
+        id: metadata
         shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          for package in \
-            '@utexo/rgb-lightning-node-bare' \
-            '@utexo/rgb-lightning-node-nodejs'; do
-            range=$(node -p "require('./package.json').peerDependencies['$package']")
-            minimum=$(printf '%s' "$range" | sed -n 's/^>=\([^ ]*\).*/\1/p')
-            if [ -z "$minimum" ]; then
-              echo "::error::Cannot derive a minimum version from $package peer range: $range"
-              exit 1
-            fi
 
-            for attempt in $(seq 1 60); do
-              if npm view "$package@$minimum" version >/dev/null 2>&1; then
-                echo "$package@$minimum is available"
-                break
-              fi
-              if [ "$attempt" -eq 60 ]; then
-                echo "::error::$package@$minimum was not published within 30 minutes"
-                exit 1
-              fi
-              echo "Waiting for $package@$minimum ($attempt/60)"
-              sleep 30
-            done
-          done
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          EXPECTED_TAG="v${PACKAGE_VERSION}"
+          TAG_COMMIT=$(git rev-parse HEAD)
 
-      - name: Bump package prerelease version
-        if: steps.rln.outputs.auto == 'true'
-        run: npm version prerelease --preid=beta --no-git-tag-version
+          if [ "$RELEASE_TAG" != "$EXPECTED_TAG" ]; then
+            echo "::error::Tag $RELEASE_TAG does not match package version $PACKAGE_VERSION"
+            exit 1
+          fi
 
-      - name: Commit and push version bump
-        if: steps.rln.outputs.auto == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json
-          git commit -m "chore(release): bump prerelease version (RLN SDK v${{ steps.rln.outputs.version }})"
-          git push
+          git fetch --no-tags origin main
+          MAIN_COMMIT=$(git rev-parse origin/main)
+          if [ "$TAG_COMMIT" != "$MAIN_COMMIT" ]; then
+            echo "::error::Release tag must point to the current main commit"
+            exit 1
+          fi
+
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Release checkout is not clean"
+            exit 1
+          fi
+
+          {
+            echo "name=$PACKAGE_NAME"
+            echo "version=$PACKAGE_VERSION"
+            echo "tag=$RELEASE_TAG"
+            echo "commit=$TAG_COMMIT"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
-        run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          GH_TOKEN: ${{ github.token }}
+        run: npm ci --ignore-scripts
 
       - name: Lint
         run: npm run lint
@@ -113,54 +90,190 @@ jobs:
       - name: Check types
         run: npm run check:types
 
-      - name: Publish to npm
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Run tests with coverage
+        run: npm run test:coverage
 
-      - name: Get package version
-        id: pkg_version
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+      - name: Verify native peer releases
+        run: node scripts/verify-peer-releases.mjs
+
+      - name: Build and verify package tarball
+        id: pack
+        run: node scripts/verify-package.mjs --output-dir "$RUNNER_TEMP/package"
+
+      - name: Smoke test Node package
+        run: npm run smoke:package:node -- "${{ steps.pack.outputs.tarball }}"
+
+      - name: Check registry state
+        id: registry
         run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "version=v$VERSION" >> $GITHUB_OUTPUT
-          echo "bare=$(node -p "require('./package.json').peerDependencies['@utexo/rgb-lightning-node-bare']")" >> $GITHUB_OUTPUT
-          echo "nodejs=$(node -p "require('./package.json').peerDependencies['@utexo/rgb-lightning-node-nodejs']")" >> $GITHUB_OUTPUT
+          node scripts/verify-registry-artifact.mjs \
+            --name "${{ steps.metadata.outputs.name }}" \
+            --version "${{ steps.metadata.outputs.version }}" \
+            --integrity "${{ steps.pack.outputs.integrity }}" \
+            --git-head "${{ steps.metadata.outputs.commit }}" \
+            --allow-missing \
+            --require-latest
 
-      # Create the GitHub Release for both trigger paths: the auto (RLN
-      # dispatch / workflow_dispatch) path AND the manual tag-push path.
-      # Previously this was gated on `auto == 'true'`, so a `v*` tag push
-      # published to npm but left no matching GitHub Release — the release
-      # had to be created by hand, which let npm and GitHub drift apart.
-      - name: Create Release
-        if: steps.rln.outputs.auto == 'true' || github.event_name == 'push'
-        uses: softprops/action-gh-release@v2
+      - name: Stage package for 2FA approval
+        if: steps.registry.outputs.published != 'true'
+        run: |
+          npm stage publish "${{ steps.pack.outputs.tarball }}" \
+            --access public \
+            --tag latest
+
+  finalize:
+    name: Verify publication and create GitHub release
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          tag_name: ${{ steps.pkg_version.outputs.version }}
-          name: Release ${{ steps.pkg_version.outputs.version }}
-          body: |
-            ## wdk-rgb-lightning ${{ steps.pkg_version.outputs.version }}
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
 
-            WDK module for RGB Lightning — channels, invoices, payments, RGB-over-LN.
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.18.0'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
 
-            ### Installation
-            ```bash
-            npm install @utexo/wdk-rgb-lightning
-            ```
+      - name: Pin npm
+        run: npm install --global npm@12.0.1
 
-            ### Peer dependencies
-            ```json
-            "@utexo/rgb-lightning-node-bare": "${{ steps.pkg_version.outputs.bare }}",
-            "@utexo/rgb-lightning-node-nodejs": "${{ steps.pkg_version.outputs.nodejs }}"
-            ```
-          draft: false
-          # Mark each new release as GitHub's "Latest" so it tracks npm's
-          # `latest` dist-tag. GitHub refuses to flag a *prerelease* as
-          # Latest, so the newest release is published as a non-prerelease
-          # (the version string itself, e.g. 0.1.0-beta.11, still signals
-          # the beta line). Without this, betas were left as prereleases
-          # and the "Latest" badge stuck to an older release, drifting from
-          # npm.
-          prerelease: false
-          make_latest: true
+      - name: Validate release tag
+        id: metadata
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          EXPECTED_TAG="v${PACKAGE_VERSION}"
+          TAG_COMMIT=$(git rev-parse HEAD)
+          BARE_RANGE=$(node -p "require('./package.json').peerDependencies['@utexo/rgb-lightning-node-bare']")
+          NODEJS_RANGE=$(node -p "require('./package.json').peerDependencies['@utexo/rgb-lightning-node-nodejs']")
+
+          if [ "$RELEASE_TAG" != "$EXPECTED_TAG" ]; then
+            echo "::error::Tag $RELEASE_TAG does not match package version $PACKAGE_VERSION"
+            exit 1
+          fi
+          if [ "$(git rev-parse "${RELEASE_TAG}^{commit}")" != "$TAG_COMMIT" ]; then
+            echo "::error::Checked-out commit does not match $RELEASE_TAG"
+            exit 1
+          fi
+
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$TAG_COMMIT" origin/main; then
+            echo "::error::Release tag is not reachable from main"
+            exit 1
+          fi
+
+          {
+            echo "name=$PACKAGE_NAME"
+            echo "version=$PACKAGE_VERSION"
+            echo "tag=$RELEASE_TAG"
+            echo "commit=$TAG_COMMIT"
+            echo "bare_range=$BARE_RANGE"
+            echo "nodejs_range=$NODEJS_RANGE"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Rebuild and verify package tarball
+        id: pack
+        run: node scripts/verify-package.mjs --output-dir "$RUNNER_TEMP/package"
+
+      - name: Verify published npm artifact
+        run: |
+          node scripts/verify-registry-artifact.mjs \
+            --name "${{ steps.metadata.outputs.name }}" \
+            --version "${{ steps.metadata.outputs.version }}" \
+            --integrity "${{ steps.pack.outputs.integrity }}" \
+            --git-head "${{ steps.metadata.outputs.commit }}" \
+            --require-provenance \
+            --require-latest \
+            --wait-seconds 600
+
+      - name: Smoke test published Node package
+        run: npm run smoke:package:node -- --registry --verify-signatures
+
+      - name: Require immutable GitHub releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api \
+            --header 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/immutable-releases" \
+            --silent
+
+      - name: Create or verify GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          PACKAGE_NAME: ${{ steps.metadata.outputs.name }}
+          PACKAGE_VERSION: ${{ steps.metadata.outputs.version }}
+          PACKAGE_INTEGRITY: ${{ steps.pack.outputs.integrity }}
+          PACKAGE_TARBALL: ${{ steps.pack.outputs.tarball }}
+          PACKAGE_FILENAME: ${{ steps.pack.outputs.filename }}
+          BARE_RANGE: ${{ steps.metadata.outputs.bare_range }}
+          NODEJS_RANGE: ${{ steps.metadata.outputs.nodejs_range }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            NOTES=$(printf '%s\n\n%s\n\n%s\n%s\n%s\n\n%s\n%s' \
+              "Published npm artifact: \`${PACKAGE_NAME}@${PACKAGE_VERSION}\`" \
+              "Install: \`npm install ${PACKAGE_NAME}\`" \
+              "Native peer dependencies:" \
+              "- \`@utexo/rgb-lightning-node-bare\`: \`${BARE_RANGE}\`" \
+              "- \`@utexo/rgb-lightning-node-nodejs\`: \`${NODEJS_RANGE}\`" \
+              "Integrity:" \
+              "\`${PACKAGE_INTEGRITY}\`")
+
+            gh release create "$RELEASE_TAG" \
+              "${PACKAGE_TARBALL}#npm package tarball" \
+              --verify-tag \
+              --title "Release ${RELEASE_TAG}" \
+              --notes "$NOTES" \
+              --generate-notes \
+              --latest
+          fi
+
+          RELEASE_JSON="$RUNNER_TEMP/release.json"
+          gh release view "$RELEASE_TAG" \
+            --json tagName,isDraft,isImmutable,isPrerelease,assets \
+            > "$RELEASE_JSON"
+
+          node --input-type=commonjs - "$RELEASE_JSON" "$RELEASE_TAG" "$PACKAGE_FILENAME" <<'NODE'
+          const fs = require('node:fs')
+          const [releaseFile, expectedTag, expectedAsset] = process.argv.slice(2)
+          const release = JSON.parse(fs.readFileSync(releaseFile, 'utf8'))
+
+          if (release.tagName !== expectedTag) {
+            throw new Error(`GitHub release tag is ${release.tagName}, not ${expectedTag}`)
+          }
+          if (release.isDraft || release.isPrerelease || !release.isImmutable) {
+            throw new Error('GitHub release is not published and immutable')
+          }
+          if (!release.assets.some(asset => asset.name === expectedAsset)) {
+            throw new Error(`GitHub release is missing ${expectedAsset}`)
+          }
+          NODE
+
+          ASSET_DIR="$RUNNER_TEMP/release-asset"
+          mkdir -p "$ASSET_DIR"
+          gh release download "$RELEASE_TAG" \
+            --pattern "$PACKAGE_FILENAME" \
+            --dir "$ASSET_DIR"
+          cmp "$PACKAGE_TARBALL" "$ASSET_DIR/$PACKAGE_FILENAME"
