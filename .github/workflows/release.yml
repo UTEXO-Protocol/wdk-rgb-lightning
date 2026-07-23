@@ -1,0 +1,166 @@
+name: Release
+
+on:
+  # Triggered by rgb-lightning-node after a new SDK release
+  repository_dispatch:
+    types: [rln-release]
+
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      rln_version:
+        description: 'RLN version to pin (e.g., 0.3.0-beta.2)'
+        required: true
+        type: string
+
+  # Tag-based release (manual version bump + tag push)
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+  id-token: write # required for npm publish --provenance
+
+jobs:
+  publish:
+    name: Publish npm package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve RLN version
+        id: rln
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
+            VERSION="${{ github.event.client_payload.version }}"
+            echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+            echo "auto=true" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            VERSION="${{ inputs.rln_version }}"
+            echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+            echo "auto=true" >> $GITHUB_OUTPUT
+          else
+            echo "auto=false" >> $GITHUB_OUTPUT
+          fi
+
+      # NOTE: binding peerDependencies are intentionally NOT derived from the
+      # RLN SDK version. The native binding packages
+      # (@utexo/rgb-lightning-node-{bare,nodejs}) carry their own npm version
+      # line (0.1.0-beta.x), decoupled from the RLN SDK release tag
+      # (0.6.0-beta.x). Bump those peerDeps by hand when a new binding is cut.
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org/'
+
+      - name: Wait for required native binding releases
+        if: steps.rln.outputs.auto == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for package in \
+            '@utexo/rgb-lightning-node-bare' \
+            '@utexo/rgb-lightning-node-nodejs'; do
+            range=$(node -p "require('./package.json').peerDependencies['$package']")
+            minimum=$(printf '%s' "$range" | sed -n 's/^>=\([^ ]*\).*/\1/p')
+            if [ -z "$minimum" ]; then
+              echo "::error::Cannot derive a minimum version from $package peer range: $range"
+              exit 1
+            fi
+
+            for attempt in $(seq 1 60); do
+              if npm view "$package@$minimum" version >/dev/null 2>&1; then
+                echo "$package@$minimum is available"
+                break
+              fi
+              if [ "$attempt" -eq 60 ]; then
+                echo "::error::$package@$minimum was not published within 30 minutes"
+                exit 1
+              fi
+              echo "Waiting for $package@$minimum ($attempt/60)"
+              sleep 30
+            done
+          done
+
+      - name: Bump package prerelease version
+        if: steps.rln.outputs.auto == 'true'
+        run: npm version prerelease --preid=beta --no-git-tag-version
+
+      - name: Commit and push version bump
+        if: steps.rln.outputs.auto == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore(release): bump prerelease version (RLN SDK v${{ steps.rln.outputs.version }})"
+          git push
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check types
+        run: npm run check:types
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Get package version
+        id: pkg_version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=v$VERSION" >> $GITHUB_OUTPUT
+          echo "bare=$(node -p "require('./package.json').peerDependencies['@utexo/rgb-lightning-node-bare']")" >> $GITHUB_OUTPUT
+          echo "nodejs=$(node -p "require('./package.json').peerDependencies['@utexo/rgb-lightning-node-nodejs']")" >> $GITHUB_OUTPUT
+
+      # Create the GitHub Release for both trigger paths: the auto (RLN
+      # dispatch / workflow_dispatch) path AND the manual tag-push path.
+      # Previously this was gated on `auto == 'true'`, so a `v*` tag push
+      # published to npm but left no matching GitHub Release — the release
+      # had to be created by hand, which let npm and GitHub drift apart.
+      - name: Create Release
+        if: steps.rln.outputs.auto == 'true' || github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.pkg_version.outputs.version }}
+          name: Release ${{ steps.pkg_version.outputs.version }}
+          body: |
+            ## wdk-rgb-lightning ${{ steps.pkg_version.outputs.version }}
+
+            WDK module for RGB Lightning — channels, invoices, payments, RGB-over-LN.
+
+            ### Installation
+            ```bash
+            npm install @utexo/wdk-rgb-lightning
+            ```
+
+            ### Peer dependencies
+            ```json
+            "@utexo/rgb-lightning-node-bare": "${{ steps.pkg_version.outputs.bare }}",
+            "@utexo/rgb-lightning-node-nodejs": "${{ steps.pkg_version.outputs.nodejs }}"
+            ```
+          draft: false
+          # Mark each new release as GitHub's "Latest" so it tracks npm's
+          # `latest` dist-tag. GitHub refuses to flag a *prerelease* as
+          # Latest, so the newest release is published as a non-prerelease
+          # (the version string itself, e.g. 0.1.0-beta.11, still signals
+          # the beta line). Without this, betas were left as prereleases
+          # and the "Latest" badge stuck to an older release, drifting from
+          # npm.
+          prerelease: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,42 @@
+name: Build and Test
+
+# Mirrors UTEXO-Protocol/wdk-wallet-rgb/.github/workflows/build.yml. The
+# native bindings are optional peer deps, so CI runs without them: the
+# check is lint plus the jest unit suite, which exercises the host-side
+# JS logic (recipient routing, error wrapping, binding config mapping)
+# with the native addon mocked — no live node required.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check types
+        run: npm run check:types
+
+      - name: Run tests
+        run: npm test
