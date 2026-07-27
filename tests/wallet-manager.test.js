@@ -30,9 +30,17 @@ class FakeBinding {
 
   constructor (config) {
     this._config = config
+    this._shutdown = false
     this.attachExternalSigner = jest.fn()
-    this.shutdown = jest.fn()
-    this.bootstrap = jest.fn(() => ({ node_id: '02' + '11'.repeat(32) }))
+    this.shutdown = jest.fn(() => {
+      this._shutdown = true
+    })
+    this.bootstrap = jest.fn(() => {
+      if (this._shutdown) {
+        throw new Error('attachExternalSigner(seedHex) must be called before bootstrap()')
+      }
+      return { node_id: '02' + '11'.repeat(32) }
+    })
     this.vssStatus = jest.fn(() => ({ configured: false, url: null, allowHttp: false, lastBackupVersion: null }))
     this.ensureNode = jest.fn(() => ({}))
     FakeBinding.instances.push(this)
@@ -144,7 +152,26 @@ describe('WalletManagerRgbLightning', () => {
     const binding = FakeBinding.instances[0]
     expect(account.keyPair.privateKey).toBeNull()
     manager.dispose()
+    expect(binding.bootstrap).toHaveBeenCalledTimes(2)
     expect(binding.shutdown).toHaveBeenCalledTimes(1)
+    expect(binding.bootstrap.mock.invocationCallOrder[1])
+      .toBeLessThan(binding.shutdown.mock.invocationCallOrder[0])
+  })
+
+  it('still destroys the signer when base account cleanup fails', async () => {
+    const manager = new TestManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
+    const account = await manager.getAccount()
+    const binding = FakeBinding.instances[0]
+    Object.defineProperty(account, 'keyPair', {
+      configurable: true,
+      get: () => {
+        throw new Error('account cleanup failed')
+      }
+    })
+
+    expect(() => manager.dispose()).toThrow('account cleanup failed')
+    expect(binding.shutdown).toHaveBeenCalledTimes(1)
+    expect(manager._binding).toBeNull()
   })
 
   it('dispose is a no-op before an account has created a binding', () => {
