@@ -217,10 +217,33 @@ export default class WalletManagerRgbLightning extends WalletManager {
   }
 
   dispose () {
-    if (this._binding) {
-      this._binding.shutdown()
+    let accountDisposalError
+    let bindingShutdownError
+
+    // The base manager inspects account.keyPair while clearing its account
+    // cache. RGB Lightning derives that public identity from the external
+    // signer, so the signer must remain attached until base disposal finishes.
+    try {
+      super.dispose()
+    } catch (error) {
+      accountDisposalError = error
+    }
+
+    try {
+      this._binding?.shutdown()
+    } catch (error) {
+      bindingShutdownError = error
+    } finally {
       this._binding = null
     }
-    super.dispose()
+
+    if (accountDisposalError && bindingShutdownError) {
+      throw new AggregateError(
+        [accountDisposalError, bindingShutdownError],
+        'Failed to dispose RGB Lightning accounts and binding'
+      )
+    }
+    if (accountDisposalError) throw accountDisposalError
+    if (bindingShutdownError) throw bindingShutdownError
   }
 }
