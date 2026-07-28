@@ -580,6 +580,20 @@ describe('payAddress', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
+  it('normalizes a same-host UMA address before using the LSP client', async () => {
+    const account = makeAccount({ sendPayment: jest.fn(async () => ({ payment_hash: 'uma-local' })) })
+    const lsp = makeLsp(account)
+
+    await lsp.payAddress({ address: '$Alice@LSP.Example.IO', amtMsat: 2000 })
+
+    expect(lsp.http.resolveAddress).toHaveBeenCalledWith('alice', 2000, {
+      assetId: undefined,
+      assetAmount: undefined
+    })
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+    expect(account.sendPayment).toHaveBeenCalledWith({ invoice: 'lnbcrt-resolved' })
+  })
+
   it('uses the shared LNURL resolver directly for an external address', async () => {
     const account = makeAccount({ sendPayment: jest.fn(async () => ({ payment_hash: 'fb' })) })
     const lsp = makeLsp(account)
@@ -600,6 +614,18 @@ describe('payAddress', () => {
     expect(secondUrl).toContain('&asset_id=assetY')
     expect(secondUrl).toContain('&asset_amount=9')
     expect(out).toEqual({ invoice: 'lnbcrt-lnurl', sendResult: { payment_hash: 'fb' } })
+  })
+
+  it('routes a foreign UMA address by its own domain without querying the LSP', async () => {
+    const lsp = makeLsp(makeAccount())
+    globalThis.fetch = jest.fn()
+      .mockResolvedValueOnce(lnurlResponse(lnurlDiscovery('https://other.test/cb')))
+      .mockResolvedValueOnce(lnurlResponse({ pr: 'lnbcrt-uma-external' }))
+
+    await lsp.payAddress({ address: '$Bob@Other.Test', amtMsat: 3000 })
+
+    expect(lsp.http.resolveAddress).not.toHaveBeenCalled()
+    expect(globalThis.fetch.mock.calls[0][0]).toBe('https://other.test/.well-known/lnurlp/bob')
   })
 
   it('rejects a delegated callback by default', async () => {
@@ -666,6 +692,19 @@ describe('payAddress', () => {
       .resolves.toMatchObject({ invoice: 'lnbcrt-fallback' })
     expect(lsp.http.resolveAddress).toHaveBeenCalledTimes(1)
     expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses the normalized address when an UMA same-host payment falls back', async () => {
+    const lsp = makeLsp(makeAccount())
+    lsp.http.resolveAddress = jest.fn(async () => { throw new Error('LSP unavailable') })
+    globalThis.fetch = jest.fn()
+      .mockResolvedValueOnce(lnurlResponse(lnurlDiscovery('https://lsp.example.io/cb')))
+      .mockResolvedValueOnce(lnurlResponse({ pr: 'lnbcrt-uma-fallback' }))
+
+    await lsp.payAddress({ address: '$Alice@LSP.Example.IO', amtMsat: 2 })
+
+    expect(globalThis.fetch.mock.calls[0][0])
+      .toBe('https://lsp.example.io/.well-known/lnurlp/alice')
   })
 
   it('throws when no invoice is returned from either path', async () => {

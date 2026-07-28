@@ -872,8 +872,8 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   // composition over instance methods (e.g. for read-only accounts).
 
   /**
-   * Pay a Lightning Address (LUD-06). Works against any LNURL-pay
-   * server, including but not limited to utexo-lsp.
+   * Pay a Lightning Address (LUD-06), including UMA's `$user@host` form.
+   * Works against any LNURL-pay server, including but not limited to utexo-lsp.
    * @see ./lsp-helpers.js#payLightningAddress
    */
   payLightningAddress (addr, amountMsat, opts) {
