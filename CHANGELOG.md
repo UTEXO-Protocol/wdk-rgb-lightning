@@ -33,6 +33,11 @@ while pre-`1.0`.
 
 ### Changed
 - Raised native peer floors to `@utexo/rgb-lightning-node-bare
+  >=0.1.0-beta.18 <0.2.0` and `@utexo/rgb-lightning-node-nodejs
+  >=0.1.0-beta.14 <0.2.0`. These releases preserve duplicate-channel
+  protection while allowing a trusted virtual channel to be opened again
+  after the previous native session reaches its terminal abandoned state.
+- Raised native peer floors to `@utexo/rgb-lightning-node-bare
   >=0.1.0-beta.17 <0.2.0` and `@utexo/rgb-lightning-node-nodejs
   >=0.1.0-beta.13 <0.2.0`, the first releases with stable RGB assignment
   decoding.
