@@ -18,6 +18,7 @@ import type {
   BtcSendRequest,
   CommitPreparedSendRequest,
   DecodedLightningInvoice,
+  DecodedRgbInvoice,
   AddressReceipt,
   PendingRgbSendPlan,
   PreparedRgbSend,
@@ -94,6 +95,8 @@ const addressReceipts: Promise<readonly AddressReceipt[]> =
   account.listAddressReceipts('bcrt1ptest')
 const decodedLightningInvoice: Promise<DecodedLightningInvoice> =
   account.decodeInvoice('lnbcrt1...')
+const decodedRgbInvoice: Promise<DecodedRgbInvoice> =
+  account.decodeRgbInvoice('rgb:...')
 
 // @ts-expect-error recovery mode is explicit; arbitrary sync strategies are rejected.
 account.refreshWalletSnapshot({ mode: 'fast' })
@@ -119,6 +122,7 @@ void preparedRgb
 void pendingRgb
 void addressReceipts
 void decodedLightningInvoice
+void decodedRgbInvoice
 void payAddressOptions
 void minimumLiquidity
 void nodeHealth

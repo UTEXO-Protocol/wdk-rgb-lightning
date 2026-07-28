@@ -280,6 +280,23 @@ export interface DecodedLightningInvoice {
   network: string
 }
 
+export type DecodedRgbAssignment =
+  | { type: 'Fungible'; value: number }
+  | { type: 'NonFungible' }
+  | { type: 'InflationRight'; value: number }
+  | { type: 'Any' }
+
+export interface DecodedRgbInvoice {
+  recipient_id: string
+  recipient_type: 'Blind' | 'Witness'
+  asset_schema: string | null
+  asset_id: string | null
+  assignment: DecodedRgbAssignment
+  network: string
+  expiration_timestamp: number | null
+  transport_endpoints: string[]
+}
+
 export interface CreateHodlInvoiceParams {
   /** 32-byte payment hash (hex). The preimage is released later via claimHodlInvoice. */
   paymentHash: string
@@ -656,7 +673,7 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
   listTransfersByTxid(txid: string): Promise<object>
 
   /** Decodes an RGB invoice without creating a transfer. */
-  decodeRgbInvoice(invoice: string): Promise<object>
+  decodeRgbInvoice(invoice: string): Promise<DecodedRgbInvoice>
 
   /** Returns RGB asset media identified by its content digest. */
   getAssetMedia(digest: string): Promise<object>

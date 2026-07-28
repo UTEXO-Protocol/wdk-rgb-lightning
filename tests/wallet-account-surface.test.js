@@ -48,6 +48,17 @@ const DECODED_LIGHTNING_INVOICE = Object.freeze({
   network: 'Regtest'
 })
 
+const DECODED_RGB_INVOICE = Object.freeze({
+  recipient_id: 'bcrt:utxob:test',
+  recipient_type: 'Blind',
+  asset_schema: 'Nia',
+  asset_id: 'rgb:test',
+  assignment: Object.freeze({ type: 'Fungible', value: 0 }),
+  network: 'Regtest',
+  expiration_timestamp: 1_750_003_600,
+  transport_endpoints: Object.freeze(['rpc://127.0.0.1:3000/json-rpc'])
+})
+
 // Build a fake RLN node whose methods are jest.fn returning canned
 // values. Every method the account forwards to is present so we can
 // assert forwarding + arg pass-through.
@@ -86,7 +97,7 @@ function makeNode (overrides = {}) {
     refreshTransfers: jest.fn(() => undefined),
     failTransfers: jest.fn((r) => ({ failed: r })),
     rgbInvoice: jest.fn((r) => ({ rgbinv: r })),
-    decodeRgbInvoice: jest.fn((i) => ({ decodedRgb: i })),
+    decodeRgbInvoice: jest.fn(() => DECODED_RGB_INVOICE),
     sendRgb: jest.fn((r) => ({ txid: 'rgbtx', echo: r })),
     prepareRgbSend: jest.fn(() => ({
       plan_id: 'ab'.repeat(32),
@@ -807,7 +818,8 @@ describe('RGB invoices / transfers / media', () => {
   it('decodeRgbInvoice forwards to node.decodeRgbInvoice', async () => {
     const node = makeNode()
     const account = makeAccount({ node })
-    await expect(account.decodeRgbInvoice('rgb:abc')).resolves.toEqual({ decodedRgb: 'rgb:abc' })
+    await expect(account.decodeRgbInvoice('rgb:abc')).resolves.toEqual(DECODED_RGB_INVOICE)
+    expect(node.decodeRgbInvoice).toHaveBeenCalledWith('rgb:abc')
   })
 
   it('sendRgbAsset forwards to node.sendRgb', async () => {
