@@ -9,10 +9,14 @@ while pre-`1.0`.
 ## [Unreleased]
 
 ### Added
+- Strict `listAddressReceipts(address)` validation and account exposure for
+  authoritative BTC receive settlement, partial-payment, confirmation, and
+  reorg reconciliation.
 - Exact BTC and RGB on-chain send-plan APIs. Accounts can prepare the native
-  unsigned transaction, validate its transaction id and decimal-safe fee
-  totals, commit that exact plan, cancel an abandoned BTC plan, and inspect
-  bounded pending vanilla transactions for crash recovery.
+  unsigned transaction without exposing PSBT material to JavaScript, validate
+  its transaction id and decimal-safe fee totals, idempotently commit that
+  exact native plan, cancel abandoned BTC or RGB plans, and inspect bounded
+  pending plans for crash recovery.
 - Strict response validation for prepared plans, committed transactions, BTC
   cancellation acknowledgements, and pending-operation records. Malformed or
   lossy native binding responses fail closed at the WDK boundary.

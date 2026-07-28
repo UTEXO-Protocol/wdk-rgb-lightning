@@ -2,8 +2,11 @@ import {
   validateCancelBtcSendPlanResponse,
   validateCommittedBtcSendResponse,
   validateCommittedRgbSendResponse,
+  validatePendingRgbSendPlans,
   validatePendingVanillaTransactions,
-  validatePreparedSendResponse
+  validatePreparedRgbSendResponse,
+  validatePreparedSendResponse,
+  validateSendPlanRequest
 } from '../src/send-plan-contract.js'
 
 const TXID = 'ab'.repeat(32)
@@ -11,7 +14,6 @@ const TXID = 'ab'.repeat(32)
 function plan (overrides = {}) {
   return {
     plan_id: TXID,
-    unsigned_psbt: 'cHNidP8BAAoCAAAAAQ',
     fee_sat: '100',
     total_input_sat: '10000',
     total_output_sat: '9900',
@@ -31,7 +33,7 @@ describe('prepared send contract', () => {
   it.each([
     ['unknown keys', { extra: true }],
     ['invalid txid', { plan_id: 'abc' }],
-    ['empty PSBT', { unsigned_psbt: '' }],
+    ['native commit material', { unsigned_psbt: 'must-not-cross-the-JS-boundary' }],
     ['JSON number fee', { fee_sat: 100 }],
     ['negative decimal', { fee_sat: '-1' }],
     ['fee mismatch', { fee_sat: '99' }],
@@ -41,6 +43,9 @@ describe('prepared send contract', () => {
   })
 
   it('validates exact commit and cancellation responses', () => {
+    expect(validateSendPlanRequest({ plan_id: TXID.toUpperCase() })).toEqual({
+      plan_id: TXID
+    })
     expect(validateCommittedBtcSendResponse({ txid: TXID })).toEqual({ txid: TXID })
     expect(validateCommittedRgbSendResponse({
       txid: TXID,
@@ -58,5 +63,34 @@ describe('prepared send contract', () => {
       txid: TXID,
       operation_type: 'SendBtc'
     }])
+    expect(validatePreparedRgbSendResponse({
+      ...plan(),
+      batch_transfer_idx: 7
+    })).toEqual({
+      ...plan(),
+      batch_transfer_idx: 7
+    })
+    expect(validatePendingRgbSendPlans([{
+      plan_id: TXID,
+      batch_transfer_idx: 7
+    }])).toEqual([{
+      plan_id: TXID,
+      batch_transfer_idx: 7
+    }])
+  })
+
+  it('rejects commit material and duplicate pending native identities', () => {
+    expect(() => validateSendPlanRequest({
+      plan_id: TXID,
+      unsigned_psbt: 'must-not-cross-the-WDK-boundary'
+    })).toThrow()
+    expect(() => validatePendingVanillaTransactions([
+      { txid: TXID, operation_type: 'SendBtc' },
+      { txid: TXID.toUpperCase(), operation_type: 'SendBtc' }
+    ])).toThrow()
+    expect(() => validatePendingRgbSendPlans([
+      { plan_id: TXID, batch_transfer_idx: 7 },
+      { plan_id: TXID.toUpperCase(), batch_transfer_idx: 7 }
+    ])).toThrow()
   })
 })

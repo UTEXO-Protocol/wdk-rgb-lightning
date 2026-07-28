@@ -77,7 +77,7 @@ function makeNode (overrides = {}) {
     sendRgb: jest.fn((r) => ({ txid: 'rgbtx', echo: r })),
     prepareRgbSend: jest.fn(() => ({
       plan_id: 'ab'.repeat(32),
-      unsigned_psbt: 'cHNidP8BAAoCAAAAAQ',
+      batch_transfer_idx: 7,
       fee_sat: '100',
       total_input_sat: '10000',
       total_output_sat: '9900',
@@ -87,6 +87,11 @@ function makeNode (overrides = {}) {
       txid: 'ab'.repeat(32),
       batch_transfer_idx: 7
     })),
+    cancelRgbSendPlan: jest.fn(() => ({ cancelled: true })),
+    listPendingRgbSendPlans: jest.fn(() => [{
+      plan_id: 'ab'.repeat(32),
+      batch_transfer_idx: 7
+    }]),
     inflate: jest.fn((r) => ({ inflated: r })),
     getAssetMedia: jest.fn((d) => ({ media: d })),
     postAssetMedia: jest.fn((r) => ({ posted: r })),
@@ -94,7 +99,6 @@ function makeNode (overrides = {}) {
     sendBtc: jest.fn((r) => ({ txid: 'btctx', echo: r })),
     prepareBtcSend: jest.fn(() => ({
       plan_id: 'ab'.repeat(32),
-      unsigned_psbt: 'cHNidP8BAAoCAAAAAQ',
       fee_sat: '100',
       total_input_sat: '10000',
       total_output_sat: '9900',
@@ -105,6 +109,12 @@ function makeNode (overrides = {}) {
     listPendingVanillaTransactions: jest.fn(() => [{
       txid: 'cd'.repeat(32),
       operation_type: 'SendBtc'
+    }]),
+    listAddressReceipts: jest.fn(() => [{
+      txid: 'ef'.repeat(32),
+      amount_sat: '125000',
+      confirmations: 2,
+      block_height: 200
     }]),
     listTransactions: jest.fn(() => ({ transactions: [] })),
     listTransactionsByTxid: jest.fn(() => []),
@@ -804,12 +814,18 @@ describe('RGB invoices / transfers / media', () => {
     expect(plan.fee_sat).toBe('100')
     expect(node.prepareRgbSend).toHaveBeenCalledWith(sendRequest)
     await expect(account.commitPreparedRgbSend({
-      plan_id: plan.plan_id,
-      unsigned_psbt: plan.unsigned_psbt
+      plan_id: plan.plan_id
     })).resolves.toMatchObject({
       txid: plan.plan_id,
       batch_transfer_idx: 7
     })
+    await expect(account.cancelRgbSendPlan({
+      plan_id: plan.plan_id
+    })).resolves.toEqual({ cancelled: true })
+    await expect(account.listPendingRgbSendPlans()).resolves.toEqual([{
+      plan_id: plan.plan_id,
+      batch_transfer_idx: 7
+    }])
   })
 
   it('getAssetMedia forwards the digest', async () => {
@@ -841,8 +857,7 @@ describe('BTC ops', () => {
     expect(plan.fee_sat).toBe('100')
     expect(node.prepareBtcSend).toHaveBeenCalledWith(sendRequest)
     await expect(account.commitPreparedBtcSend({
-      plan_id: plan.plan_id,
-      unsigned_psbt: plan.unsigned_psbt
+      plan_id: plan.plan_id
     })).resolves.toEqual({ txid: plan.plan_id })
     await expect(account.cancelBtcSendPlan({ plan_id: plan.plan_id }))
       .resolves.toEqual({ cancelled: true })
@@ -851,6 +866,14 @@ describe('BTC ops', () => {
         txid: 'cd'.repeat(32),
         operation_type: 'SendBtc'
       }])
+    await expect(account.listAddressReceipts('bcrt1ptest'))
+      .resolves.toEqual([{
+        txid: 'ef'.repeat(32),
+        amount_sat: '125000',
+        confirmations: 2,
+        block_height: 200
+      }])
+    expect(node.listAddressReceipts).toHaveBeenCalledWith('bcrt1ptest')
   })
 
   it('getBalance parses vanilla.spendable to a bigint', async () => {

@@ -17,6 +17,9 @@ import type {
   IRgbLightningBinding,
   BtcSendRequest,
   CommitPreparedSendRequest,
+  AddressReceipt,
+  PendingRgbSendPlan,
+  PreparedRgbSend,
   PreparedSend,
   LnurlPayOptions,
   LspLiquidityTimeoutError,
@@ -75,11 +78,19 @@ const btcSendRequest: BtcSendRequest = {
 }
 const preparedBtc: Promise<PreparedSend> = account.prepareBtcSend(btcSendRequest)
 const preparedCommit: CommitPreparedSendRequest = {
-  plan_id: 'ab'.repeat(32),
-  unsigned_psbt: 'cHNidP8BAAoCAAAAAQ'
+  plan_id: 'ab'.repeat(32)
 }
 const committedBtc = account.commitPreparedBtcSend(preparedCommit)
 const cancelledBtc = account.cancelBtcSendPlan({ plan_id: preparedCommit.plan_id })
+const preparedRgb: Promise<PreparedRgbSend> = account.prepareRgbSend({
+  donation: false,
+  fee_rate: 2,
+  min_confirmations: 1,
+  recipient_groups: []
+})
+const pendingRgb: Promise<readonly PendingRgbSendPlan[]> = account.listPendingRgbSendPlans()
+const addressReceipts: Promise<readonly AddressReceipt[]> =
+  account.listAddressReceipts('bcrt1ptest')
 
 // @ts-expect-error recovery mode is explicit; arbitrary sync strategies are rejected.
 account.refreshWalletSnapshot({ mode: 'fast' })
@@ -101,6 +112,9 @@ void lnurlOptions
 void preparedBtc
 void committedBtc
 void cancelledBtc
+void preparedRgb
+void pendingRgb
+void addressReceipts
 void payAddressOptions
 void minimumLiquidity
 void nodeHealth

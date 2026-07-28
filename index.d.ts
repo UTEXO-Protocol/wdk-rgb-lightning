@@ -389,16 +389,18 @@ export interface BtcSendRequest {
 
 export interface PreparedSend {
   plan_id: string
-  unsigned_psbt: string
   fee_sat: DecimalString
   total_input_sat: DecimalString
   total_output_sat: DecimalString
   size_vbytes: DecimalString
 }
 
+export interface PreparedRgbSend extends PreparedSend {
+  batch_transfer_idx: number
+}
+
 export interface CommitPreparedSendRequest {
   plan_id: string
-  unsigned_psbt: string
 }
 
 export interface CommittedBtcSend {
@@ -413,6 +415,18 @@ export interface CommittedRgbSend {
 export interface PendingVanillaTransaction {
   txid: string
   operation_type: 'CreateUtxos' | 'Drain' | 'SendBtc'
+}
+
+export interface PendingRgbSendPlan {
+  plan_id: string
+  batch_transfer_idx: number
+}
+
+export interface AddressReceipt {
+  txid: string
+  amount_sat: DecimalString
+  confirmations: number
+  block_height: number | null
 }
 
 /** Native `JsonRgbInvoiceRequest` shape for `createRgbInvoice`. */
@@ -750,8 +764,10 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   failTransfers(request: object): Promise<object>
   createRgbInvoice(request: CreateRgbInvoiceRequest | object): Promise<object>
   sendRgbAsset(request: SendRgbAssetRequest | object): Promise<object>
-  prepareRgbSend(request: SendRgbAssetRequest): Promise<PreparedSend>
+  prepareRgbSend(request: SendRgbAssetRequest): Promise<PreparedRgbSend>
   commitPreparedRgbSend(request: CommitPreparedSendRequest): Promise<CommittedRgbSend>
+  cancelRgbSendPlan(request: { plan_id: string }): Promise<{ cancelled: true }>
+  listPendingRgbSendPlans(): Promise<readonly PendingRgbSendPlan[]>
   postAssetMedia(request: object): Promise<object>
 
   // BTC on-chain
@@ -760,6 +776,7 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   commitPreparedBtcSend(request: CommitPreparedSendRequest): Promise<CommittedBtcSend>
   cancelBtcSendPlan(request: { plan_id: string }): Promise<{ cancelled: true }>
   listPendingVanillaTransactions(): Promise<readonly PendingVanillaTransaction[]>
+  listAddressReceipts(address: string): Promise<readonly AddressReceipt[]>
   sendTransaction(tx: Transaction | object): Promise<TransactionResult>
   rotateAddress(): Promise<string>
   createUtxos(request: object): Promise<{ ok: true }>

@@ -31,7 +31,6 @@ export function validatePreparedSendResponse (value) {
   const response = requireObject(value, 'prepared send response')
   requireExactKeys(response, [
     'plan_id',
-    'unsigned_psbt',
     'fee_sat',
     'total_input_sat',
     'total_output_sat',
@@ -41,10 +40,6 @@ export function validatePreparedSendResponse (value) {
   if (typeof response.plan_id !== 'string' || !TXID_PATTERN.test(response.plan_id)) {
     fail('prepared send response.plan_id', 'be a 32-byte transaction id')
   }
-  if (typeof response.unsigned_psbt !== 'string' || response.unsigned_psbt.length === 0) {
-    fail('prepared send response.unsigned_psbt', 'be a non-empty PSBT')
-  }
-
   const fee = BigInt(requireDecimal(response.fee_sat, 'prepared send response.fee_sat'))
   const totalInput = BigInt(
     requireDecimal(response.total_input_sat, 'prepared send response.total_input_sat')
@@ -68,11 +63,39 @@ export function validatePreparedSendResponse (value) {
 
   return Object.freeze({
     plan_id: response.plan_id.toLowerCase(),
-    unsigned_psbt: response.unsigned_psbt,
     fee_sat: response.fee_sat,
     total_input_sat: response.total_input_sat,
     total_output_sat: response.total_output_sat,
     size_vbytes: response.size_vbytes
+  })
+}
+
+export function validatePreparedRgbSendResponse (value) {
+  const response = requireObject(value, 'prepared RGB send response')
+  requireExactKeys(response, [
+    'plan_id',
+    'batch_transfer_idx',
+    'fee_sat',
+    'total_input_sat',
+    'total_output_sat',
+    'size_vbytes'
+  ], 'prepared RGB send response')
+  if (!Number.isSafeInteger(response.batch_transfer_idx) || response.batch_transfer_idx < 0) {
+    fail(
+      'prepared RGB send response.batch_transfer_idx',
+      'be a non-negative safe integer'
+    )
+  }
+  const prepared = validatePreparedSendResponse({
+    plan_id: response.plan_id,
+    fee_sat: response.fee_sat,
+    total_input_sat: response.total_input_sat,
+    total_output_sat: response.total_output_sat,
+    size_vbytes: response.size_vbytes
+  })
+  return Object.freeze({
+    ...prepared,
+    batch_transfer_idx: response.batch_transfer_idx
   })
 }
 
@@ -81,6 +104,14 @@ function requireTxid (value, path) {
     fail(path, 'be a 32-byte transaction id')
   }
   return value.toLowerCase()
+}
+
+export function validateSendPlanRequest (value) {
+  const request = requireObject(value, 'send plan request')
+  requireExactKeys(request, ['plan_id'], 'send plan request')
+  return Object.freeze({
+    plan_id: requireTxid(request.plan_id, 'send plan request.plan_id')
+  })
 }
 
 export function validateCommittedBtcSendResponse (value) {
@@ -123,6 +154,7 @@ export function validatePendingVanillaTransactions (value) {
   if (!Array.isArray(value) || value.length > 10_000) {
     fail('pending vanilla transactions', 'be a bounded array')
   }
+  const transactionIds = new Set()
   return Object.freeze(value.map((entry, index) => {
     const transaction = requireObject(entry, `pending vanilla transactions[${index}]`)
     requireExactKeys(
@@ -136,12 +168,50 @@ export function validatePendingVanillaTransactions (value) {
         'be a supported vanilla operation'
       )
     }
+    const txid = requireTxid(
+      transaction.txid,
+      `pending vanilla transactions[${index}].txid`
+    )
+    if (transactionIds.has(txid)) {
+      fail(`pending vanilla transactions[${index}].txid`, 'be unique')
+    }
+    transactionIds.add(txid)
     return Object.freeze({
-      txid: requireTxid(
-        transaction.txid,
-        `pending vanilla transactions[${index}].txid`
-      ),
+      txid,
       operation_type: transaction.operation_type
+    })
+  }))
+}
+
+export function validatePendingRgbSendPlans (value) {
+  if (!Array.isArray(value) || value.length > 10_000) {
+    fail('pending RGB send plans', 'be a bounded array')
+  }
+  const planIds = new Set()
+  return Object.freeze(value.map((entry, index) => {
+    const plan = requireObject(entry, `pending RGB send plans[${index}]`)
+    requireExactKeys(
+      plan,
+      ['plan_id', 'batch_transfer_idx'],
+      `pending RGB send plans[${index}]`
+    )
+    const planId = requireTxid(
+      plan.plan_id,
+      `pending RGB send plans[${index}].plan_id`
+    )
+    if (planIds.has(planId)) {
+      fail(`pending RGB send plans[${index}].plan_id`, 'be unique')
+    }
+    planIds.add(planId)
+    if (!Number.isSafeInteger(plan.batch_transfer_idx) || plan.batch_transfer_idx < 0) {
+      fail(
+        `pending RGB send plans[${index}].batch_transfer_idx`,
+        'be a non-negative safe integer'
+      )
+    }
+    return Object.freeze({
+      plan_id: planId,
+      batch_transfer_idx: plan.batch_transfer_idx
     })
   }))
 }

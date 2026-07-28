@@ -48,9 +48,13 @@ import {
   validateCancelBtcSendPlanResponse,
   validateCommittedBtcSendResponse,
   validateCommittedRgbSendResponse,
+  validatePendingRgbSendPlans,
   validatePendingVanillaTransactions,
-  validatePreparedSendResponse
+  validatePreparedRgbSendResponse,
+  validatePreparedSendResponse,
+  validateSendPlanRequest
 } from './send-plan-contract.js'
+import { validateAddressReceipts } from './address-receipt-contract.js'
 
 export { PENDING_ADDRESS }
 
@@ -903,11 +907,33 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   async sendRgbAsset (request) { return this._node.sendRgb(request) }
 
   async prepareRgbSend (request) {
-    return validatePreparedSendResponse(this._node.prepareRgbSend(request))
+    return validatePreparedRgbSendResponse(this._node.prepareRgbSend(request))
   }
 
   async commitPreparedRgbSend (request) {
-    return validateCommittedRgbSendResponse(this._node.commitPreparedRgbSend(request))
+    return validateCommittedRgbSendResponse(
+      this._node.commitPreparedRgbSend(validateSendPlanRequest(request))
+    )
+  }
+
+  async cancelRgbSendPlan (request) {
+    if (typeof this._node.cancelRgbSendPlan !== 'function') {
+      throw new Error(
+        'The installed RGB Lightning native binding does not expose cancelRgbSendPlan()'
+      )
+    }
+    return validateCancelBtcSendPlanResponse(
+      this._node.cancelRgbSendPlan(validateSendPlanRequest(request))
+    )
+  }
+
+  async listPendingRgbSendPlans () {
+    if (typeof this._node.listPendingRgbSendPlans !== 'function') {
+      throw new Error(
+        'The installed RGB Lightning native binding does not expose listPendingRgbSendPlans()'
+      )
+    }
+    return validatePendingRgbSendPlans(this._node.listPendingRgbSendPlans())
   }
 
   /** @param {Object} request - JsonInflateRequest */
@@ -928,15 +954,31 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   }
 
   async commitPreparedBtcSend (request) {
-    return validateCommittedBtcSendResponse(this._node.commitPreparedBtcSend(request))
+    return validateCommittedBtcSendResponse(
+      this._node.commitPreparedBtcSend(validateSendPlanRequest(request))
+    )
   }
 
   async cancelBtcSendPlan (request) {
-    return validateCancelBtcSendPlanResponse(this._node.cancelBtcSendPlan(request))
+    return validateCancelBtcSendPlanResponse(
+      this._node.cancelBtcSendPlan(validateSendPlanRequest(request))
+    )
   }
 
   async listPendingVanillaTransactions () {
     return validatePendingVanillaTransactions(this._node.listPendingVanillaTransactions())
+  }
+
+  async listAddressReceipts (address) {
+    if (typeof address !== 'string' || address.length === 0) {
+      throw new TypeError('listAddressReceipts(address) requires a non-empty address')
+    }
+    if (typeof this._node.listAddressReceipts !== 'function') {
+      throw new Error(
+        'The installed RGB Lightning native binding does not expose listAddressReceipts()'
+      )
+    }
+    return validateAddressReceipts(this._node.listAddressReceipts(address))
   }
 
   /**
