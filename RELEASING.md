@@ -56,8 +56,8 @@ git push origin v0.1.0-beta.15
 The tag-triggered `Release` workflow:
 
 1. Requires the tag to match `package.json` and point to the current `main`.
-2. Runs lint, type checking, coverage, audit, package-content validation, and a
-   clean Node/native-binding smoke test.
+2. Runs lint, type checking, coverage, production dependency audit,
+   package-content validation, and a clean Node/native-binding smoke test.
 3. Rebuilds the npm tarball deterministically and records its integrity.
 4. Stages that tarball through npm OIDC with the `latest` dist-tag.
 

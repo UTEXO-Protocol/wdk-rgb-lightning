@@ -68,6 +68,9 @@ while pre-`1.0`.
 - Replaced the direct-push release job with a reviewed, tag-driven pipeline
   that validates native peers, package integrity, npm provenance, registry
   installation, and the immutable GitHub release artifact.
+- Scoped the blocking release audit to production dependencies while retaining
+  lint, type, coverage, package-content, and native smoke validation for the
+  dev toolchain used to build the release.
 - Documented the account's forwarded node-level issuance and inflation calls
   while identifying `@utexo/wdk-wallet-rgb` as the supported path for
   issuance-focused flows and clarifying that the two modules own separate
