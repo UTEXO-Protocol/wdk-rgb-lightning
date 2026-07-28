@@ -321,7 +321,7 @@ function snapshotPayment (value, path) {
   const item = record(value, path)
   const fields = [
     'amt_msat', 'asset_amount', 'asset_id', 'payment_hash', 'payment_type',
-    'status', 'created_at', 'updated_at', 'payee_pubkey'
+    'status', 'created_at', 'updated_at', 'payee_pubkey', 'fee_paid_msat'
   ]
   exactKeys(item, fields, [], path)
   nullableDecimal(item.amt_msat, `${path}.amt_msat`)
@@ -333,6 +333,7 @@ function snapshotPayment (value, path) {
   decimal(item.created_at, `${path}.created_at`)
   decimal(item.updated_at, `${path}.updated_at`)
   text(item.payee_pubkey, `${path}.payee_pubkey`, 130)
+  nullableDecimal(item.fee_paid_msat, `${path}.fee_paid_msat`)
 }
 
 function transferEndpoint (value, path) {

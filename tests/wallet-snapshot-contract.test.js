@@ -106,7 +106,8 @@ function activitySnapshot (overrides = {}) {
       status: 'Succeeded',
       created_at: '1000',
       updated_at: '1001',
-      payee_pubkey: '02abc'
+      payee_pubkey: '02abc',
+      fee_paid_msat: null
     }],
     transfers: [{
       asset_id: 'asset-1',
@@ -242,6 +243,18 @@ describe('wallet snapshot response contract', () => {
       .toThrow('snapshot.transactions')
     expect(validateWalletSnapshotResponse(activitySnapshot(), options).payments)
       .toHaveLength(1)
+  })
+
+  it('preserves the exact actual Lightning fee as decimal text', () => {
+    const options = normalizeWalletSnapshotOptions({
+      includeActivity: true,
+      assetIds: ['asset-1']
+    })
+    const value = activitySnapshot()
+    value.payments[0].fee_paid_msat = '1250'
+
+    expect(validateWalletSnapshotResponse(value, options).payments[0].fee_paid_msat)
+      .toBe('1250')
   })
 
   it('accepts transfer endpoint metadata and nullable transfer fields', () => {

@@ -132,6 +132,7 @@ export interface WalletSnapshotPayment {
   created_at: DecimalString
   updated_at: DecimalString
   payee_pubkey: string
+  fee_paid_msat: DecimalString | null
 }
 
 export interface WalletSnapshotTransferEndpoint {
@@ -313,6 +314,49 @@ export interface OpenChannelRequest {
  * `sent`/`received` are gone).
  */
 export type RgbPaymentType = 'Outbound' | 'InboundAutoClaim' | 'InboundHodl'
+
+export type LightningPaymentStatus =
+  | 'Pending'
+  | 'Claimable'
+  | 'Claiming'
+  | 'Succeeded'
+  | 'Cancelled'
+  | 'Failed'
+
+export interface SendPaymentRequest {
+  invoice: string
+  amt_msat?: number
+  asset_id?: string
+  asset_amount?: number
+  /**
+   * Absolute maximum routing fee accepted by LDK for this payment, in millisatoshis.
+   * Callers should always set an explicit policy-derived cap.
+   */
+  max_total_routing_fee_msat?: number
+}
+
+export interface SendPaymentResult {
+  payment_id: string
+  payment_hash: string | null
+  payment_secret: string | null
+  status: LightningPaymentStatus
+}
+
+export interface LightningPayment {
+  amt_msat: number | null
+  asset_amount: number | null
+  asset_id: string | null
+  payment_hash: string
+  payment_type: RgbPaymentType
+  status: LightningPaymentStatus
+  created_at: number
+  updated_at: number
+  payee_pubkey: string
+  preimage: string | null
+  description_hash: string | null
+  /** Actual routing fee reported by LDK after a successful outbound payment. */
+  fee_paid_msat: number | null
+}
 
 /** RGB assignment discriminant accepted by RLN's `parse_assignment_kind`. */
 export type RgbAssignmentKind = 'Fungible' | 'NonFungible' | 'InflationRight' | 'ReplaceRight' | 'Any'
@@ -524,10 +568,10 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
   getInvoiceStatus(invoice: string): Promise<object>
 
   /** Returns the node's Lightning payment history. */
-  listPayments(): Promise<object>
+  listPayments(): Promise<LightningPayment[]>
 
   /** Returns one Lightning payment by hash and payment type. */
-  getPayment(paymentHashHex: string, paymentType: RgbPaymentType): Promise<object>
+  getPayment(paymentHashHex: string, paymentType: RgbPaymentType): Promise<LightningPayment>
 
   /** Returns RGB assets, optionally filtered by asset schema. */
   listAssets(filterAssetSchemas?: string[]): Promise<object>
@@ -663,7 +707,7 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   claimHodlInvoice(request: object): Promise<object>
 
   // Payments
-  sendPayment(request: object): Promise<object>
+  sendPayment(request: SendPaymentRequest): Promise<SendPaymentResult>
   keysend(request: object): Promise<object>
 
   // RGB assets

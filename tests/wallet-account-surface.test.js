@@ -661,7 +661,7 @@ describe('payments', () => {
   it('sendPayment forwards to node.sendPayment', async () => {
     const node = makeNode()
     const account = makeAccount({ node })
-    const req = { invoice: 'lnbc1' }
+    const req = { invoice: 'lnbc1', max_total_routing_fee_msat: 1_250 }
     await expect(account.sendPayment(req)).resolves.toMatchObject({ payment_hash: 'sp' })
     expect(node.sendPayment).toHaveBeenCalledWith(req)
   })

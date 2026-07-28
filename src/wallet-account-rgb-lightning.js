@@ -825,7 +825,10 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   // Payments
   // ==========================================================================
 
-  /** @param {Object} request - JsonSendPaymentRequest (invoice, amt_msat?, asset_id?, ...) */
+  /**
+   * @param {import('../index.js').SendPaymentRequest} request
+   * @returns {Promise<import('../index.js').SendPaymentResult>}
+   */
   async sendPayment (request) { return this._node.sendPayment(request) }
 
   /** @param {Object} request - JsonKeysendRequest (dest_pubkey, amt_msat, asset_id?, ...) */

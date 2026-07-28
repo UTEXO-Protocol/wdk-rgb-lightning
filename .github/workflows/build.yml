@@ -2,9 +2,9 @@ name: Build and Test
 
 on:
   push:
-    branches: [main]
+    branches: [main, iris-wallet]
   pull_request:
-    branches: [main]
+    branches: [main, iris-wallet]
 
 permissions:
   contents: read
