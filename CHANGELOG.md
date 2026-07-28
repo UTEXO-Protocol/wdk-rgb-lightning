@@ -9,6 +9,13 @@ while pre-`1.0`.
 ## [Unreleased]
 
 ### Added
+- Exact BTC and RGB on-chain send-plan APIs. Accounts can prepare the native
+  unsigned transaction, validate its transaction id and decimal-safe fee
+  totals, commit that exact plan, cancel an abandoned BTC plan, and inspect
+  bounded pending vanilla transactions for crash recovery.
+- Strict response validation for prepared plans, committed transactions, BTC
+  cancellation acknowledgements, and pending-operation records. Malformed or
+  lossy native binding responses fail closed at the WDK boundary.
 - UMA address-format compatibility across Lightning Address payment flows.
   `$recipient@example.com` is normalized to `recipient@example.com` before
   LNURL discovery. New root exports include `isUmaAddress`,

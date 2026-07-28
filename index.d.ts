@@ -380,6 +380,41 @@ export interface SendRgbAssetRequest {
   recipient_groups: Array<{ asset_id: string; recipients: RgbSendRecipient[] }>
 }
 
+export interface BtcSendRequest {
+  amount: number
+  address: string
+  fee_rate: number
+  skip_sync: boolean
+}
+
+export interface PreparedSend {
+  plan_id: string
+  unsigned_psbt: string
+  fee_sat: DecimalString
+  total_input_sat: DecimalString
+  total_output_sat: DecimalString
+  size_vbytes: DecimalString
+}
+
+export interface CommitPreparedSendRequest {
+  plan_id: string
+  unsigned_psbt: string
+}
+
+export interface CommittedBtcSend {
+  txid: string
+}
+
+export interface CommittedRgbSend {
+  txid: string
+  batch_transfer_idx: number
+}
+
+export interface PendingVanillaTransaction {
+  txid: string
+  operation_type: 'CreateUtxos' | 'Drain' | 'SendBtc'
+}
+
 /** Native `JsonRgbInvoiceRequest` shape for `createRgbInvoice`. */
 export interface CreateRgbInvoiceRequest {
   /** REQUIRED — RLN rejects the request on deserialise if omitted. */
@@ -715,10 +750,16 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   failTransfers(request: object): Promise<object>
   createRgbInvoice(request: CreateRgbInvoiceRequest | object): Promise<object>
   sendRgbAsset(request: SendRgbAssetRequest | object): Promise<object>
+  prepareRgbSend(request: SendRgbAssetRequest): Promise<PreparedSend>
+  commitPreparedRgbSend(request: CommitPreparedSendRequest): Promise<CommittedRgbSend>
   postAssetMedia(request: object): Promise<object>
 
   // BTC on-chain
-  sendBtc(request: object): Promise<object>
+  sendBtc(request: BtcSendRequest): Promise<CommittedBtcSend>
+  prepareBtcSend(request: BtcSendRequest): Promise<PreparedSend>
+  commitPreparedBtcSend(request: CommitPreparedSendRequest): Promise<CommittedBtcSend>
+  cancelBtcSendPlan(request: { plan_id: string }): Promise<{ cancelled: true }>
+  listPendingVanillaTransactions(): Promise<readonly PendingVanillaTransaction[]>
   sendTransaction(tx: Transaction | object): Promise<TransactionResult>
   rotateAddress(): Promise<string>
   createUtxos(request: object): Promise<{ ok: true }>

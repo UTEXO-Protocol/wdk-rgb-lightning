@@ -75,11 +75,37 @@ function makeNode (overrides = {}) {
     rgbInvoice: jest.fn((r) => ({ rgbinv: r })),
     decodeRgbInvoice: jest.fn((i) => ({ decodedRgb: i })),
     sendRgb: jest.fn((r) => ({ txid: 'rgbtx', echo: r })),
+    prepareRgbSend: jest.fn(() => ({
+      plan_id: 'ab'.repeat(32),
+      unsigned_psbt: 'cHNidP8BAAoCAAAAAQ',
+      fee_sat: '100',
+      total_input_sat: '10000',
+      total_output_sat: '9900',
+      size_vbytes: '140'
+    })),
+    commitPreparedRgbSend: jest.fn(() => ({
+      txid: 'ab'.repeat(32),
+      batch_transfer_idx: 7
+    })),
     inflate: jest.fn((r) => ({ inflated: r })),
     getAssetMedia: jest.fn((d) => ({ media: d })),
     postAssetMedia: jest.fn((r) => ({ posted: r })),
     btcBalance: jest.fn(() => ({ vanilla: { spendable: 1234, settled: 1000 } })),
     sendBtc: jest.fn((r) => ({ txid: 'btctx', echo: r })),
+    prepareBtcSend: jest.fn(() => ({
+      plan_id: 'ab'.repeat(32),
+      unsigned_psbt: 'cHNidP8BAAoCAAAAAQ',
+      fee_sat: '100',
+      total_input_sat: '10000',
+      total_output_sat: '9900',
+      size_vbytes: '140'
+    })),
+    commitPreparedBtcSend: jest.fn(() => ({ txid: 'ab'.repeat(32) })),
+    cancelBtcSendPlan: jest.fn(() => ({ cancelled: true })),
+    listPendingVanillaTransactions: jest.fn(() => [{
+      txid: 'cd'.repeat(32),
+      operation_type: 'SendBtc'
+    }]),
     listTransactions: jest.fn(() => ({ transactions: [] })),
     listTransactionsByTxid: jest.fn(() => []),
     listUnspents: jest.fn(() => ({ unspents: [] })),
@@ -769,6 +795,23 @@ describe('RGB invoices / transfers / media', () => {
     expect(node.sendRgb).toHaveBeenCalledWith(req)
   })
 
+  it('prepares and commits an exact RGB transaction plan', async () => {
+    const node = makeNode()
+    const account = makeAccount({ node })
+    const sendRequest = { recipient_groups: [] }
+    const plan = await account.prepareRgbSend(sendRequest)
+
+    expect(plan.fee_sat).toBe('100')
+    expect(node.prepareRgbSend).toHaveBeenCalledWith(sendRequest)
+    await expect(account.commitPreparedRgbSend({
+      plan_id: plan.plan_id,
+      unsigned_psbt: plan.unsigned_psbt
+    })).resolves.toMatchObject({
+      txid: plan.plan_id,
+      batch_transfer_idx: 7
+    })
+  })
+
   it('getAssetMedia forwards the digest', async () => {
     const node = makeNode()
     const account = makeAccount({ node })
@@ -784,6 +827,32 @@ describe('RGB invoices / transfers / media', () => {
 })
 
 describe('BTC ops', () => {
+  it('prepares, commits, and cancels exact BTC transaction plans', async () => {
+    const node = makeNode()
+    const account = makeAccount({ node })
+    const sendRequest = {
+      amount: 1_000,
+      address: 'bcrt1ptest',
+      fee_rate: 2,
+      skip_sync: false
+    }
+    const plan = await account.prepareBtcSend(sendRequest)
+
+    expect(plan.fee_sat).toBe('100')
+    expect(node.prepareBtcSend).toHaveBeenCalledWith(sendRequest)
+    await expect(account.commitPreparedBtcSend({
+      plan_id: plan.plan_id,
+      unsigned_psbt: plan.unsigned_psbt
+    })).resolves.toEqual({ txid: plan.plan_id })
+    await expect(account.cancelBtcSendPlan({ plan_id: plan.plan_id }))
+      .resolves.toEqual({ cancelled: true })
+    await expect(account.listPendingVanillaTransactions())
+      .resolves.toEqual([{
+        txid: 'cd'.repeat(32),
+        operation_type: 'SendBtc'
+      }])
+  })
+
   it('getBalance parses vanilla.spendable to a bigint', async () => {
     const account = makeAccount({
       node: makeNode({ btcBalance: () => ({ vanilla: { spendable: 4242, settled: 100 } }) })

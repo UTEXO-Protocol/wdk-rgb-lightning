@@ -15,6 +15,9 @@ import {
 import type WalletManagerRgbLightning from '../index.js'
 import type {
   IRgbLightningBinding,
+  BtcSendRequest,
+  CommitPreparedSendRequest,
+  PreparedSend,
   LnurlPayOptions,
   LspLiquidityTimeoutError,
   ParsedLightningAddress,
@@ -64,6 +67,19 @@ const walletSnapshotOptions: WalletSnapshotOptions = {
   includeActivity: true
 }
 const refreshed: Promise<WalletRefreshResult> = account.refreshWalletSnapshot(walletSnapshotOptions)
+const btcSendRequest: BtcSendRequest = {
+  amount: 1_000,
+  address: 'bcrt1ptest',
+  fee_rate: 2,
+  skip_sync: false
+}
+const preparedBtc: Promise<PreparedSend> = account.prepareBtcSend(btcSendRequest)
+const preparedCommit: CommitPreparedSendRequest = {
+  plan_id: 'ab'.repeat(32),
+  unsigned_psbt: 'cHNidP8BAAoCAAAAAQ'
+}
+const committedBtc = account.commitPreparedBtcSend(preparedCommit)
+const cancelledBtc = account.cancelBtcSendPlan({ plan_id: preparedCommit.plan_id })
 
 // @ts-expect-error recovery mode is explicit; arbitrary sync strategies are rejected.
 account.refreshWalletSnapshot({ mode: 'fast' })
@@ -82,6 +98,9 @@ binding.ensureNode()
 binding.node
 
 void lnurlOptions
+void preparedBtc
+void committedBtc
+void cancelledBtc
 void payAddressOptions
 void minimumLiquidity
 void nodeHealth

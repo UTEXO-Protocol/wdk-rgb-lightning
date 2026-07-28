@@ -44,6 +44,13 @@ import {
   validateWalletSyncResponse,
   walletSnapshotRequestKey
 } from './wallet-snapshot-contract.js'
+import {
+  validateCancelBtcSendPlanResponse,
+  validateCommittedBtcSendResponse,
+  validateCommittedRgbSendResponse,
+  validatePendingVanillaTransactions,
+  validatePreparedSendResponse
+} from './send-plan-contract.js'
 
 export { PENDING_ADDRESS }
 
@@ -895,6 +902,14 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    */
   async sendRgbAsset (request) { return this._node.sendRgb(request) }
 
+  async prepareRgbSend (request) {
+    return validatePreparedSendResponse(this._node.prepareRgbSend(request))
+  }
+
+  async commitPreparedRgbSend (request) {
+    return validateCommittedRgbSendResponse(this._node.commitPreparedRgbSend(request))
+  }
+
   /** @param {Object} request - JsonInflateRequest */
   async inflate (request) { return this._node.inflate(request) }
 
@@ -907,6 +922,22 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
 
   /** Raw RLN send-btc escape hatch for callers that already own the native request shape. */
   async sendBtc (request) { return this._node.sendBtc(request) }
+
+  async prepareBtcSend (request) {
+    return validatePreparedSendResponse(this._node.prepareBtcSend(request))
+  }
+
+  async commitPreparedBtcSend (request) {
+    return validateCommittedBtcSendResponse(this._node.commitPreparedBtcSend(request))
+  }
+
+  async cancelBtcSendPlan (request) {
+    return validateCancelBtcSendPlanResponse(this._node.cancelBtcSendPlan(request))
+  }
+
+  async listPendingVanillaTransactions () {
+    return validatePendingVanillaTransactions(this._node.listPendingVanillaTransactions())
+  }
 
   /**
    * WDK-standard on-chain send. Accepts `{ to, value, feeRate?,
