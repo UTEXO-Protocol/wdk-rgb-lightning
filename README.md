@@ -365,6 +365,11 @@ bootstrap. Recovery still requires recreating the same signer/node identity
 from the original seed. Plain `http://` is rejected for non-loopback hosts
 unless `vssAllowHttp: true`.
 
+VSS currently replicates RLN's LDK and wallet key-value state, but it does not
+replicate the external VLS signer's redb database stored below `dataDir`.
+Consequently, process restarts on the same device are supported, while
+cross-device recovery with open channels is not yet a complete recovery path.
+
 - `account.vssStatus()` — local view: whether VSS is configured, the URL +
   allow-http flag, and the snapshot version from the most recent
   `vssBackup()` this session.
@@ -402,11 +407,10 @@ the wallet's behalf. Against a production LSP this requires
 ## Security model
 
 - **Seed never leaves the host.** The mnemonic is owned by the WDK secret
-  manager. The binding derives a 32-byte BIP-32 entropy, passes it once to
-  `NativeExternalSigner.create`, and RLN persists only public identifying
-  material (xpubs, node id, master fingerprint). Re-deriving from the same
-  mnemonic reproduces the same entropy, matches the on-disk key-source, and
-  keeps the LDK node identity stable across restarts.
+  manager. The binding derives 32-byte node entropy and passes it to
+  `NativeExternalSigner.createWithStorage`. The signer persists derived VLS
+  identity and channel commitment state below the account's app-private
+  `dataDir`; reopening still requires the original mnemonic.
 - **All channel-state crypto runs in-process** through
   [`vls-protocol-signer`][vls]. The signer's lifecycle is tied to the
   binding and is destroyed on `manager.dispose()`. Retained seed copies use

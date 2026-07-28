@@ -63,13 +63,13 @@ describe('BareRgbLightningBinding', () => {
 
   it('retains primary and fallback seeds without constructing the fallback eagerly', () => {
     const signer = fakeSigner()
-    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(signer)
+    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'createWithStorage').mockReturnValue(signer)
     const binding = makeBinding({ permissiveSignerPolicy: false })
 
     binding.attachExternalSigner('seed-v2', 'seed-v1')
 
     expect(createSpy).toHaveBeenCalledTimes(1)
-    expect(createSpy).toHaveBeenCalledWith('seed-v2', 'regtest', false)
+    expect(createSpy).toHaveBeenCalledWith('seed-v2', 'regtest', '/d/vls-signer', false)
     expect(binding._signer).toBe(signer)
     expect(binding._seedHex.toString()).toBe('seed-v2')
     expect(binding._fallbackSeedHex.toString()).toBe('seed-v1')
@@ -77,7 +77,7 @@ describe('BareRgbLightningBinding', () => {
 
   it('keeps same-seed attachment idempotent and rejects a wallet swap', () => {
     const signer = fakeSigner()
-    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(signer)
+    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'createWithStorage').mockReturnValue(signer)
     const binding = makeBinding()
 
     binding.attachExternalSigner('seed-v2', 'seed-old')
@@ -85,7 +85,7 @@ describe('BareRgbLightningBinding', () => {
     binding.attachExternalSigner('seed-v2', 'seed-v1')
 
     expect(createSpy).toHaveBeenCalledTimes(1)
-    expect(createSpy).toHaveBeenCalledWith('seed-v2', 'regtest', true)
+    expect(createSpy).toHaveBeenCalledWith('seed-v2', 'regtest', '/d/vls-signer', true)
     expect(binding._fallbackSeedHex.toString()).toBe('seed-v1')
     expect(oldFallback.every((byte) => byte === 0)).toBe(true)
     expect(() => binding.attachExternalSigner('seed-v3')).toThrow('a different signer is already attached')
@@ -158,7 +158,8 @@ describe('BareRgbLightningBinding', () => {
         throw new Error('external signer identity does not match persisted key_source.json')
       })
       .mockImplementationOnce(() => undefined)
-    jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(fallbackSigner)
+    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'createWithStorage')
+      .mockReturnValue(fallbackSigner)
     binding._node = node
     binding._signer = primarySigner
     binding._seedHex = primarySeed
@@ -167,6 +168,12 @@ describe('BareRgbLightningBinding', () => {
     binding.unlock({ rpc: true })
 
     expect(primarySigner.destroy).toHaveBeenCalledTimes(1)
+    expect(createSpy).toHaveBeenCalledWith(
+      'seed-v1',
+      'regtest',
+      '/d/vls-signer-legacy',
+      true
+    )
     expect(binding._signer).toBe(fallbackSigner)
     expect(binding._seedHex).toBe(fallbackSeed)
     expect(binding._fallbackSeedHex).toBeUndefined()
@@ -186,7 +193,7 @@ describe('BareRgbLightningBinding', () => {
     node.unlockWithNativeExternalSigner.mockImplementation(() => {
       throw new Error('Rln(ExternalSignerMismatch): identity mismatch')
     })
-    jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(fallbackSigner)
+    jest.spyOn(rln.NativeExternalSigner, 'createWithStorage').mockReturnValue(fallbackSigner)
     binding._node = node
     binding._signer = primarySigner
     binding._seedHex = primarySeed
@@ -227,7 +234,7 @@ describe('BareRgbLightningBinding', () => {
     node.unlockWithNativeExternalSigner.mockImplementation(() => {
       throw new Error('Rln(ExternalSignerMismatch): identity mismatch')
     })
-    jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(fallbackSigner)
+    jest.spyOn(rln.NativeExternalSigner, 'createWithStorage').mockReturnValue(fallbackSigner)
     binding._node = node
     binding._signer = primarySigner
     binding._seedHex = Buffer.from('seed-v2')

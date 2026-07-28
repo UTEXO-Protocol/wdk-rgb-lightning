@@ -12,6 +12,7 @@
 
 import rln from '@utexo/rgb-lightning-node-nodejs'
 import { retainSecret, revealSecret, secretMatches, wipeSecret } from './secret-buffer.js'
+import { signerStoragePath } from './signer-storage-path.js'
 
 const {
   SdkNode,
@@ -126,9 +127,10 @@ export class NodeRgbLightningBinding {
       }
       return
     }
-    this._signer = NativeExternalSigner.create(
+    this._signer = NativeExternalSigner.createWithStorage(
       seedHex,
       this._config.network,
+      signerStoragePath(this._config.dataDir),
       this._config.permissiveSignerPolicy ?? true
     )
     wipeSecret(this._seedHex)
@@ -172,9 +174,10 @@ export class NodeRgbLightningBinding {
       }
 
       const fallbackSeed = this._fallbackSeedHex
-      const fallbackSigner = NativeExternalSigner.create(
+      const fallbackSigner = NativeExternalSigner.createWithStorage(
         revealSecret(fallbackSeed),
         this._config.network,
+        signerStoragePath(this._config.dataDir, 'legacy'),
         this._config.permissiveSignerPolicy ?? true
       )
       try {

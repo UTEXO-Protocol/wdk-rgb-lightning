@@ -49,9 +49,11 @@
  *   `/internal/*` endpoints. Omit when the LSP does not require authorization.
  *
  * In internal-mnemonic mode, RLN derives VSS identity from the wallet secret.
- * This package uses an external signer and reconstructs the same identity from
- * persisted signer key-source material. Recovery therefore requires the
- * original seed so the signer and node identities can be recreated.
+ * This package uses an external signer and persists its VLS commitment state
+ * below `dataDir`. Recovery requires both the original seed and that signer
+ * store. RLN's current VSS replication covers LDK state but not the external
+ * signer's redb store, so cross-device recovery of open channels is not yet a
+ * complete backup path.
  *
  * Wallet-manager-only policy fields such as `autoUnlockRequest` and
  * `autoRecoverStaleVssFence` are intentionally not part of this native binding

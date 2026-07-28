@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 while pre-`1.0`.
 
+## [0.1.0-beta.19] - 2026-07-29
+
+### Fixed
+- Construct both React Native and Node external signers with disk-backed VLS
+  storage below the account's persistent `dataDir`. Per-commitment secrets and
+  points now survive process restarts, so restored channels remain signable.
+- Isolate the automatic legacy seed fallback in its own signer store to avoid
+  opening one VLS database with two wallet identities.
+
+### Changed
+- Raised native peer floors to `@utexo/rgb-lightning-node-bare
+  >=0.1.0-beta.19 <0.2.0` and `@utexo/rgb-lightning-node-nodejs
+  >=0.1.0-beta.15 <0.2.0`, the first releases exposing persistent signer
+  construction.
+- Documented that RLN VSS currently replicates LDK state but not the external
+  signer's redb database. Local restart recovery is supported; cross-device
+  recovery of open channels remains incomplete until signer-state backup is
+  implemented.
+
 ## [Unreleased]
 
 ### Added

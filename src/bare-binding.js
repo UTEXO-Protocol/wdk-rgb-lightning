@@ -14,17 +14,19 @@
 // Seed handling:
 //   The host (WDK) owns the BIP-39 mnemonic. The binding receives a
 //   32-byte BIP-32 entropy (`seedHex`) derived from that mnemonic and
-//   uses it to construct a `NativeExternalSigner`. RLN never persists
+//   uses it to construct a disk-backed `NativeExternalSigner`. RLN never
+//   persists
 //   the seed — the key-source file written by
 //   `initWithNativeExternalSigner` only records identifying public
 //   data (xpubs, node id, master fingerprint). On subsequent app
 //   launches, the same mnemonic re-derives the same seedHex, which
 //   re-derives the same signer identity, which matches the key-source
-//   file on disk — so the LDK node identity stays stable across
-//   restarts.
+//   file on disk — while the VLS store preserves channel commitment state
+//   across restarts.
 
 import rln from '@utexo/rgb-lightning-node-bare'
 import { retainSecret, revealSecret, secretMatches, wipeSecret } from './secret-buffer.js'
+import { signerStoragePath } from './signer-storage-path.js'
 
 const {
   SdkNode,
@@ -148,9 +150,10 @@ export class BareRgbLightningBinding {
       }
       return
     }
-    this._signer = NativeExternalSigner.create(
+    this._signer = NativeExternalSigner.createWithStorage(
       seedHex,
       this._config.network,
+      signerStoragePath(this._config.dataDir),
       this._config.permissiveSignerPolicy ?? true
     )
     wipeSecret(this._seedHex)
@@ -197,9 +200,10 @@ export class BareRgbLightningBinding {
       }
 
       const fallbackSeed = this._fallbackSeedHex
-      const fallbackSigner = NativeExternalSigner.create(
+      const fallbackSigner = NativeExternalSigner.createWithStorage(
         revealSecret(fallbackSeed),
         this._config.network,
+        signerStoragePath(this._config.dataDir, 'legacy'),
         this._config.permissiveSignerPolicy ?? true
       )
       try {

@@ -74,8 +74,9 @@ export function legacyWdkSeedToNodeSeedHex (seed) {
  *   the mnemonic ourselves — we derive a 32-byte VLS node entropy
  *   from it on demand and hand it to RLN's `NativeExternalSigner`,
  *   which runs the VLS signer entirely in-process. RLN's on-disk
- *   state only contains identifying public data (xpubs, node id,
- *   master fingerprint via the key-source file), never the seed.
+ *   state contains identifying public data plus the VLS commitment-state
+ *   database. It never contains the seed; the same mnemonic is still required
+ *   to reopen the signer after a restart.
  */
 export default class WalletManagerRgbLightning extends WalletManager {
   /**
