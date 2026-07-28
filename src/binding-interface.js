@@ -48,6 +48,10 @@
  * @property {string} [lspBearerToken] - Bearer token sent to the LSP's
  *   `/internal/*` endpoints. Omit when the LSP does not require authorization.
  *
+ * Wallet-manager-only policy fields such as `autoUnlockRequest` and
+ * `autoRecoverStaleVssFence` are intentionally not part of this native binding
+ * config. The manager consumes them before constructing the binding.
+ *
  * Concrete WDK bindings always send RLN `reuse_addresses: true`. This keeps
  * inherited read-only `getAddress()` calls pinned to the current address;
  * callers use the full account's explicit `rotateAddress()` command when

@@ -69,6 +69,31 @@ function sameUnlockRequest (left, right) {
   })
 }
 
+const STALE_VSS_FENCE_PATTERN = /VSS store_id is owned by another rgb-lightning-node instance|__rln_instance__/i
+
+function isStaleVssFenceError (error) {
+  let current = error
+  for (let depth = 0; current && depth < 4; depth += 1) {
+    const message = current && typeof current === 'object' && 'message' in current
+      ? String(current.message)
+      : String(current)
+    if (STALE_VSS_FENCE_PATTERN.test(message)) return true
+    current = current && typeof current === 'object' && 'cause' in current
+      ? current.cause
+      : undefined
+  }
+  return false
+}
+
+function vssFenceClearPassword (unlockRequest) {
+  return unlockRequest &&
+    typeof unlockRequest === 'object' &&
+    typeof unlockRequest.bitcoind_rpc_password === 'string' &&
+    unlockRequest.bitcoind_rpc_password.length > 0
+    ? unlockRequest.bitcoind_rpc_password
+    : undefined
+}
+
 /**
  * Seed-isolated via RLN's `NativeExternalSigner`: the WDK secret manager
  * owns the BIP-39 mnemonic; the manager derives a 32-byte VLS node
@@ -81,7 +106,7 @@ function sameUnlockRequest (left, right) {
  */
 export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning {
   /**
-   * @param {{ binding: BareRgbLightningBinding, autoUnlockRequest?: object }} bindings
+   * @param {{ binding: BareRgbLightningBinding, autoUnlockRequest?: object, autoRecoverStaleVssFence?: boolean }} bindings
    */
   constructor (bindings) {
     if (!bindings || !bindings.binding) {
@@ -90,6 +115,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     super(createReadOnlyRgbLightningAdapter(bindings.binding))
     /** @private */ this._binding = bindings.binding
     /** @private */ this._autoUnlockRequest = normalizeAutoUnlockRequest(bindings.autoUnlockRequest)
+    /** @private */ this._autoRecoverStaleVssFence = bindings.autoRecoverStaleVssFence === true
     /** @private @type {{ request: object, promise: Promise<{ ok: true }> } | null} */
     this._unlockInFlight = null
     /** @private @type {WalletAccountReadOnlyRgbLightning | null} */
@@ -128,6 +154,18 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       try {
         this._binding.unlock(unlockRequest)
       } catch (e) {
+        if (this._autoRecoverStaleVssFence && isStaleVssFenceError(e)) {
+          const password = vssFenceClearPassword(unlockRequest)
+          if (password) {
+            try {
+              this._binding.clearVssFence(password)
+              this._binding.unlock(unlockRequest)
+              return { ok: true }
+            } catch (recoveryError) {
+              throw wrapError(recoveryError, UnlockError)
+            }
+          }
+        }
         // Wrap into a typed UnlockError so callers can branch on
         // `err.name === 'UnlockError'` / `err.code` instead of
         // substring-matching the RLN message. The original message is

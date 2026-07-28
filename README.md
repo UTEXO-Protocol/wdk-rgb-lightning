@@ -160,6 +160,7 @@ and a regtest stack via Docker Compose — lives in
 | `permissiveSignerPolicy` | `true` | Loosen the VLS policy filter for in-process single-user use. |
 | `nodeSeedDerivation` | `auto` | New nodes use WDK's normalized BIP-39 seed directly; existing beta nodes retry the legacy identity only on an exact persisted-identity mismatch. Use `wdk-seed-v2` or `legacy-v1` to disable auto-detection. |
 | `autoUnlockRequest` | — | Optional typed node request for integrations that load `getAddress()` before exposing account extensions, including WDK React Native Core. Concurrent activation is coalesced and only the real native address is returned. Omit it for explicit/manual unlock. |
+| `autoRecoverStaleVssFence` | `false` | Optional single-retry recovery for RLN's stale VSS `__rln_instance__` fence during unlock. Enable only in hosts that can guarantee no other live node is using the same VSS store. |
 | `vssUrl` / `vssAllowHttp` / `vssAllowEmptyRestore` | — | VSS cloud backup; see [below](#vss-cloud-backup). |
 | `lspBaseUrl` / `lspBearerToken` | — | LSP wiring for APay and the LSP client; see [below](#lsp-integration). |
 
@@ -363,6 +364,10 @@ rejected for non-loopback hosts unless `vssAllowHttp: true`.
   ownership fence after a previous node died holding it (restarts otherwise
   fail with `Rln(VssFenceHeld)`). Only call this when certain the previous
   owner is gone — pointing two live nodes at one VSS store corrupts state.
+- `autoRecoverStaleVssFence: true` — host-level opt-in that applies the same
+  clear-fence operation once during unlock, and only for the exact stale-owner
+  fence error. Keep it disabled for production until ownership/liveness policy
+  is implemented around the VSS service.
 
 VSS operations on a wallet constructed without `vssUrl` throw
 `VssNotConfiguredError`.
