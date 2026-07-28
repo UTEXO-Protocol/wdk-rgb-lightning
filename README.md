@@ -350,10 +350,13 @@ cross-host callbacks require the explicit `allowCrossHostCallback: true` opt-in.
 
 Set `vssUrl` at construction to mirror LDK channel state and RGB wallet data
 to a remote VSS key-value store in near-real-time. Payloads are client-side
-encrypted (XChaCha20-Poly1305, keyed via HKDF of a signing key derived from
-the BIP-39 mnemonic at BIP-32 path `m/535'/1'`); the server sees only
-ciphertext, and recovery requires the original seed. Plain `http://` is
-rejected for non-loopback hosts unless `vssAllowHttp: true`.
+encrypted by RLN before upload; the VSS server sees only ciphertext. In
+internal-mnemonic mode RLN derives the VSS identity from the BIP-39 wallet
+secret; in this package's external-signer mode RLN reconstructs the same VSS
+identity from the persisted key-source identity written by the signer
+bootstrap. Recovery still requires recreating the same signer/node identity
+from the original seed. Plain `http://` is rejected for non-loopback hosts
+unless `vssAllowHttp: true`.
 
 - `account.vssStatus()` — local view: whether VSS is configured, the URL +
   allow-http flag, and the snapshot version from the most recent

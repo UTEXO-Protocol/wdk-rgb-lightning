@@ -35,10 +35,13 @@
  * @property {string}  [vssUrl]
  *   Enables VSS cloud backup. Setting it points the node at a remote
  *   key-value store that mirrors LDK channel state + RGB wallet data
- *   in near-real-time. The encryption key is derived from the BIP-39
- *   mnemonic, so recovery requires the original seed. Leave undefined
- *   to disable VSS (default). Only `https://` URLs (or loopback http)
- *   are accepted unless `vssAllowHttp` is set.
+ *   in near-real-time. Payloads are encrypted inside RLN before upload.
+ *   Internal-mnemonic mode derives the VSS identity from the wallet secret;
+ *   this package's external-signer mode reconstructs it from the persisted
+ *   signer key-source identity. Recovery requires recreating the same
+ *   signer/node identity from the original seed. Leave undefined to disable
+ *   VSS (default). Only `https://` URLs (or loopback http) are accepted unless
+ *   `vssAllowHttp` is set.
  * @property {boolean} [vssAllowHttp=false]
  *   Permit plain `http://` for non-loopback hosts. Off by default so
  *   channel state can't be sent in plaintext to an untrusted server
