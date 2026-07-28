@@ -48,6 +48,11 @@
  * @property {string} [lspBearerToken] - Bearer token sent to the LSP's
  *   `/internal/*` endpoints. Omit when the LSP does not require authorization.
  *
+ * In internal-mnemonic mode, RLN derives VSS identity from the wallet secret.
+ * This package uses an external signer and reconstructs the same identity from
+ * persisted signer key-source material. Recovery therefore requires the
+ * original seed so the signer and node identities can be recreated.
+ *
  * Wallet-manager-only policy fields such as `autoUnlockRequest` and
  * `autoRecoverStaleVssFence` are intentionally not part of this native binding
  * config. The manager consumes them before constructing the binding.
