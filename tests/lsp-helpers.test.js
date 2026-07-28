@@ -86,6 +86,16 @@ describe('payLightningAddress', () => {
     expect(fetch).toHaveBeenCalledTimes(2)
   })
 
+  it('accepts an UMA address and strips the prefix before discovery', async () => {
+    const fetch = makeLnurlFetch()
+    const account = { sendPayment: jest.fn(async () => ({ payment_hash: 'uma' })) }
+
+    await payLightningAddress(account, '$Alice@Host.Example', 5000, { fetch })
+
+    expect(fetch.mock.calls[0][0]).toBe('https://host.example/.well-known/lnurlp/alice')
+    expect(account.sendPayment).toHaveBeenCalledWith({ invoice: BOLT11, amt_msat: 5000 })
+  })
+
   it('omits amt_msat when opts.skipAmount is set', async () => {
     const fetch = makeLnurlFetch()
     const account = { sendPayment: jest.fn(async () => ({ ok: true })) }

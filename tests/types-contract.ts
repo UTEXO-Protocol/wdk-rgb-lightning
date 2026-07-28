@@ -3,8 +3,13 @@ import type { IWalletAccount, IWalletAccountReadOnly } from '@tetherto/wdk-walle
 
 import {
   BareRgbLightningBinding,
+  isUmaAddress,
   LnurlPayError,
-  NodeRgbLightningBinding
+  NodeRgbLightningBinding,
+  normalizeLightningAddress,
+  parseLightningAddress,
+  UMA_MAX_USERNAME_LENGTH,
+  UMA_PREFIX
 } from '../index.js'
 
 import type WalletManagerRgbLightning from '../index.js'
@@ -12,6 +17,7 @@ import type {
   IRgbLightningBinding,
   LnurlPayOptions,
   LspLiquidityTimeoutError,
+  ParsedLightningAddress,
   PayAddressOptions,
   WalletAccountReadOnlyRgbLightning,
   WalletAccountRgbLightning
@@ -50,6 +56,13 @@ const lnurlError = new LnurlPayError('request failed', {
 })
 const lnurlStatus: number | undefined = lnurlError.status
 const lnurlBody: string | undefined = lnurlError.body
+const umaPrefix: '$' = UMA_PREFIX
+const umaMaxUsernameLength: 64 = UMA_MAX_USERNAME_LENGTH
+const normalizedAddress: string = normalizeLightningAddress('$alice@example.com')
+const umaAddress: boolean = isUmaAddress('$alice@example.com')
+const nonStringUmaAddress: boolean = isUmaAddress(42)
+const parsedAddress: ParsedLightningAddress = parseLightningAddress('$alice@example.com')
+const parsedDomain: string = parsedAddress.domain
 
 binding.ensureNode()
 // @ts-expect-error IRgbLightningBinding exposes ensureNode(), not a node property.
@@ -62,3 +75,10 @@ void nodeHealth
 void bareHealth
 void lnurlStatus
 void lnurlBody
+void umaPrefix
+void umaMaxUsernameLength
+void normalizedAddress
+void umaAddress
+void nonStringUmaAddress
+void parsedAddress
+void parsedDomain
