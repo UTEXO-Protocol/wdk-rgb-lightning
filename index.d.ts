@@ -266,6 +266,20 @@ export interface CreateLightningInvoiceRequest {
   minFinalCltvExpiryDelta?: number
 }
 
+/** Native BOLT11 decode result exposed by both supported RLN bindings. */
+export interface DecodedLightningInvoice {
+  amt_msat: number | null
+  expiry_sec: number
+  timestamp: number
+  asset_id: string | null
+  asset_amount: number | null
+  payment_hash: string
+  payment_secret: string
+  payee_pubkey: string | null
+  min_final_cltv_expiry_delta: number
+  network: string
+}
+
 export interface CreateHodlInvoiceParams {
   /** 32-byte payment hash (hex). The preimage is released later via claimHodlInvoice. */
   paymentHash: string
@@ -611,7 +625,7 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
   listPeers(): Promise<object>
 
   /** Decodes a BOLT11 Lightning invoice without paying it. */
-  decodeInvoice(invoice: string): Promise<object>
+  decodeInvoice(invoice: string): Promise<DecodedLightningInvoice>
 
   /** Returns the node's current status for a Lightning invoice. */
   getInvoiceStatus(invoice: string): Promise<object>

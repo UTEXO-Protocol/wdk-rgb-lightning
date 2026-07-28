@@ -35,6 +35,19 @@ const AUTO_UNLOCK_REQUEST = Object.freeze({
   announce_alias: 'wallet-test'
 })
 
+const DECODED_LIGHTNING_INVOICE = Object.freeze({
+  amt_msat: 3_000_000,
+  expiry_sec: 3_600,
+  timestamp: 1_750_000_000,
+  asset_id: null,
+  asset_amount: null,
+  payment_hash: '11'.repeat(32),
+  payment_secret: '22'.repeat(32),
+  payee_pubkey: '02' + '33'.repeat(32),
+  min_final_cltv_expiry_delta: 42,
+  network: 'Regtest'
+})
+
 // Build a fake RLN node whose methods are jest.fn returning canned
 // values. Every method the account forwards to is present so we can
 // assert forwarding + arg pass-through.
@@ -53,7 +66,7 @@ function makeNode (overrides = {}) {
     disconnectPeer: jest.fn(() => undefined),
     listPeers: jest.fn(() => ({ peers: [] })),
     lnInvoice: jest.fn((r) => ({ invoice: 'lnbc1', payment_hash: 'ph', echo: r })),
-    decodeLnInvoice: jest.fn((i) => ({ decoded: i })),
+    decodeLnInvoice: jest.fn(() => DECODED_LIGHTNING_INVOICE),
     invoiceStatus: jest.fn((i) => ({ status: 'Pending', echo: i })),
     cancelHodlInvoice: jest.fn(() => undefined),
     claimHodlInvoice: jest.fn((r) => ({ claimed: r })),
@@ -613,7 +626,7 @@ describe('invoices', () => {
   it('decodeInvoice forwards to node.decodeLnInvoice', async () => {
     const node = makeNode()
     const account = makeAccount({ node })
-    await expect(account.decodeInvoice('lnbc1')).resolves.toEqual({ decoded: 'lnbc1' })
+    await expect(account.decodeInvoice('lnbc1')).resolves.toEqual(DECODED_LIGHTNING_INVOICE)
     expect(node.decodeLnInvoice).toHaveBeenCalledWith('lnbc1')
   })
 

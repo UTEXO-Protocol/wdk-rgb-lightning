@@ -9,6 +9,8 @@ while pre-`1.0`.
 ## [Unreleased]
 
 ### Added
+- Exact `DecodedLightningInvoice` typing across the WDK account boundary,
+  including `min_final_cltv_expiry_delta`.
 - Strict `listAddressReceipts(address)` validation and account exposure for
   authoritative BTC receive settlement, partial-payment, confirmation, and
   reorg reconciliation.
@@ -26,6 +28,12 @@ while pre-`1.0`.
   `normalizeLightningAddress`, `UMA_PREFIX`, and `UMA_MAX_USERNAME_LENGTH`;
   `parseLightningAddress` now also returns the canonical address, domain, and
   whether the input used UMA form.
+
+### Changed
+- Raised native peer floors to `@utexo/rgb-lightning-node-bare
+  >=0.1.0-beta.16 <0.2.0` and `@utexo/rgb-lightning-node-nodejs
+  >=0.1.0-beta.12 <0.2.0`, the first releases that preserve Lightning CLTV
+  metadata through the C-FFI decode response.
 
 ## [0.1.0-beta.15] — 2026-07-23
 
