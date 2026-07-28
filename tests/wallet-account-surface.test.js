@@ -105,6 +105,7 @@ function makeBinding (overrides = {}) {
     bootstrap: jest.fn(() => ({ node_id: 'aa'.repeat(33) })),
     shutdown: jest.fn(() => undefined),
     apayNew: jest.fn(() => ({ order_id: 'o1' })),
+    clearVssFence: jest.fn(() => undefined),
     vssStatus: jest.fn(() => ({ configured: false, url: null, allowHttp: false, lastBackupVersion: null })),
     ...bindingOverrides
   }
@@ -168,6 +169,77 @@ describe('lifecycle', () => {
     expect(err).toBeInstanceOf(UnlockError)
     expect(err.message).toBe('Rln(NotInitialized): bad creds')
     expect(err.code).toBe('UNLOCK_FAILED')
+  })
+
+  it('does not clear a stale VSS fence unless the host opts in', async () => {
+    const clearVssFence = jest.fn()
+    const account = makeAccount({
+      unlock: () => {
+        throw new Error('VSS store_id is owned by another rgb-lightning-node instance')
+      },
+      clearVssFence
+    })
+
+    await expect(account.unlock(AUTO_UNLOCK_REQUEST)).rejects.toMatchObject({
+      name: 'UnlockError',
+      code: 'UNLOCK_FAILED'
+    })
+    expect(clearVssFence).not.toHaveBeenCalled()
+  })
+
+  it('clears a stale VSS fence once and retries unlock when explicitly enabled', async () => {
+    const unlock = jest.fn()
+      .mockImplementationOnce(() => {
+        throw new Error(
+          'VSS store_id is owned by another rgb-lightning-node instance; delete the `__rln_instance__` key from VSS first'
+        )
+      })
+      .mockImplementationOnce(() => undefined)
+    const clearVssFence = jest.fn()
+    const account = makeAccount(
+      { unlock, clearVssFence },
+      { autoRecoverStaleVssFence: true }
+    )
+
+    await expect(account.unlock(AUTO_UNLOCK_REQUEST)).resolves.toEqual({ ok: true })
+    expect(clearVssFence).toHaveBeenCalledTimes(1)
+    expect(clearVssFence).toHaveBeenCalledWith(AUTO_UNLOCK_REQUEST.bitcoind_rpc_password)
+    expect(unlock).toHaveBeenCalledTimes(2)
+    expect(unlock).toHaveBeenNthCalledWith(2, AUTO_UNLOCK_REQUEST)
+  })
+
+  it('does not clear VSS for unrelated unlock failures even when recovery is enabled', async () => {
+    const clearVssFence = jest.fn()
+    const account = makeAccount(
+      {
+        unlock: () => { throw new Error('Rln(Conflict): Invalid indexer') },
+        clearVssFence
+      },
+      { autoRecoverStaleVssFence: true }
+    )
+
+    await expect(account.unlock(AUTO_UNLOCK_REQUEST)).rejects.toMatchObject({
+      name: 'UnlockError',
+      message: 'Rln(Conflict): Invalid indexer'
+    })
+    expect(clearVssFence).not.toHaveBeenCalled()
+  })
+
+  it('does not attempt stale-fence recovery without a clear-fence password', async () => {
+    const clearVssFence = jest.fn()
+    const account = makeAccount(
+      {
+        unlock: () => { throw new Error('__rln_instance__ belongs to a previous owner') },
+        clearVssFence
+      },
+      { autoRecoverStaleVssFence: true }
+    )
+
+    await expect(account.unlock({})).rejects.toMatchObject({
+      name: 'UnlockError',
+      code: 'UNLOCK_FAILED'
+    })
+    expect(clearVssFence).not.toHaveBeenCalled()
   })
 
   it('coalesces concurrent unlock calls at the account boundary', async () => {

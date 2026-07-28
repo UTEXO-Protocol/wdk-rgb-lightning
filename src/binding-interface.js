@@ -58,6 +58,10 @@
  *   Must match the LSP's `APAY_BEARER_TOKEN` config. Omit if the LSP
  *   doesn't require auth (some dev setups).
  *
+ * Wallet-manager-only policy fields such as `autoUnlockRequest` and
+ * `autoRecoverStaleVssFence` are intentionally not part of this native binding
+ * config. The manager consumes them before constructing the binding.
+ *
  * Concrete WDK bindings always send RLN `reuse_addresses: true`. This keeps
  * inherited read-only `getAddress()` calls pinned to the current address;
  * callers use the full account's explicit `rotateAddress()` command when

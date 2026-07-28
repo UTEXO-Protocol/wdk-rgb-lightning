@@ -394,6 +394,14 @@ export interface RgbLightningWalletConfig extends RgbLightningBindingConfig {
    * extension methods. The account returns only the real native address.
    */
   autoUnlockRequest?: RgbLightningNodeUnlockRequest
+  /**
+   * Opt-in recovery for a stale VSS single-writer fence during automatic or
+   * explicit unlock. When enabled, the account clears the fence once and retries
+   * unlock only for RLN's stale-owner `__rln_instance__` failure. Keep disabled
+   * unless the host can guarantee another live node is not using the same VSS
+   * store.
+   */
+  autoRecoverStaleVssFence?: boolean
   bitcoindRpcUsername?: string
   bitcoindRpcPassword?: string
   bitcoindRpcHost?: string

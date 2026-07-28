@@ -92,16 +92,19 @@ describe('WalletManagerRgbLightning', () => {
     const manager = new TestManager(MNEMONIC, {
       network: 'regtest',
       dataDir: '/wallet',
-      autoUnlockRequest: AUTO_UNLOCK_REQUEST
+      autoUnlockRequest: AUTO_UNLOCK_REQUEST,
+      autoRecoverStaleVssFence: true
     })
     const account = await manager.getAccount()
     const binding = FakeBinding.instances[0]
 
     expect(account._autoUnlockRequest).toEqual(AUTO_UNLOCK_REQUEST)
+    expect(account._autoRecoverStaleVssFence).toBe(true)
     expect(account._autoUnlockRequest).not.toBe(AUTO_UNLOCK_REQUEST)
     expect(Object.isFrozen(account._autoUnlockRequest)).toBe(true)
     expect(Object.isFrozen(account._autoUnlockRequest.announce_addresses)).toBe(true)
     expect(binding._config.autoUnlockRequest).toBeUndefined()
+    expect(binding._config.autoRecoverStaleVssFence).toBeUndefined()
   })
 
   it('rejects malformed automatic activation requests without exposing values', () => {

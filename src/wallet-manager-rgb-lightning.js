@@ -26,6 +26,7 @@ const MEMPOOL_SPACE_URL = 'https://mempool.space'
  *   announceAddresses?: string[],
  *   announceAlias?: string,
  *   autoUnlockRequest?: object,
+ *   autoRecoverStaleVssFence?: boolean,
  *   nodeSeedDerivation?: 'auto'|'wdk-seed-v2'|'legacy-v1'
  * }} RgbLightningWalletConfig
  */
@@ -100,7 +101,7 @@ export default class WalletManagerRgbLightning extends WalletManager {
    * @param {RgbLightningWalletConfig} config
    */
   constructor (seed, config = {}) {
-    const { autoUnlockRequest, ...managerConfig } = config
+    const { autoUnlockRequest, autoRecoverStaleVssFence, ...managerConfig } = config
     super(seed, managerConfig)
 
     if (!config.network) throw new Error('network configuration is required.')
@@ -113,6 +114,7 @@ export default class WalletManagerRgbLightning extends WalletManager {
 
     /** @private */ this._network = config.network
     /** @private */ this._autoUnlockRequest = normalizeAutoUnlockRequest(autoUnlockRequest)
+    /** @private */ this._autoRecoverStaleVssFence = autoRecoverStaleVssFence === true
     /** @private @type {IRgbLightningBinding | null} */
     this._binding = null
   }
@@ -180,7 +182,8 @@ export default class WalletManagerRgbLightning extends WalletManager {
 
       this._accounts[index] = new WalletAccountRgbLightning({
         binding,
-        autoUnlockRequest: this._autoUnlockRequest
+        autoUnlockRequest: this._autoUnlockRequest,
+        autoRecoverStaleVssFence: this._autoRecoverStaleVssFence
       })
     }
     return this._accounts[index]
