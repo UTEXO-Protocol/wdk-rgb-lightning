@@ -30,7 +30,8 @@ import { toUint64 } from './lsp-utils.js'
  *
  * @param {object} account - Account-like object exposing
  *   `sendPayment({ invoice })`.
- * @param {string} addr - Lightning Address in `user@host` form.
+ * @param {string} addr - Lightning Address in `user@host` form or UMA address
+ *   in `$user@host` form.
  * @param {bigint|number|string} amountMsat - Amount to pay, in millisatoshis.
  * @param {object} [opts] - LNURL resolution and payment options.
  * @param {typeof fetch} [opts.fetch] - Fetch implementation used for LNURL

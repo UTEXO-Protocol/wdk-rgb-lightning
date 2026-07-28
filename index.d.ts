@@ -848,7 +848,27 @@ export class LspError extends Error {
 // LNURL-pay (LUD-06 / LUD-16)
 // ───────────────────────────────────────────────────────────────────
 
-export function parseLightningAddress(addr: string, opts?: { allowHttp?: boolean }): { username: string; host: string; discoveryUrl: string }
+export const UMA_PREFIX: '$'
+export const UMA_MAX_USERNAME_LENGTH: 64
+
+export interface ParsedLightningAddress {
+  /** Local part with any UMA prefix removed. */
+  username: string
+  /** Address host, including a port when supplied. */
+  host: string
+  /** Alias for `host`, matching WDK's address vocabulary. */
+  domain: string
+  /** Canonical `username@domain` form without an UMA prefix. */
+  address: string
+  /** Whether the input used UMA's leading `$` form. */
+  isUma: boolean
+  /** LUD-16 discovery endpoint for the canonical address. */
+  discoveryUrl: string
+}
+
+export function isUmaAddress(address: unknown): boolean
+export function normalizeLightningAddress(address: string): string
+export function parseLightningAddress(addr: string, opts?: { allowHttp?: boolean }): ParsedLightningAddress
 export interface LnurlPayOptions {
   fetch?: typeof fetch
   timeoutMs?: number
@@ -970,6 +990,7 @@ export interface SendAssetResult extends LspBridgeResult {
 }
 
 export interface PayAddressOptions {
+  /** Lightning Address or UMA address in `$user@host` form. */
   address: string
   amtMsat: bigint | number | string
   asset?: { assetId: string; assetAmount: bigint | number | string }

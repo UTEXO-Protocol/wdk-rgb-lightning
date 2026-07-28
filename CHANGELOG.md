@@ -8,6 +8,14 @@ while pre-`1.0`.
 
 ## [Unreleased]
 
+### Added
+- UMA address-format compatibility across Lightning Address payment flows.
+  `$recipient@example.com` is normalized to `recipient@example.com` before
+  LNURL discovery. New root exports include `isUmaAddress`,
+  `normalizeLightningAddress`, `UMA_PREFIX`, and `UMA_MAX_USERNAME_LENGTH`;
+  `parseLightningAddress` now also returns the canonical address, domain, and
+  whether the input used UMA form.
+
 ## [0.1.0-beta.15] — 2026-07-23
 
 ### Added

@@ -40,6 +40,10 @@ export {
 export { LspClient, LspError } from './src/lsp-client.js'
 export {
   LnurlPayError,
+  UMA_PREFIX,
+  UMA_MAX_USERNAME_LENGTH,
+  isUmaAddress,
+  normalizeLightningAddress,
   parseLightningAddress,
   fetchDiscovery,
   resolveAddressToInvoice

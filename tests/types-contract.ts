@@ -3,8 +3,13 @@ import type { IWalletAccount, IWalletAccountReadOnly } from '@tetherto/wdk-walle
 
 import {
   BareRgbLightningBinding,
+  isUmaAddress,
   LnurlPayError,
-  NodeRgbLightningBinding
+  NodeRgbLightningBinding,
+  normalizeLightningAddress,
+  parseLightningAddress,
+  UMA_MAX_USERNAME_LENGTH,
+  UMA_PREFIX
 } from '../index.js'
 
 import type WalletManagerRgbLightning from '../index.js'
@@ -12,6 +17,7 @@ import type {
   IRgbLightningBinding,
   LnurlPayOptions,
   LspLiquidityTimeoutError,
+  ParsedLightningAddress,
   PayAddressOptions,
   WalletRefreshResult,
   WalletSnapshotOptions,
@@ -63,6 +69,13 @@ const refreshed: Promise<WalletRefreshResult> = account.refreshWalletSnapshot(wa
 account.refreshWalletSnapshot({ mode: 'fast' })
 // @ts-expect-error read-only accounts cannot mutate native sync state.
 readOnlyAccount.refreshWalletSnapshot()
+const umaPrefix: '$' = UMA_PREFIX
+const umaMaxUsernameLength: 64 = UMA_MAX_USERNAME_LENGTH
+const normalizedAddress: string = normalizeLightningAddress('$alice@example.com')
+const umaAddress: boolean = isUmaAddress('$alice@example.com')
+const nonStringUmaAddress: boolean = isUmaAddress(42)
+const parsedAddress: ParsedLightningAddress = parseLightningAddress('$alice@example.com')
+const parsedDomain: string = parsedAddress.domain
 
 binding.ensureNode()
 // @ts-expect-error IRgbLightningBinding exposes ensureNode(), not a node property.
@@ -76,3 +89,10 @@ void bareHealth
 void lnurlStatus
 void lnurlBody
 void refreshed
+void umaPrefix
+void umaMaxUsernameLength
+void normalizedAddress
+void umaAddress
+void nonStringUmaAddress
+void parsedAddress
+void parsedDomain

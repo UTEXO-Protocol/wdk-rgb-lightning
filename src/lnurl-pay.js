@@ -14,6 +14,7 @@ import { toUint64String } from './lsp-utils.js'
 // Spec references:
 //   https://github.com/lnurl/luds/blob/luds/16.md   (Lightning Address)
 //   https://github.com/lnurl/luds/blob/luds/06.md   (LNURL-pay)
+//   https://github.com/uma-universal-money-address/protocol/blob/main/umad-01-addresses.md
 //
 // We deliberately do not verify the BOLT11 invoice's description-hash
 // matches the metadata here — that's the responsibility of the caller
@@ -46,46 +47,95 @@ export class LnurlPayError extends Error {
 /** Default request timeout for both discovery + callback fetches. */
 const DEFAULT_TIMEOUT_MS = 15_000
 
+/** Prefix that distinguishes a UMA address from a Lightning Address. */
+export const UMA_PREFIX = '$'
+
+/** Maximum UMA username length, including the leading `$`, per UMAD-01. */
+export const UMA_MAX_USERNAME_LENGTH = 64
+
+const LIGHTNING_ADDRESS_USERNAME_RE = /^[a-z0-9._+-]+$/
+
 /**
- * Parse `user@host` (case-insensitive on the host part, lowercase on
- * the local-part per LUD-16). Returns the canonical components plus
- * the discovery URL the wallet should fetch.
+ * Return whether an address uses UMA's leading `$` form.
+ *
+ * @param {unknown} address - Candidate address.
+ * @returns {boolean} - Whether the trimmed string starts with `$`.
+ */
+export function isUmaAddress (address) {
+  return typeof address === 'string' && address.trim().startsWith(UMA_PREFIX)
+}
+
+/**
+ * Convert a UMA address to Lightning Address form.
+ *
+ * Plain Lightning Addresses are trimmed and otherwise left unchanged. UMA
+ * addresses are lowercased because UMAD-01 defines them as case-insensitive.
+ * This helper normalizes syntax only; use {@link parseLightningAddress} when
+ * validation is required.
+ *
+ * @param {string} address - Lightning Address or UMA address.
+ * @returns {string} - Address without the UMA prefix.
+ * @throws {LnurlPayError} - If `address` is not a string.
+ */
+export function normalizeLightningAddress (address) {
+  if (typeof address !== 'string') {
+    throw new LnurlPayError('normalizeLightningAddress: address must be a string')
+  }
+
+  const trimmed = address.trim()
+  return trimmed.startsWith(UMA_PREFIX)
+    ? trimmed.slice(UMA_PREFIX.length).toLowerCase()
+    : trimmed
+}
+
+/**
+ * Parse `user@host` or UMA's `$user@host` form. The UMA prefix is removed
+ * before LNURL discovery. The host is case-insensitive and the local part is
+ * lowercased per LUD-16.
  *
  * `allowHttp` defaults to false for safety. We auto-allow http for
- * loopback hosts (`localhost`, `127.0.0.1`, `[::1]`, `*.local`) since
- * those are almost always dev/regtest. `.onion` per LUD-16 always uses
- * http.
+ * loopback hosts (`localhost`, `127.0.0.1`, `[::1]`, `10.0.2.2`,
+ * `*.local`) since those are almost always dev/regtest. `.onion` per LUD-16
+ * always uses http.
  *
- * @param {string} addr - Lightning Address in `user@host` form.
+ * @param {string} addr - Lightning Address or UMA address.
  * @param {object} [opts] - Address parsing options.
  * @param {boolean} [opts.allowHttp] - Whether non-loopback hosts may use
  *   plain HTTP. Defaults to `false`.
- * @returns {{ username:string, host:string, discoveryUrl:string }} - Canonical
- *   address components and discovery URL.
+ * @returns {{ username:string, host:string, domain:string, address:string, isUma:boolean, discoveryUrl:string }} -
+ *   Canonical address components and discovery URL.
  * @throws {LnurlPayError} - If the address or host is malformed.
  */
 export function parseLightningAddress (addr, opts = {}) {
-  if (typeof addr !== 'string' || addr.length === 0) {
+  if (typeof addr !== 'string' || addr.trim().length === 0) {
     throw new LnurlPayError('parseLightningAddress: address required')
   }
-  const at = addr.lastIndexOf('@')
-  if (at <= 0 || at === addr.length - 1) {
+  const isUma = isUmaAddress(addr)
+  const normalized = normalizeLightningAddress(addr)
+  const at = normalized.lastIndexOf('@')
+  if (at <= 0 || at === normalized.length - 1) {
     throw new LnurlPayError(`parseLightningAddress: malformed address '${addr}'`)
   }
   // LUD-16 §spec normalises the local-part to lowercase. The host is
   // already case-insensitive at the DNS layer; we lowercase too so the
   // discovery URL is stable.
-  const username = addr.slice(0, at).toLowerCase()
-  const host = addr.slice(at + 1).toLowerCase()
-  if (!/^[a-z0-9._+-]+$/.test(username)) {
+  const username = normalized.slice(0, at).toLowerCase()
+  const host = normalized.slice(at + 1).toLowerCase()
+  if (!LIGHTNING_ADDRESS_USERNAME_RE.test(username)) {
     throw new LnurlPayError(`parseLightningAddress: invalid local-part '${username}'`)
+  }
+  if (isUma && username.length + UMA_PREFIX.length > UMA_MAX_USERNAME_LENGTH) {
+    throw new LnurlPayError(
+      `parseLightningAddress: UMA local-part exceeds ${UMA_MAX_USERNAME_LENGTH} characters including '${UMA_PREFIX}'`
+    )
   }
   if (!/^[a-z0-9.[\]:_-]+$/.test(host)) {
     throw new LnurlPayError(`parseLightningAddress: invalid host '${host}'`)
   }
+  const address = `${username}@${host}`
   const scheme = pickScheme(host, opts.allowHttp === true)
   const discoveryUrl = `${scheme}://${host}/.well-known/lnurlp/${encodeURIComponent(username)}`
-  return { username, host, discoveryUrl }
+  return { username, host, domain: host, address, isUma, discoveryUrl }
 }
 
 function pickScheme (host, allowHttp) {
@@ -100,6 +150,7 @@ function isLoopback (host) {
   return noPort === 'localhost' ||
     noPort === '127.0.0.1' ||
     noPort === '::1' ||
+    noPort === '10.0.2.2' ||
     noPort.endsWith('.local') ||
     noPort.endsWith('.localhost')
 }
@@ -111,10 +162,9 @@ function isLoopback (host) {
  * compute `metadata` hash from the returned `metadata` string when
  * checking the invoice's description-hash anchor.
  *
- * @param {string} addr - Lightning Address (`user@host`) or a full URL
- *                      to a `/.well-known/lnurlp/<user>` endpoint
- *                      (useful for `LspClient.lnurlDiscovery` callers
- *                      who already have an LSP URL).
+ * @param {string} addr - Lightning Address, UMA address, or a full URL to a
+ *   `/.well-known/lnurlp/<user>` endpoint (useful for
+ *   `LspClient.lnurlDiscovery` callers who already have an LSP URL).
  * @param {object} [opts] - Discovery request options.
  * @param {typeof fetch} [opts.fetch] - Fetch implementation. Defaults to the
  *   runtime's global `fetch`.
@@ -147,8 +197,8 @@ export async function fetchDiscovery (addr, opts = {}) {
  * can verify the description-hash anchor against the returned invoice
  * after decoding it.
  *
- * @param {string} addr - Lightning Address in `user@host` form or discovery
- *   endpoint URL.
+ * @param {string} addr - Lightning Address, UMA address, or discovery endpoint
+ *   URL.
  * @param {bigint|number|string} amountMsat - Amount to request, in
  *   millisatoshis.
  * @param {object} [opts] - LNURL resolution options.

@@ -340,9 +340,16 @@ Channel and liquidity wait timeouts throw `LspChannelTimeoutError` and
 
 ### LNURL / Lightning Address helpers
 
-`parseLightningAddress`, `fetchDiscovery`, `resolveAddressToInvoice`
-(LNURL-pay), and the account-bound helpers `payLightningAddress`,
-`requestLspRgbDeposit`, `payRgbViaLsp` are also exported from the root.
+Lightning Address payment APIs accept both `recipient@example.com` and
+[UMA's](https://www.uma.me/) `$recipient@example.com` form. UMA input is
+normalized to the equivalent Lightning Address before LNURL discovery. This is
+address-format compatibility; it does not implement UMA signing, compliance,
+or currency negotiation.
+
+`isUmaAddress`, `normalizeLightningAddress`, `parseLightningAddress`,
+`fetchDiscovery`, `resolveAddressToInvoice` (LNURL-pay), and the account-bound
+helpers `payLightningAddress`, `requestLspRgbDeposit`, `payRgbViaLsp` are
+exported from the root.
 LNURL callbacks are restricted to the discovery host by default; delegated
 cross-host callbacks require the explicit `allowCrossHostCallback: true` opt-in.
 

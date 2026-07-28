@@ -352,7 +352,8 @@ export class UtexoLsp {
    * by mistake.
    *
    * @param {object} opts - Lightning Address payment request.
-   * @param {string} opts.address - Lightning Address in `user@host` form.
+   * @param {string} opts.address - Lightning Address in `user@host` form or
+   *   UMA address in `$user@host` form.
    * @param {bigint|number|string} opts.amtMsat - Payment amount in
    *   millisatoshis.
    * @param {object} [opts.asset] - Optional RGB asset ID and amount.
@@ -387,7 +388,7 @@ export class UtexoLsp {
     }
 
     if (useStandardResolver) {
-      const resolved = await resolveAddressToInvoice(address, opts.amtMsat, {
+      const resolved = await resolveAddressToInvoice(parsed.address, opts.amtMsat, {
         allowHttp: this.peer.allowHttp === true,
         allowCrossHostCallback: opts.allowCrossHostCallback === true,
         assetId: opts.asset?.assetId,

@@ -10,6 +10,10 @@
 import { jest } from '@jest/globals'
 import {
   LnurlPayError,
+  UMA_PREFIX,
+  UMA_MAX_USERNAME_LENGTH,
+  isUmaAddress,
+  normalizeLightningAddress,
   parseLightningAddress,
   fetchDiscovery,
   resolveAddressToInvoice
@@ -54,14 +58,87 @@ describe('LnurlPayError', () => {
   })
 })
 
+describe('UMA address normalization', () => {
+  it('detects UMA addresses without throwing on other input types', () => {
+    expect(isUmaAddress('$bob@example.com')).toBe(true)
+    expect(isUmaAddress('  $bob@example.com  ')).toBe(true)
+    expect(isUmaAddress('bob@example.com')).toBe(false)
+    expect(isUmaAddress(undefined)).toBe(false)
+    expect(isUmaAddress(null)).toBe(false)
+  })
+
+  it('strips the UMA prefix and lowercases the case-insensitive address', () => {
+    expect(UMA_PREFIX).toBe('$')
+    expect(normalizeLightningAddress('$Bob@Example.COM')).toBe('bob@example.com')
+  })
+
+  it('is idempotent and preserves plain-address case', () => {
+    const normalized = normalizeLightningAddress('  $bob@example.com  ')
+    expect(normalized).toBe('bob@example.com')
+    expect(normalizeLightningAddress(normalized)).toBe(normalized)
+    expect(normalizeLightningAddress(' Bob@Example.com ')).toBe('Bob@Example.com')
+  })
+
+  it('rejects non-string input with the module error type', () => {
+    expect(() => normalizeLightningAddress(42)).toThrow(LnurlPayError)
+    expect(() => normalizeLightningAddress(42)).toThrow(/address must be a string/)
+  })
+})
+
 describe('parseLightningAddress', () => {
   it('parses a canonical user@host and builds the https discovery URL', () => {
     const out = parseLightningAddress('Alice@GetAlby.com')
     expect(out).toEqual({
       username: 'alice',
       host: 'getalby.com',
+      domain: 'getalby.com',
+      address: 'alice@getalby.com',
+      isUma: false,
       discoveryUrl: 'https://getalby.com/.well-known/lnurlp/alice'
     })
+  })
+
+  it('parses UMA and plain forms to the same canonical address', () => {
+    const plain = parseLightningAddress('Recipient@Example.com')
+    const uma = parseLightningAddress('  $Recipient@Example.com  ')
+
+    expect(plain).toMatchObject({
+      username: 'recipient',
+      domain: 'example.com',
+      address: 'recipient@example.com',
+      isUma: false
+    })
+    expect(uma).toMatchObject({
+      username: 'recipient',
+      domain: 'example.com',
+      address: 'recipient@example.com',
+      isUma: true
+    })
+    expect(uma.discoveryUrl).toBe(plain.discoveryUrl)
+  })
+
+  it('enforces the UMAD-01 username length limit including the prefix', () => {
+    const maximumUsername = 'a'.repeat(UMA_MAX_USERNAME_LENGTH - UMA_PREFIX.length)
+    expect(parseLightningAddress(`$${maximumUsername}@example.com`).username)
+      .toBe(maximumUsername)
+
+    const overLimitUsername = 'a'.repeat(UMA_MAX_USERNAME_LENGTH)
+    expect(() => parseLightningAddress(`$${overLimitUsername}@example.com`))
+      .toThrow(/exceeds 64 characters/)
+    expect(parseLightningAddress(`${overLimitUsername}@example.com`).username)
+      .toBe(overLimitUsername)
+  })
+
+  it('accepts the UMAD-01 username character set', () => {
+    const out = parseLightningAddress('$a-b_c.d+e@example.com')
+    expect(out.username).toBe('a-b_c.d+e')
+    expect(out.discoveryUrl).toBe('https://example.com/.well-known/lnurlp/a-b_c.d%2Be')
+  })
+
+  it('rejects malformed UMA local parts', () => {
+    expect(() => parseLightningAddress('$bob!@example.com')).toThrow(/invalid local-part/)
+    expect(() => parseLightningAddress('$$bob@example.com')).toThrow(/invalid local-part/)
+    expect(() => parseLightningAddress('$@example.com')).toThrow(/malformed address/)
   })
 
   it('percent-encodes the local-part in the discovery URL', () => {
@@ -87,6 +164,8 @@ describe('parseLightningAddress', () => {
       .toBe('http://node.local/.well-known/lnurlp/bob')
     expect(parseLightningAddress('bob@dev.localhost').discoveryUrl)
       .toBe('http://dev.localhost/.well-known/lnurlp/bob')
+    expect(parseLightningAddress('bob@10.0.2.2:8080').discoveryUrl)
+      .toBe('http://10.0.2.2:8080/.well-known/lnurlp/bob')
   })
 
   it('uses http for .onion hosts regardless of allowHttp', () => {
@@ -132,6 +211,12 @@ describe('fetchDiscovery', () => {
     expect(url).toBe('https://getalby.com/.well-known/lnurlp/alice')
     expect(init.headers).toEqual({ Accept: 'application/json' })
     expect(init.signal === undefined || typeof init.signal === 'object').toBe(true)
+  })
+
+  it('normalizes an UMA address before requesting discovery', async () => {
+    const fetch = jest.fn(async () => makeResponse({ body: discoveryDoc() }))
+    await fetchDiscovery('$Alice@GetAlby.com', { fetch })
+    expect(fetch.mock.calls[0][0]).toBe('https://getalby.com/.well-known/lnurlp/alice')
   })
 
   it('passes a full http(s) URL straight through without parsing it as an address', async () => {
@@ -274,6 +359,15 @@ describe('resolveAddressToInvoice', () => {
     // discovery + callback = exactly two fetches.
     expect(fetch).toHaveBeenCalledTimes(2)
     expect(fetch.mock.calls[1][0]).toBe('https://b.com/lnurlp/cb?amount=5000')
+  })
+
+  it('normalizes an UMA address before both LNURL-pay requests', async () => {
+    const fetch = twoStepFetch(discoveryDoc(), { pr: 'lnbc-uma' })
+    const out = await resolveAddressToInvoice('$Alice@B.com', 5000, { fetch })
+
+    expect(fetch.mock.calls[0][0]).toBe('https://b.com/.well-known/lnurlp/alice')
+    expect(fetch.mock.calls[1][0]).toBe('https://b.com/lnurlp/cb?amount=5000')
+    expect(out.pr).toBe('lnbc-uma')
   })
 
   it('defaults routes to an empty array when the callback omits them', async () => {
