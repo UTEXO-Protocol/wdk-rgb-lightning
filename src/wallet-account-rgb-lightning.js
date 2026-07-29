@@ -1084,7 +1084,9 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * `options.amount` is treated as **msats** for LN flows and **sats**
    * for on-chain flows — callers using `transfer()` for on-chain need to
    * pass sats, not msats. For finer control, call the underlying method
-   * directly.
+   * directly. Witness RGB invoices additionally require
+   * `options.witnessData.amountSats`; this is the Bitcoin output value
+   * committed by the transfer, not a routing or miner fee.
    *
    * @param {TransferOptions} options
    * @returns {Promise<TransferResult>}
@@ -1157,19 +1159,40 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
         if (endpoints.length === 0) {
           throw new Error('transfer(rgb): the RGB invoice carries no transport endpoints and the wallet has no proxyEndpoint configured')
         }
+        const witnessData = options.witnessData
+        if (decoded?.recipient_type === 'Witness') {
+          if (!witnessData || !Number.isSafeInteger(witnessData.amountSats) || witnessData.amountSats <= 0) {
+            throw new Error('transfer(rgb): witnessData.amountSats must be a positive safe integer for a Witness RGB invoice')
+          }
+          if (
+            witnessData.blinding !== undefined &&
+            (!Number.isSafeInteger(witnessData.blinding) || witnessData.blinding < 0)
+          ) {
+            throw new Error('transfer(rgb): witnessData.blinding must be a non-negative safe integer when provided')
+          }
+        } else if (witnessData !== undefined) {
+          throw new Error('transfer(rgb): witnessData is only valid for a Witness RGB invoice')
+        }
         const feeRate = options.feeRate ?? await this._defaultFeeRate(6)
+        const recipientRequest = {
+          recipient_id: recipientId,
+          assignment_kind: 'Fungible',
+          assignment_amount: Number(amount),
+          transport_endpoints: endpoints
+        }
+        if (decoded?.recipient_type === 'Witness') {
+          recipientRequest.witness_data = {
+            amount_sat: witnessData.amountSats,
+            ...(witnessData.blinding === undefined ? {} : { blinding: witnessData.blinding })
+          }
+        }
         const req = {
           donation: false,
           fee_rate: Number(feeRate),
           min_confirmations: 1,
           recipient_groups: [{
             asset_id: contractId,
-            recipients: [{
-              recipient_id: recipientId,
-              assignment_kind: 'Fungible',
-              assignment_amount: Number(amount),
-              transport_endpoints: endpoints
-            }]
+            recipients: [recipientRequest]
           }]
         }
         const r = await this.sendRgbAsset(req)

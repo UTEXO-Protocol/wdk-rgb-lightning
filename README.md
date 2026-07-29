@@ -210,7 +210,10 @@ Notes:
   `options.recipient` (BOLT11 invoice, LN pubkey, BTC address, or RGB
   invoice) and dispatches to the right primitive. `options.token` is an RGB
   `asset_id` when present. Amounts are msats for LN flows and sats for
-  on-chain flows.
+  on-chain flows. An on-chain RGB invoice whose recipient type is `Witness`
+  requires `options.witnessData.amountSats`; that value funds the Bitcoin
+  witness output and is not a fee. The router rejects witness data on blinded
+  recipients instead of silently ignoring it.
 - **`getBalance()` returns `bigint` satoshis**, matching WDK's account
   contract. `getTokenBalance(assetId)` returns the spendable RGB amount as a
   `bigint` and falls back to the settled amount when needed.

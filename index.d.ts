@@ -221,6 +221,17 @@ export interface TransferOptions {
   /** sat/vB override for on-chain flows. */
   feeRate?: number
   confirmationTarget?: number
+  /**
+   * Bitcoin witness output carried by an on-chain RGB transfer.
+   * Required when the decoded RGB invoice recipient type is `Witness` and
+   * rejected for blinded recipients.
+   */
+  witnessData?: {
+    /** Positive safe integer in satoshis. This is an output value, not a fee. */
+    amountSats: number
+    /** Optional non-negative safe-integer RGB witness blinding value. */
+    blinding?: number
+  }
 }
 
 export interface TransferResult {

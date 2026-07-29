@@ -90,6 +90,11 @@ const preparedRgb: Promise<PreparedRgbSend> = account.prepareRgbSend({
   min_confirmations: 1,
   recipient_groups: []
 })
+account.transfer({
+  recipient: 'rgb:...',
+  amount: 1n,
+  witnessData: { amountSats: 1_000, blinding: 7 }
+})
 const pendingRgb: Promise<readonly PendingRgbSendPlan[]> = account.listPendingRgbSendPlans()
 const addressReceipts: Promise<readonly AddressReceipt[]> =
   account.listAddressReceipts('bcrt1ptest')
