@@ -40,6 +40,7 @@ import {
   WalletSnapshotContractError,
   isCoherentWalletSnapshot,
   normalizeWalletSnapshotOptions,
+  snapshotMatchesWalletSync,
   validateWalletSnapshotResponse,
   validateWalletSyncResponse,
   walletSnapshotRequestKey
@@ -165,16 +166,16 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       return this._unlockInFlight.promise
     }
 
-    const operation = Promise.resolve().then(() => {
+    const operation = Promise.resolve().then(async () => {
       try {
-        this._binding.unlock(unlockRequest)
+        await this._binding.unlock(unlockRequest)
       } catch (e) {
         if (this._autoRecoverStaleVssFence && isStaleVssFenceError(e)) {
           const password = vssFenceClearPassword(unlockRequest)
           if (password) {
             try {
               this._binding.clearVssFence(password)
-              this._binding.unlock(unlockRequest)
+              await this._binding.unlock(unlockRequest)
               return { ok: true }
             } catch (recoveryError) {
               throw wrapError(recoveryError, UnlockError)
@@ -199,6 +200,18 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     } finally {
       if (this._unlockInFlight?.promise === operation) this._unlockInFlight = null
     }
+  }
+
+  async unlockOperationStatus () {
+    return this._binding.unlockOperationStatus()
+  }
+
+  async adoptUnlockOperation (operationId) {
+    return this._binding.adoptUnlockOperation(operationId)
+  }
+
+  async cancelUnlockOperation () {
+    return this._binding.cancelUnlockOperation()
   }
 
   /**
@@ -288,6 +301,22 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     this._assertVssConfigured()
     try {
       return this._binding.vssBackup()
+    } catch (e) {
+      throw wrapError(e, VssError)
+    }
+  }
+
+  /**
+   * Permanently delete every object in this wallet's authenticated VSS store.
+   * Native shutdown and an empty-store verification happen before success.
+   *
+   * @param {string} password
+   * @returns {Promise<{deleted_keys: number}>}
+   */
+  async vssDeleteAll (password) {
+    this._assertVssConfigured()
+    try {
+      return this._binding.vssDeleteAll(password)
     } catch (e) {
       throw wrapError(e, VssError)
     }
@@ -530,7 +559,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       typeof node.walletSnapshot !== 'function'
     ) {
       throw new WalletSnapshotError(
-        'The installed RGB Lightning native binding does not support wallet snapshot contract v1.',
+        `The installed RGB Lightning native binding does not support wallet snapshot contract v${WALLET_SNAPSHOT_CONTRACT_VERSION}.`,
         { code: 'WALLET_SNAPSHOT_UNSUPPORTED_BINDING' }
       )
     }
@@ -538,7 +567,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     let sync = await this._synchronizeWalletForSnapshot(node, options.mode)
 
     const first = await this._captureWalletSnapshot(node, options)
-    if (isCoherentWalletSnapshot(first)) {
+    if (snapshotMatchesWalletSync(first, sync)) {
       return Object.freeze({
         contractVersion: WALLET_SNAPSHOT_CONTRACT_VERSION,
         sync,
@@ -582,6 +611,19 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
         }
       )
     }
+    if (!snapshotMatchesWalletSync(retry, sync)) {
+      throw new WalletSnapshotError(
+        'The synchronized keychains and native financial snapshot do not share one chain checkpoint.',
+        {
+          code: 'WALLET_SNAPSHOT_SYNC_CHECKPOINT_MISMATCH',
+          details: Object.freeze({
+            snapshot: retry.network_before,
+            vanilla: sync.vanilla.checkpoint,
+            colored: sync.colored.checkpoint
+          })
+        }
+      )
+    }
 
     return Object.freeze({
       contractVersion: WALLET_SNAPSHOT_CONTRACT_VERSION,
@@ -602,7 +644,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       const contractFailure = error instanceof WalletSnapshotContractError
       throw new WalletSyncError(
         contractFailure
-          ? `The native wallet sync response does not match contract v1: ${error.message}.`
+          ? `The native wallet sync response does not match contract v${WALLET_SNAPSHOT_CONTRACT_VERSION}: ${error.message}.`
           : 'The native wallet synchronization failed.',
         {
           code: contractFailure
@@ -664,7 +706,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       const contractFailure = error instanceof WalletSnapshotContractError
       throw new WalletSnapshotError(
         contractFailure
-          ? `The native wallet snapshot does not match contract v1: ${error.message}.`
+          ? `The native wallet snapshot does not match contract v${WALLET_SNAPSHOT_CONTRACT_VERSION}: ${error.message}.`
           : 'The native wallet snapshot could not be captured.',
         {
           code: contractFailure

@@ -4,8 +4,8 @@
 // you may not use this file except in compliance with the License.
 'use strict'
 
-export const WALLET_SNAPSHOT_CONTRACT_VERSION = 1
-export const WALLET_SNAPSHOT_NATIVE_SOURCE = 'rgb-lightning-node-v0.9.0-beta.3+utexo-wallet-v1'
+export const WALLET_SNAPSHOT_CONTRACT_VERSION = 2
+export const WALLET_SNAPSHOT_NATIVE_SOURCE = 'rgb-lightning-node-v0.10.0-beta.3+utexo-wallet-v2'
 
 const NATIVE_LIMITS = Object.freeze({
   assets: 128,
@@ -53,7 +53,9 @@ function exactKeys (value, required, optional, path) {
     if (!HAS_OWN(value, key)) fail(`${path}.${key}`, 'is required')
   }
   for (const key of Object.keys(value)) {
-    if (!allowed.has(key)) fail(`${path}.${key}`, 'is not part of contract v1')
+    if (!allowed.has(key)) {
+      fail(`${path}.${key}`, `is not part of contract v${WALLET_SNAPSHOT_CONTRACT_VERSION}`)
+    }
   }
 }
 
@@ -182,14 +184,21 @@ export function normalizeWalletSnapshotOptions (value) {
 
 function syncKeychain (value, path) {
   const item = record(value, path)
-  exactKeys(item, ['status'], ['error_code'], path)
+  exactKeys(item, ['status'], ['error_code', 'checkpoint'], path)
   oneOf(item.status, ['succeeded', 'failed'], `${path}.status`)
   if (item.status === 'succeeded' && HAS_OWN(item, 'error_code')) {
     fail(`${path}.error_code`, 'must be omitted after a successful sync')
   }
+  if (item.status === 'succeeded' && !HAS_OWN(item, 'checkpoint')) {
+    fail(`${path}.checkpoint`, 'is required after a successful sync')
+  }
   if (item.status === 'failed') {
     text(item.error_code, `${path}.error_code`, 128)
+    if (HAS_OWN(item, 'checkpoint')) {
+      fail(`${path}.checkpoint`, 'must be omitted after a failed sync')
+    }
   }
+  if (HAS_OWN(item, 'checkpoint')) network(item.checkpoint, `${path}.checkpoint`)
 }
 
 export function validateWalletSyncResponse (value, expectedMode) {
@@ -201,14 +210,28 @@ export function validateWalletSyncResponse (value, expectedMode) {
   if (response.mode !== expectedMode) fail('sync.mode', `must equal ${expectedMode}`)
   syncKeychain(response.vanilla, 'sync.vanilla')
   syncKeychain(response.colored, 'sync.colored')
+  if (
+    response.vanilla.status === 'succeeded' &&
+    response.colored.status === 'succeeded' &&
+    (
+      response.vanilla.checkpoint.network !== response.colored.checkpoint.network ||
+      response.vanilla.checkpoint.height !== response.colored.checkpoint.height ||
+      response.vanilla.checkpoint.block_hash !== response.colored.checkpoint.block_hash
+    )
+  ) {
+    fail('sync.colored.checkpoint', 'must match the vanilla keychain checkpoint')
+  }
   return deepFreeze(response)
 }
 
 function network (value, path) {
   const item = record(value, path)
-  exactKeys(item, ['network', 'height'], [], path)
+  exactKeys(item, ['network', 'height', 'block_hash'], [], path)
   oneOf(item.network, CANONICAL_NETWORKS, `${path}.network`)
   integer(item.height, `${path}.height`, 0, 0xffffffff)
+  if (typeof item.block_hash !== 'string' || !/^[0-9a-f]{64}$/.test(item.block_hash)) {
+    fail(`${path}.block_hash`, 'must be a lowercase 32-byte hexadecimal block hash')
+  }
 }
 
 function canonicalNetworkName (value) {
@@ -308,13 +331,52 @@ function blockTime (value, path) {
 
 function snapshotTransaction (value, path) {
   const item = record(value, path)
-  exactKeys(item, ['transaction_type', 'txid', 'received', 'sent', 'fee', 'confirmation_time'], [], path)
+  exactKeys(item, [
+    'transaction_type', 'purpose', 'direction', 'txid', 'received', 'sent',
+    'fee', 'external_value', 'confirmation_time'
+  ], [], path)
   oneOf(item.transaction_type, ['RgbSend', 'Drain', 'CreateUtxos', 'SendBtc', 'Incoming'], `${path}.transaction_type`)
+  oneOf(item.purpose, [
+    'incoming_bitcoin',
+    'outgoing_bitcoin',
+    'rgb_anchor',
+    'wallet_drain',
+    'rgb_utxo_maintenance'
+  ], `${path}.purpose`)
+  oneOf(item.direction, ['incoming', 'outgoing', 'internal'], `${path}.direction`)
   text(item.txid, `${path}.txid`, 128)
   decimal(item.received, `${path}.received`)
   decimal(item.sent, `${path}.sent`)
   decimal(item.fee, `${path}.fee`)
+  nullableDecimal(item.external_value, `${path}.external_value`)
   blockTime(item.confirmation_time, `${path}.confirmation_time`)
+  const taxonomy = {
+    Incoming: ['incoming_bitcoin', 'incoming'],
+    SendBtc: ['outgoing_bitcoin', 'outgoing'],
+    RgbSend: ['rgb_anchor', 'internal'],
+    Drain: ['wallet_drain', 'internal'],
+    CreateUtxos: ['rgb_utxo_maintenance', 'internal']
+  }[item.transaction_type]
+  if (item.purpose !== taxonomy[0]) {
+    fail(`${path}.purpose`, `must equal ${taxonomy[0]} for ${item.transaction_type}`)
+  }
+  if (item.direction !== taxonomy[1]) {
+    fail(`${path}.direction`, `must equal ${taxonomy[1]} for ${item.transaction_type}`)
+  }
+  const received = BigInt(item.received)
+  const sent = BigInt(item.sent)
+  const fee = BigInt(item.fee)
+  const expectedExternalValue = item.direction === 'incoming'
+    ? received >= sent ? received - sent : null
+    : item.direction === 'outgoing'
+      ? sent >= received + fee ? sent - received - fee : null
+      : null
+  if (
+    (expectedExternalValue === null && item.external_value !== null) ||
+    (expectedExternalValue !== null && item.external_value !== expectedExternalValue.toString())
+  ) {
+    fail(`${path}.external_value`, 'must equal the external wallet movement')
+  }
 }
 
 function snapshotPayment (value, path) {
@@ -356,9 +418,11 @@ function snapshotTransfer (value, path) {
   decimal(item.created_at, `${path}.created_at`)
   decimal(item.updated_at, `${path}.updated_at`)
   text(item.status, `${path}.status`, 64)
-  nullableText(item.requested_assignment, `${path}.requested_assignment`, 1024)
+  if (item.requested_assignment !== null) {
+    rgbAssignment(item.requested_assignment, `${path}.requested_assignment`)
+  }
   array(item.assignments, `${path}.assignments`, 1024).forEach((entry, index) => {
-    text(entry, `${path}.assignments[${index}]`, 1024)
+    rgbAssignment(entry, `${path}.assignments[${index}]`)
   })
   text(item.kind, `${path}.kind`, 64)
   nullableText(item.txid, `${path}.txid`, 128)
@@ -369,6 +433,20 @@ function snapshotTransfer (value, path) {
   array(item.transport_endpoints, `${path}.transport_endpoints`, 64).forEach((entry, index) => {
     transferEndpoint(entry, `${path}.transport_endpoints[${index}]`)
   })
+}
+
+function rgbAssignment (value, path) {
+  const item = record(value, path)
+  exactKeys(item, ['kind'], ['amount'], path)
+  oneOf(item.kind, ['Fungible', 'NonFungible', 'InflationRight', 'Any'], `${path}.kind`)
+  const amountRequired = item.kind === 'Fungible' || item.kind === 'InflationRight'
+  if (amountRequired && !HAS_OWN(item, 'amount')) {
+    fail(`${path}.amount`, `is required for ${item.kind}`)
+  }
+  if (!amountRequired && HAS_OWN(item, 'amount')) {
+    fail(`${path}.amount`, `must be omitted for ${item.kind}`)
+  }
+  if (HAS_OWN(item, 'amount')) decimal(item.amount, `${path}.amount`)
 }
 
 function snapshotTransfers (value, path, options) {
@@ -396,9 +474,9 @@ export function validateWalletSnapshotResponse (value, options) {
   // strict contract validation below still rejects every unknown value.
   const snapshot = record(normalizeLegacyNetworkNames(value), 'snapshot')
   const required = [
-    'contract_version', 'native_source', 'capture_sequence', 'started_at_ms',
-    'completed_at_ms', 'network_before', 'network_after', 'node', 'btc',
-    'assets', 'channels'
+    'contract_version', 'native_source', 'capture_sequence', 'capture_attempts',
+    'stable_capture_count', 'started_at_ms', 'completed_at_ms',
+    'network_before', 'network_after', 'node', 'btc', 'assets', 'channels'
   ]
   const optional = ['transactions', 'payments', 'transfers']
   exactKeys(snapshot, required, optional, 'snapshot')
@@ -410,6 +488,10 @@ export function validateWalletSnapshotResponse (value, options) {
   }
   decimal(snapshot.capture_sequence, 'snapshot.capture_sequence')
   if (BigInt(snapshot.capture_sequence) === 0n) fail('snapshot.capture_sequence', 'must be greater than zero')
+  integer(snapshot.capture_attempts, 'snapshot.capture_attempts', 2, 3)
+  if (snapshot.stable_capture_count !== 2) {
+    fail('snapshot.stable_capture_count', 'must equal 2')
+  }
   decimal(snapshot.started_at_ms, 'snapshot.started_at_ms')
   decimal(snapshot.completed_at_ms, 'snapshot.completed_at_ms')
   if (BigInt(snapshot.completed_at_ms) < BigInt(snapshot.started_at_ms)) {
@@ -458,7 +540,19 @@ export function validateWalletSnapshotResponse (value, options) {
 
 export function isCoherentWalletSnapshot (snapshot) {
   return snapshot.network_before.network === snapshot.network_after.network &&
-    snapshot.network_before.height === snapshot.network_after.height
+    snapshot.network_before.height === snapshot.network_after.height &&
+    snapshot.network_before.block_hash === snapshot.network_after.block_hash &&
+    snapshot.stable_capture_count === 2
+}
+
+export function snapshotMatchesWalletSync (snapshot, sync) {
+  if (!isCoherentWalletSnapshot(snapshot)) return false
+  return ['vanilla', 'colored'].every(keychain => {
+    const checkpoint = sync[keychain]?.checkpoint
+    return checkpoint?.network === snapshot.network_before.network &&
+      checkpoint.height === snapshot.network_before.height &&
+      checkpoint.block_hash === snapshot.network_before.block_hash
+  })
 }
 
 export function walletSnapshotRequestKey (options) {

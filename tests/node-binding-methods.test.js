@@ -46,14 +46,31 @@ function realBootstrapPayload () {
 }
 
 function fakeNode () {
-  return {
+  let operationSequence = 0
+  const node = {
     initWithNativeExternalSigner: jest.fn(),
     unlockWithNativeExternalSigner: jest.fn(),
     vssClearFence: jest.fn(),
     vssBackup: jest.fn(() => ({ version: 7 })),
+    vssDeleteAll: jest.fn(() => ({ deleted_keys: 12 })),
     apayNew: jest.fn(() => realAsyncOrderNewResponse()),
     shutdown: jest.fn()
   }
+  node.startUnlockWithNativeExternalSigner = jest.fn((signer, request) => {
+    node.unlockWithNativeExternalSigner(signer, request)
+    operationSequence += 1
+    return {
+      contract_version: 1,
+      operation_id: `operation-${operationSequence}`,
+      kind: 'unlock',
+      state: 'succeeded',
+      cancellation_requested: false
+    }
+  })
+  node.nativeOperationStatus = jest.fn()
+  node.adoptNativeOperation = jest.fn()
+  node.cancelNativeOperation = jest.fn()
+  return node
 }
 
 function fakeSigner () {
@@ -177,13 +194,13 @@ describe('attachExternalSigner', () => {
 })
 
 describe('unlock', () => {
-  it('throws when no signer has been attached', () => {
+  it('rejects when no signer has been attached', async () => {
     const b = makeBinding()
     b._node = fakeNode()
-    expect(() => b.unlock({})).toThrow('attachExternalSigner')
+    await expect(b.unlock({})).rejects.toThrow('attachExternalSigner')
   })
 
-  it('runs init then unlock on the first call and sets _sdkInitDone', () => {
+  it('runs init then unlock on the first call and sets _sdkInitDone', async () => {
     const b = makeBinding()
     const node = fakeNode()
     const signer = fakeSigner()
@@ -192,7 +209,7 @@ describe('unlock', () => {
     const fallbackSeed = Buffer.from('seed-v1')
     b._fallbackSeedHex = fallbackSeed
     const req = { mnemonic: 'm' }
-    b.unlock(req)
+    await b.unlock(req)
     expect(node.initWithNativeExternalSigner).toHaveBeenCalledWith(signer)
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledWith(signer, req)
     expect(b._sdkInitDone).toBe(true)
@@ -200,40 +217,40 @@ describe('unlock', () => {
     expect(fallbackSeed.every((byte) => byte === 0)).toBe(true)
   })
 
-  it('swallows a Conflict init error and still proceeds to unlock', () => {
+  it('swallows a Conflict init error and still proceeds to unlock', async () => {
     const b = makeBinding()
     const node = fakeNode()
     node.initWithNativeExternalSigner.mockImplementation(() => { throw new Error('Conflict: already initialized') })
     b._node = node
     b._signer = fakeSigner()
-    expect(() => b.unlock({})).not.toThrow()
+    await expect(b.unlock({})).resolves.toBeUndefined()
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalled()
     expect(b._sdkInitDone).toBe(true)
   })
 
-  it('rethrows a non-Conflict init error and does not unlock', () => {
+  it('rethrows a non-Conflict init error and does not unlock', async () => {
     const b = makeBinding()
     const node = fakeNode()
     node.initWithNativeExternalSigner.mockImplementation(() => { throw new Error('boom') })
     b._node = node
     b._signer = fakeSigner()
-    expect(() => b.unlock({})).toThrow('boom')
+    await expect(b.unlock({})).rejects.toThrow('boom')
     expect(node.unlockWithNativeExternalSigner).not.toHaveBeenCalled()
     expect(b._sdkInitDone).toBe(false)
   })
 
-  it('skips init on a second unlock once _sdkInitDone is set', () => {
+  it('skips init on a second unlock once _sdkInitDone is set', async () => {
     const b = makeBinding()
     const node = fakeNode()
     b._node = node
     b._signer = fakeSigner()
-    b.unlock({})
-    b.unlock({})
+    await b.unlock({})
+    await b.unlock({})
     expect(node.initWithNativeExternalSigner).toHaveBeenCalledTimes(1)
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(2)
   })
 
-  it('retries with the legacy signer only for a persisted identity mismatch', () => {
+  it('retries with the legacy signer only for a persisted identity mismatch', async () => {
     const b = makeBinding()
     const node = fakeNode()
     const primarySigner = fakeSigner()
@@ -252,7 +269,7 @@ describe('unlock', () => {
     b._seedHex = primarySeed
     b._fallbackSeedHex = fallbackSeed
     try {
-      expect(() => b.unlock({ rpc: true })).not.toThrow()
+      await expect(b.unlock({ rpc: true })).resolves.toBeUndefined()
       expect(primarySigner.destroy).toHaveBeenCalledTimes(1)
       expect(createSpy).toHaveBeenCalledWith(
         'seed-v1',
@@ -270,7 +287,7 @@ describe('unlock', () => {
     }
   })
 
-  it('destroys a newly created fallback signer when the primary signer cannot be released', () => {
+  it('destroys a newly created fallback signer when the primary signer cannot be released', async () => {
     const b = makeBinding()
     const node = fakeNode()
     const primarySigner = fakeSigner()
@@ -289,7 +306,7 @@ describe('unlock', () => {
     b._seedHex = primarySeed
     b._fallbackSeedHex = fallbackSeed
     try {
-      expect(() => b.unlock({})).toThrow(destroyError)
+      await expect(b.unlock({})).rejects.toBe(destroyError)
       expect(fallbackSigner.destroy).toHaveBeenCalledTimes(1)
       expect(b._signer).toBe(primarySigner)
       expect(b._seedHex).toBe(primarySeed)
@@ -300,7 +317,7 @@ describe('unlock', () => {
     }
   })
 
-  it('reports both native cleanup failures during fallback replacement', () => {
+  it('reports both native cleanup failures during fallback replacement', async () => {
     const b = makeBinding()
     const node = fakeNode()
     const primarySigner = fakeSigner()
@@ -321,7 +338,7 @@ describe('unlock', () => {
     try {
       let thrown
       try {
-        b.unlock({})
+        await b.unlock({})
       } catch (error) {
         thrown = error
       }
@@ -335,18 +352,18 @@ describe('unlock', () => {
     }
   })
 
-  it('does not retry a generic unlock failure with the legacy signer', () => {
+  it('does not retry a generic unlock failure with the legacy signer', async () => {
     const b = makeBinding()
     const node = fakeNode()
     node.unlockWithNativeExternalSigner.mockImplementation(() => { throw new Error('backend unavailable') })
     b._node = node
     b._signer = fakeSigner()
     b._fallbackSeedHex = Buffer.from('seed-v1')
-    expect(() => b.unlock({})).toThrow('backend unavailable')
+    await expect(b.unlock({})).rejects.toThrow('backend unavailable')
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
   })
 
-  it('does not retry an identity mismatch when no fallback seed is available', () => {
+  it('does not retry an identity mismatch when no fallback seed is available', async () => {
     const b = makeBinding()
     const node = fakeNode()
     node.unlockWithNativeExternalSigner.mockImplementation(() => {
@@ -354,11 +371,11 @@ describe('unlock', () => {
     })
     b._node = node
     b._signer = fakeSigner()
-    expect(() => b.unlock({})).toThrow('ExternalSignerMismatch')
+    await expect(b.unlock({})).rejects.toThrow('ExternalSignerMismatch')
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
   })
 
-  it('does not retry a thrown-string unlock failure with the legacy signer', () => {
+  it('does not retry a thrown-string unlock failure with the legacy signer', async () => {
     const b = makeBinding()
     const node = fakeNode()
     // eslint-disable-next-line no-throw-literal
@@ -366,30 +383,30 @@ describe('unlock', () => {
     b._node = node
     b._signer = fakeSigner()
     b._fallbackSeedHex = Buffer.from('seed-v1')
-    expect(() => b.unlock({})).toThrow('backend unavailable')
+    await expect(b.unlock({})).rejects.toBe('backend unavailable')
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
   })
 
-  it('swallows a thrown string containing Conflict (no .message) and proceeds', () => {
+  it('swallows a thrown string containing Conflict (no .message) and proceeds', async () => {
     const b = makeBinding()
     const node = fakeNode()
     // eslint-disable-next-line no-throw-literal
     node.initWithNativeExternalSigner.mockImplementation(() => { throw 'Conflict: already initialized' })
     b._node = node
     b._signer = fakeSigner()
-    expect(() => b.unlock({})).not.toThrow()
+    await expect(b.unlock({})).resolves.toBeUndefined()
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
     expect(b._sdkInitDone).toBe(true)
   })
 
-  it('rethrows a thrown string without Conflict (no .message) and does not unlock', () => {
+  it('rethrows a thrown string without Conflict (no .message) and does not unlock', async () => {
     const b = makeBinding()
     const node = fakeNode()
     // eslint-disable-next-line no-throw-literal
     node.initWithNativeExternalSigner.mockImplementation(() => { throw 'plain boom' })
     b._node = node
     b._signer = fakeSigner()
-    expect(() => b.unlock({})).toThrow('plain boom')
+    await expect(b.unlock({})).rejects.toBe('plain boom')
     expect(node.unlockWithNativeExternalSigner).not.toHaveBeenCalled()
     expect(b._sdkInitDone).toBe(false)
   })
@@ -481,6 +498,17 @@ describe('vssBackup', () => {
     const ensureSpy = jest.spyOn(b, 'ensureNode').mockReturnValue(node)
     expect(b.vssBackup()).toEqual({ version: 7 })
     expect(ensureSpy).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('vssDeleteAll', () => {
+  it('forwards the password to the verified native deletion operation', () => {
+    const binding = makeBinding()
+    const node = fakeNode()
+    binding._node = node
+
+    expect(binding.vssDeleteAll('pw')).toEqual({ deleted_keys: 12 })
+    expect(node.vssDeleteAll).toHaveBeenCalledWith({ password: 'pw' })
   })
 })
 

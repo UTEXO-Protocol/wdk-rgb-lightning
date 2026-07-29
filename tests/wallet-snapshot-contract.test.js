@@ -18,23 +18,39 @@ import {
 
 function syncResult (overrides = {}) {
   return {
-    contract_version: 1,
+    contract_version: 2,
     mode: 'routine',
-    vanilla: { status: 'succeeded' },
-    colored: { status: 'succeeded' },
+    vanilla: {
+      status: 'succeeded',
+      checkpoint: { network: 'regtest', height: 100, block_hash: 'a'.repeat(64) }
+    },
+    colored: {
+      status: 'succeeded',
+      checkpoint: { network: 'regtest', height: 100, block_hash: 'a'.repeat(64) }
+    },
     ...overrides
   }
 }
 
 function snapshot (overrides = {}) {
   return {
-    contract_version: 1,
-    native_source: 'rgb-lightning-node-v0.9.0-beta.3+utexo-wallet-v1',
+    contract_version: 2,
+    native_source: 'rgb-lightning-node-v0.10.0-beta.3+utexo-wallet-v2',
     capture_sequence: '1',
+    capture_attempts: 2,
+    stable_capture_count: 2,
     started_at_ms: '1000',
     completed_at_ms: '1001',
-    network_before: { network: 'regtest', height: 100 },
-    network_after: { network: 'regtest', height: 100 },
+    network_before: {
+      network: 'regtest',
+      height: 100,
+      block_hash: 'a'.repeat(64)
+    },
+    network_after: {
+      network: 'regtest',
+      height: 100,
+      block_hash: 'a'.repeat(64)
+    },
     node: {
       pubkey: '02abc',
       num_channels: '1',
@@ -91,10 +107,13 @@ function activitySnapshot (overrides = {}) {
   return snapshot({
     transactions: [{
       transaction_type: 'Incoming',
+      purpose: 'incoming_bitcoin',
+      direction: 'incoming',
       txid: 'txid-1',
       received: '42',
       sent: '0',
       fee: '0',
+      external_value: '42',
       confirmation_time: { height: 100, timestamp: '1000' }
     }],
     payments: [{
@@ -117,7 +136,7 @@ function activitySnapshot (overrides = {}) {
         updated_at: '1001',
         status: 'Settled',
         requested_assignment: null,
-        assignments: ['100'],
+        assignments: [{ kind: 'Fungible', amount: '100' }],
         kind: 'ReceiveWitness',
         txid: 'txid-1',
         recipient_id: null,
@@ -210,15 +229,27 @@ describe('wallet snapshot response contract', () => {
       }
     }), options)).toThrow('snapshot.btc.vanilla.settled')
     expect(() => validateWalletSnapshotResponse(snapshot({
-      network_before: { network: 'bitcoin', height: 100 }
+      network_before: {
+        network: 'bitcoin',
+        height: 100,
+        block_hash: 'a'.repeat(64)
+      }
     }), options)).toThrow('snapshot.network_before.network')
   })
 
   it('canonicalizes recognized legacy native network casing without mutating input', () => {
     const options = normalizeWalletSnapshotOptions()
     const value = snapshot({
-      network_before: { network: 'Regtest', height: 100 },
-      network_after: { network: 'REGTEST', height: 100 }
+      network_before: {
+        network: 'Regtest',
+        height: 100,
+        block_hash: 'a'.repeat(64)
+      },
+      network_after: {
+        network: 'REGTEST',
+        height: 100,
+        block_hash: 'a'.repeat(64)
+      }
     })
 
     const result = validateWalletSnapshotResponse(value, options)
@@ -233,7 +264,11 @@ describe('wallet snapshot response contract', () => {
     const options = normalizeWalletSnapshotOptions()
 
     expect(() => validateWalletSnapshotResponse(snapshot({
-      network_before: { network: 'Bitcoin', height: 100 }
+      network_before: {
+        network: 'Bitcoin',
+        height: 100,
+        block_hash: 'a'.repeat(64)
+      }
     }), options)).toThrow('snapshot.network_before.network')
   })
 
@@ -294,7 +329,7 @@ describe('wallet snapshot response contract', () => {
     [snapshot({ node: { ...snapshot().node, pubkey: 42 } }), 'snapshot.node.pubkey'],
     [snapshot({ node: { ...snapshot().node, pubkey: 'a'.repeat(131) } }), 'snapshot.node.pubkey'],
     [snapshot({ assets: {} }), 'snapshot.assets'],
-    [snapshot({ contract_version: 2 }), 'snapshot.contract_version'],
+    [snapshot({ contract_version: 1 }), 'snapshot.contract_version'],
     [snapshot({ native_source: 'untrusted-native' }), 'snapshot.native_source'],
     [snapshot({ started_at_ms: '1002', completed_at_ms: '1001' }), 'snapshot.completed_at_ms'],
     [snapshot({ capture_sequence: '0' }), 'snapshot.capture_sequence'],
@@ -348,7 +383,7 @@ describe('wallet snapshot response contract', () => {
   })
 
   it.each([
-    [syncResult({ contract_version: 2 }), 'sync.contract_version'],
+    [syncResult({ contract_version: 1 }), 'sync.contract_version'],
     [syncResult({ vanilla: { status: 'succeeded', error_code: 'IMPOSSIBLE' } }), 'sync.vanilla.error_code'],
     [null, 'sync']
   ])('rejects malformed sync contract evidence', (value, path) => {
@@ -358,6 +393,38 @@ describe('wallet snapshot response contract', () => {
   it('rejects a sync response for a different requested mode', () => {
     expect(() => validateWalletSyncResponse(syncResult(), 'recovery'))
       .toThrow('sync.mode')
+  })
+
+  it('rejects keychains synchronized to different block hashes', () => {
+    const value = syncResult({
+      colored: {
+        status: 'succeeded',
+        checkpoint: {
+          network: 'regtest',
+          height: 100,
+          block_hash: 'b'.repeat(64)
+        }
+      }
+    })
+
+    expect(() => validateWalletSyncResponse(value, 'routine'))
+      .toThrow('sync.colored.checkpoint')
+  })
+
+  it('rejects inconsistent transaction taxonomy and external value', () => {
+    const options = normalizeWalletSnapshotOptions({
+      includeActivity: true,
+      assetIds: ['asset-1']
+    })
+    const wrongPurpose = activitySnapshot()
+    wrongPurpose.transactions[0].purpose = 'outgoing_bitcoin'
+    expect(() => validateWalletSnapshotResponse(wrongPurpose, options))
+      .toThrow('snapshot.transactions[0].purpose')
+
+    const wrongValue = activitySnapshot()
+    wrongValue.transactions[0].external_value = '41'
+    expect(() => validateWalletSnapshotResponse(wrongValue, options))
+      .toThrow('snapshot.transactions[0].external_value')
   })
 })
 
@@ -380,7 +447,7 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
       max_activity_items: 1000,
       include_activity: false
     })
-    expect(result.contractVersion).toBe(1)
+    expect(result.contractVersion).toBe(2)
     expect(Object.isFrozen(result)).toBe(true)
     expect(Object.isFrozen(result.snapshot.btc)).toBe(true)
   })
@@ -436,7 +503,11 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
       walletSnapshot: jest.fn()
         .mockReturnValueOnce(snapshot({
           capture_sequence: '7',
-          network_after: { network: 'regtest', height: 101 }
+          network_after: {
+            network: 'regtest',
+            height: 101,
+            block_hash: 'b'.repeat(64)
+          }
         }))
         .mockReturnValueOnce(snapshot({ capture_sequence: '8' }))
     }
@@ -456,7 +527,11 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
         })),
       walletSnapshot: jest.fn(() => snapshot({
         capture_sequence: '7',
-        network_after: { network: 'regtest', height: 101 }
+        network_after: {
+          network: 'regtest',
+          height: 101,
+          block_hash: 'b'.repeat(64)
+        }
       }))
     }
     const error = await accountWith(node).refreshWalletSnapshot().catch((reason) => reason)
@@ -472,11 +547,19 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
       walletSnapshot: jest.fn()
         .mockReturnValueOnce(snapshot({
           capture_sequence: '7',
-          network_after: { network: 'regtest', height: 101 }
+          network_after: {
+            network: 'regtest',
+            height: 101,
+            block_hash: 'b'.repeat(64)
+          }
         }))
         .mockReturnValueOnce(snapshot({
           capture_sequence: '8',
-          network_after: { network: 'regtest', height: 101 }
+          network_after: {
+            network: 'regtest',
+            height: 101,
+            block_hash: 'b'.repeat(64)
+          }
         }))
     }
     const error = await accountWith(node).refreshWalletSnapshot().catch((reason) => reason)
@@ -489,7 +572,11 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
       syncWallet: jest.fn(() => syncResult()),
       walletSnapshot: jest.fn(() => snapshot({
         capture_sequence: '7',
-        network_after: { network: 'regtest', height: 101 }
+        network_after: {
+          network: 'regtest',
+          height: 101,
+          block_hash: 'b'.repeat(64)
+        }
       }))
     }
     const error = await accountWith(node).refreshWalletSnapshot().catch((reason) => reason)
@@ -504,7 +591,7 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
 
   it.each([
     [new Error('native sync failed'), 'WALLET_SYNC_NATIVE_FAILURE'],
-    [syncResult({ contract_version: 2 }), 'WALLET_SYNC_CONTRACT_MISMATCH']
+    [syncResult({ contract_version: 1 }), 'WALLET_SYNC_CONTRACT_MISMATCH']
   ])('classifies native and contract sync failures', async (outcome, code) => {
     const node = {
       syncWallet: jest.fn(() => {
@@ -518,18 +605,18 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
     expect(error).toBeInstanceOf(WalletSyncError)
     expect(error.code).toBe(code)
     if (code === 'WALLET_SYNC_CONTRACT_MISMATCH') {
-      expect(error.message).toContain('sync.contract_version must equal 1')
+      expect(error.message).toContain('sync.contract_version must equal 2')
       expect(error.details).toEqual({
         mode: 'routine',
         contractPath: 'sync.contract_version',
-        contractExpectation: 'must equal 1'
+        contractExpectation: 'must equal 2'
       })
     }
   })
 
   it.each([
     [new Error('native snapshot failed'), 'WALLET_SNAPSHOT_NATIVE_FAILURE'],
-    [snapshot({ contract_version: 2 }), 'WALLET_SNAPSHOT_CONTRACT_MISMATCH'],
+    [snapshot({ contract_version: 1 }), 'WALLET_SNAPSHOT_CONTRACT_MISMATCH'],
     [new WalletSnapshotError('native typed failure', { code: 'NATIVE_TYPED_FAILURE' }), 'NATIVE_TYPED_FAILURE']
   ])('classifies native, contract, and typed snapshot failures', async (outcome, code) => {
     const node = {
@@ -544,10 +631,10 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
     expect(error).toBeInstanceOf(WalletSnapshotError)
     expect(error.code).toBe(code)
     if (code === 'WALLET_SNAPSHOT_CONTRACT_MISMATCH') {
-      expect(error.message).toContain('snapshot.contract_version must equal 1')
+      expect(error.message).toContain('snapshot.contract_version must equal 2')
       expect(error.details).toEqual({
         contractPath: 'snapshot.contract_version',
-        contractExpectation: 'must equal 1'
+        contractExpectation: 'must equal 2'
       })
     }
   })
@@ -579,7 +666,7 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
   it('keeps the serialized refresh queue usable after a failed request', async () => {
     const node = {
       syncWallet: jest.fn()
-        .mockReturnValueOnce(syncResult({ contract_version: 2 }))
+        .mockReturnValueOnce(syncResult({ contract_version: 1 }))
         .mockReturnValueOnce(syncResult({ mode: 'recovery' })),
       walletSnapshot: jest.fn(() => snapshot())
     }

@@ -12,14 +12,31 @@ function makeBinding (overrides = {}) {
 }
 
 function fakeNode () {
-  return {
+  let operationSequence = 0
+  const node = {
     initWithNativeExternalSigner: jest.fn(),
     unlockWithNativeExternalSigner: jest.fn(),
     vssClearFence: jest.fn(),
     vssBackup: jest.fn(() => ({ version: 7 })),
+    vssDeleteAll: jest.fn(() => ({ deleted_keys: 12 })),
     apayNew: jest.fn(() => ({ order_id: 'order-1' })),
     shutdown: jest.fn()
   }
+  node.startUnlockWithNativeExternalSigner = jest.fn((signer, request) => {
+    node.unlockWithNativeExternalSigner(signer, request)
+    operationSequence += 1
+    return {
+      contract_version: 1,
+      operation_id: `operation-${operationSequence}`,
+      kind: 'unlock',
+      state: 'succeeded',
+      cancellation_requested: false
+    }
+  })
+  node.nativeOperationStatus = jest.fn()
+  node.adoptNativeOperation = jest.fn()
+  node.cancelNativeOperation = jest.fn()
+  return node
 }
 
 function fakeSigner () {
@@ -96,15 +113,15 @@ describe('BareRgbLightningBinding', () => {
     expect(externallyAttached._seedHex).toBeUndefined()
   })
 
-  it('requires a signer before unlock and bootstrap', () => {
+  it('requires a signer before unlock and bootstrap', async () => {
     const binding = makeBinding()
     binding._node = fakeNode()
 
-    expect(() => binding.unlock({})).toThrow('attachExternalSigner')
+    await expect(binding.unlock({})).rejects.toThrow('attachExternalSigner')
     expect(() => binding.bootstrap()).toThrow('attachExternalSigner')
   })
 
-  it('initializes once and wipes an unused fallback after primary unlock', () => {
+  it('initializes once and wipes an unused fallback after primary unlock', async () => {
     const binding = makeBinding()
     const node = fakeNode()
     const signer = fakeSigner()
@@ -113,8 +130,8 @@ describe('BareRgbLightningBinding', () => {
     binding._signer = signer
     binding._fallbackSeedHex = fallbackSeed
 
-    binding.unlock({ rpc: true })
-    binding.unlock({ rpc: true })
+    await binding.unlock({ rpc: true })
+    await binding.unlock({ rpc: true })
 
     expect(node.initWithNativeExternalSigner).toHaveBeenCalledTimes(1)
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(2)
@@ -122,7 +139,7 @@ describe('BareRgbLightningBinding', () => {
     expect(fallbackSeed.every((byte) => byte === 0)).toBe(true)
   })
 
-  it('accepts an existing SDK init but rethrows unrelated init failures', () => {
+  it('accepts an existing SDK init but rethrows unrelated init failures', async () => {
     const existing = makeBinding()
     const existingNode = fakeNode()
     existingNode.initWithNativeExternalSigner.mockImplementation(() => {
@@ -131,7 +148,7 @@ describe('BareRgbLightningBinding', () => {
     existing._node = existingNode
     existing._signer = fakeSigner()
 
-    expect(() => existing.unlock({})).not.toThrow()
+    await expect(existing.unlock({})).resolves.toBeUndefined()
     expect(existingNode.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
 
     const failing = makeBinding()
@@ -141,12 +158,12 @@ describe('BareRgbLightningBinding', () => {
     failing._node = failingNode
     failing._signer = fakeSigner()
 
-    expect(() => failing.unlock({})).toThrow('init failed')
+    await expect(failing.unlock({})).rejects.toBe('init failed')
     expect(failingNode.unlockWithNativeExternalSigner).not.toHaveBeenCalled()
     expect(failing._sdkInitDone).toBe(false)
   })
 
-  it('replaces a mismatched primary signer with the legacy signer', () => {
+  it('replaces a mismatched primary signer with the legacy signer', async () => {
     const binding = makeBinding()
     const node = fakeNode()
     const primarySigner = fakeSigner()
@@ -165,7 +182,7 @@ describe('BareRgbLightningBinding', () => {
     binding._seedHex = primarySeed
     binding._fallbackSeedHex = fallbackSeed
 
-    binding.unlock({ rpc: true })
+    await binding.unlock({ rpc: true })
 
     expect(primarySigner.destroy).toHaveBeenCalledTimes(1)
     expect(createSpy).toHaveBeenCalledWith(
@@ -181,7 +198,7 @@ describe('BareRgbLightningBinding', () => {
     expect(node.unlockWithNativeExternalSigner).toHaveBeenLastCalledWith(fallbackSigner, { rpc: true })
   })
 
-  it('destroys the fallback signer if the primary signer cannot be released', () => {
+  it('destroys the fallback signer if the primary signer cannot be released', async () => {
     const binding = makeBinding()
     const node = fakeNode()
     const primarySigner = fakeSigner()
@@ -199,7 +216,7 @@ describe('BareRgbLightningBinding', () => {
     binding._seedHex = primarySeed
     binding._fallbackSeedHex = fallbackSeed
 
-    expect(() => binding.unlock({})).toThrow(destroyError)
+    await expect(binding.unlock({})).rejects.toBe(destroyError)
     expect(fallbackSigner.destroy).toHaveBeenCalledTimes(1)
     expect(binding._signer).toBe(primarySigner)
     expect(binding._seedHex).toBe(primarySeed)
@@ -207,7 +224,7 @@ describe('BareRgbLightningBinding', () => {
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
   })
 
-  it('does not replace the signer for an unrelated unlock failure', () => {
+  it('does not replace the signer for an unrelated unlock failure', async () => {
     const binding = makeBinding()
     const node = fakeNode()
     const signer = fakeSigner()
@@ -217,12 +234,12 @@ describe('BareRgbLightningBinding', () => {
     binding._signer = signer
     binding._fallbackSeedHex = Buffer.from('seed-v1')
 
-    expect(() => binding.unlock({})).toThrow('backend unavailable')
+    await expect(binding.unlock({})).rejects.toBe('backend unavailable')
     expect(binding._signer).toBe(signer)
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
   })
 
-  it('reports both signer cleanup failures without replacing binding state', () => {
+  it('reports both signer cleanup failures without replacing binding state', async () => {
     const binding = makeBinding()
     const node = fakeNode()
     const primarySigner = fakeSigner()
@@ -242,7 +259,7 @@ describe('BareRgbLightningBinding', () => {
 
     let thrown
     try {
-      binding.unlock({})
+      await binding.unlock({})
     } catch (error) {
       thrown = error
     }
@@ -263,6 +280,8 @@ describe('BareRgbLightningBinding', () => {
     expect(binding.bootstrap()).toEqual({ node_id: '03beef' })
     binding.clearVssFence('pw')
     expect(binding.vssBackup()).toEqual({ version: 7 })
+    expect(binding.vssDeleteAll('pw')).toEqual({ deleted_keys: 12 })
+    expect(node.vssDeleteAll).toHaveBeenCalledWith({ password: 'pw' })
     expect(binding.vssStatus()).toEqual({
       configured: true,
       url: 'https://vss.example',

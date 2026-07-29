@@ -27,6 +27,7 @@
 import rln from '@utexo/rgb-lightning-node-bare'
 import { retainSecret, revealSecret, secretMatches, wipeSecret } from './secret-buffer.js'
 import { signerStoragePath } from './signer-storage-path.js'
+import { validateNativeOperationStatus, waitForNativeOperation } from './native-operation.js'
 
 const {
   SdkNode,
@@ -110,6 +111,8 @@ export class BareRgbLightningBinding {
     this._sdkInitDone = false
     /** @type {number | null} Snapshot version returned by the most recent vssBackup(). */
     this._lastVssVersion = null
+    /** @type {string | null} Most recent adoptable native unlock operation. */
+    this._unlockOperationId = null
   }
 
   /**
@@ -172,7 +175,7 @@ export class BareRgbLightningBinding {
    * @throws {Error} - If no signer is attached or native initialization or
    *   unlock fails.
    */
-  unlock (unlockRequest) {
+  async unlock (unlockRequest, options = {}) {
     const node = this.ensureNode()
     if (!this._signer) {
       throw new Error('attachExternalSigner(seedHex) must be called before unlock()')
@@ -190,7 +193,9 @@ export class BareRgbLightningBinding {
       this._sdkInitDone = true
     }
     try {
-      node.unlockWithNativeExternalSigner(this._signer, unlockRequest)
+      const operation = node.startUnlockWithNativeExternalSigner(this._signer, unlockRequest)
+      this._unlockOperationId = operation.operation_id
+      await waitForNativeOperation(node, operation, options.signal)
       wipeSecret(this._fallbackSeedHex)
       this._fallbackSeedHex = undefined
     } catch (error) {
@@ -223,8 +228,32 @@ export class BareRgbLightningBinding {
       wipeSecret(this._seedHex)
       this._seedHex = fallbackSeed
       this._fallbackSeedHex = undefined
-      node.unlockWithNativeExternalSigner(this._signer, unlockRequest)
+      const operation = node.startUnlockWithNativeExternalSigner(this._signer, unlockRequest)
+      this._unlockOperationId = operation.operation_id
+      await waitForNativeOperation(node, operation, options.signal)
     }
+  }
+
+  unlockOperationStatus () {
+    if (!this._unlockOperationId) return null
+    return validateNativeOperationStatus(
+      this.ensureNode().nativeOperationStatus(this._unlockOperationId)
+    )
+  }
+
+  adoptUnlockOperation (operationId) {
+    const status = validateNativeOperationStatus(
+      this.ensureNode().adoptNativeOperation(operationId)
+    )
+    this._unlockOperationId = status.operation_id
+    return status
+  }
+
+  cancelUnlockOperation () {
+    if (!this._unlockOperationId) return null
+    return validateNativeOperationStatus(
+      this.ensureNode().cancelNativeOperation(this._unlockOperationId)
+    )
   }
 
   /**
@@ -268,6 +297,10 @@ export class BareRgbLightningBinding {
       this._lastVssVersion = r.version
     }
     return r
+  }
+
+  vssDeleteAll (password) {
+    return this.ensureNode().vssDeleteAll({ password })
   }
 
   /**

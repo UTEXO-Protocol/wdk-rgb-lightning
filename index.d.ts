@@ -27,11 +27,11 @@ export type DecimalString = `${bigint}`
 export type WalletSyncMode = 'routine' | 'recovery'
 
 export type WalletSyncKeychainResult =
-  | { status: 'succeeded' }
+  | { status: 'succeeded'; checkpoint: WalletSnapshotNetwork }
   | { status: 'failed'; error_code: string }
 
 export interface WalletSyncResponse {
-  contract_version: 1
+  contract_version: 2
   mode: WalletSyncMode
   vanilla: WalletSyncKeychainResult
   colored: WalletSyncKeychainResult
@@ -49,6 +49,7 @@ export interface WalletSnapshotOptions {
 export interface WalletSnapshotNetwork {
   network: Network
   height: number
+  block_hash: string
 }
 
 export interface WalletSnapshotBalance {
@@ -115,10 +116,18 @@ export interface WalletSnapshotBlockTime {
 
 export interface WalletSnapshotTransaction {
   transaction_type: 'RgbSend' | 'Drain' | 'CreateUtxos' | 'SendBtc' | 'Incoming'
+  purpose:
+    | 'incoming_bitcoin'
+    | 'outgoing_bitcoin'
+    | 'rgb_anchor'
+    | 'wallet_drain'
+    | 'rgb_utxo_maintenance'
+  direction: 'incoming' | 'outgoing' | 'internal'
   txid: string
   received: DecimalString
   sent: DecimalString
   fee: DecimalString
+  external_value: DecimalString | null
   confirmation_time: WalletSnapshotBlockTime | null
 }
 
@@ -146,8 +155,8 @@ export interface WalletSnapshotTransfer {
   created_at: DecimalString
   updated_at: DecimalString
   status: string
-  requested_assignment: string | null
-  assignments: string[]
+  requested_assignment: WalletSnapshotRgbAssignment | null
+  assignments: WalletSnapshotRgbAssignment[]
   kind: string
   txid: string | null
   recipient_id: string | null
@@ -157,15 +166,22 @@ export interface WalletSnapshotTransfer {
   transport_endpoints: WalletSnapshotTransferEndpoint[]
 }
 
+export interface WalletSnapshotRgbAssignment {
+  kind: 'Fungible' | 'NonFungible' | 'InflationRight' | 'Any'
+  amount?: DecimalString
+}
+
 export interface WalletSnapshotAssetTransfers {
   asset_id: string
   transfers: WalletSnapshotTransfer[]
 }
 
 export interface WalletSnapshotResponse {
-  contract_version: 1
-  native_source: 'rgb-lightning-node-v0.9.0-beta.3+utexo-wallet-v1'
+  contract_version: 2
+  native_source: 'rgb-lightning-node-v0.10.0-beta.3+utexo-wallet-v2'
   capture_sequence: DecimalString
+  capture_attempts: 2 | 3
+  stable_capture_count: 2
   started_at_ms: DecimalString
   completed_at_ms: DecimalString
   network_before: WalletSnapshotNetwork
@@ -587,6 +603,29 @@ export interface RgbLightningNodeUnlockRequest {
   announce_alias: string
 }
 
+export type NativeOperationState =
+  | 'queued'
+  | 'running'
+  | 'cancel_requested'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+
+export interface NativeOperationStatus {
+  contract_version: 1
+  operation_id: string
+  kind: 'unlock_with_native_external_signer'
+  state: NativeOperationState
+  created_at_ms: DecimalString
+  started_at_ms?: DecimalString
+  finished_at_ms?: DecimalString
+  updated_at_ms: DecimalString
+  cancellation_requested: boolean
+  can_cancel_immediately: boolean
+  adoption_count: number
+  error?: string
+}
+
 // ───────────────────────────────────────────────────────────────────
 // Bindings (low-level; usually not constructed directly)
 // ───────────────────────────────────────────────────────────────────
@@ -594,10 +633,17 @@ export interface RgbLightningNodeUnlockRequest {
 export interface IRgbLightningBinding {
   ensureNode(): unknown
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
-  unlock(unlockRequest: RgbLightningNodeUnlockRequest): void
+  unlock(
+    unlockRequest: RgbLightningNodeUnlockRequest,
+    options?: { signal?: { readonly aborted: boolean } }
+  ): Promise<void>
+  unlockOperationStatus(): NativeOperationStatus | null
+  adoptUnlockOperation(operationId: string): NativeOperationStatus
+  cancelUnlockOperation(): NativeOperationStatus | null
   bootstrap(): object
   clearVssFence(password: string): void
   vssBackup(): { version: number }
+  vssDeleteAll(password: string): { deleted_keys: number }
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
   shutdown(): void
@@ -607,10 +653,14 @@ export class NodeRgbLightningBinding implements IRgbLightningBinding {
   constructor(config: RgbLightningBindingConfig)
   ensureNode(): unknown
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
-  unlock(unlockRequest: object): void
+  unlock(unlockRequest: object, options?: { signal?: { readonly aborted: boolean } }): Promise<void>
+  unlockOperationStatus(): NativeOperationStatus | null
+  adoptUnlockOperation(operationId: string): NativeOperationStatus
+  cancelUnlockOperation(): NativeOperationStatus | null
   bootstrap(): object
   clearVssFence(password: string): void
   vssBackup(): { version: number }
+  vssDeleteAll(password: string): { deleted_keys: number }
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
   shutdown(): void
@@ -624,10 +674,14 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
   constructor(config: RgbLightningBindingConfig)
   ensureNode(): unknown
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
-  unlock(unlockRequest: object): void
+  unlock(unlockRequest: object, options?: { signal?: { readonly aborted: boolean } }): Promise<void>
+  unlockOperationStatus(): NativeOperationStatus | null
+  adoptUnlockOperation(operationId: string): NativeOperationStatus
+  cancelUnlockOperation(): NativeOperationStatus | null
   bootstrap(): object
   clearVssFence(password: string): void
   vssBackup(): { version: number }
+  vssDeleteAll(password: string): { deleted_keys: number }
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
   shutdown(): void
@@ -774,6 +828,9 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
 
   // Lifecycle
   unlock(unlockRequest: RgbLightningNodeUnlockRequest): Promise<{ ok: true }>
+  unlockOperationStatus(): Promise<NativeOperationStatus | null>
+  adoptUnlockOperation(operationId: string): Promise<NativeOperationStatus>
+  cancelUnlockOperation(): Promise<NativeOperationStatus | null>
   getBootstrap(): Promise<object>
   shutdown(): Promise<{ ok: true }>
 
@@ -782,6 +839,7 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   clearVssFence(password: string): Promise<{ ok: true }>
   /** @throws {VssNotConfiguredError} if built without a vssUrl. @throws {VssError} on failure. */
   vssBackup(): Promise<{ version: number }>
+  vssDeleteAll(password: string): Promise<{ deleted_keys: number }>
   /** Local-view status; does not hit the server. */
   vssStatus(): Promise<VssStatus>
 

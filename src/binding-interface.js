@@ -72,10 +72,16 @@
  * @property {(seedHex: string, fallbackSeedHex?: string) => void} attachExternalSigner - Build
  *   the in-process VLS signer from a host-supplied 32-byte seed.
  *   Must be called before `unlock()`.
- * @property {(unlockRequest: object) => void} unlock - Bring the node online.
+ * @property {(unlockRequest: object, options?: {signal?: AbortSignal}) => Promise<void>} unlock - Bring the node online.
  *   The first call initializes and unlocks a fresh data directory. Later calls
  *   treat the expected init `Rln(Conflict)` as already initialized and proceed
  *   with unlock.
+ * @property {() => object|null} unlockOperationStatus - Read the most recent
+ *   native unlock operation without starting another operation.
+ * @property {(operationId: string) => object} adoptUnlockOperation - Adopt an
+ *   existing native unlock operation owned by this node.
+ * @property {() => object|null} cancelUnlockOperation - Request cancellation
+ *   of the most recent native unlock operation.
  * @property {() => object} bootstrap - Return the signer's bootstrap payload
  *   (`node_id`, xpubs, and master fingerprint).
  * @property {(password: string) => void} clearVssFence - Forcibly take over a
@@ -88,6 +94,8 @@
  *   controlled checkpoints (e.g. "save state before app suspend") rather than
  *   relying on the implicit on-write flush. Requires configured VSS and a
  *   successful server flush.
+ * @property {(password: string) => {deleted_keys: number}} vssDeleteAll -
+ *   Permanently delete and verify the authenticated remote VSS store.
  * @property {() => { configured: boolean, url: string|null, allowHttp: boolean, lastBackupVersion: number|null }} vssStatus - Return
  *   local-view VSS status without a server round-trip: whether VSS was
  *   configured at construction, the URL + allow-http flag, and the
