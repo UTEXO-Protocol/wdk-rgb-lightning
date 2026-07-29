@@ -130,6 +130,17 @@ function makeNode (overrides = {}) {
     })),
     commitPreparedBtcSend: jest.fn(() => ({ txid: 'ab'.repeat(32) })),
     cancelBtcSendPlan: jest.fn(() => ({ cancelled: true })),
+    prepareCreateUtxos: jest.fn(() => ({
+      plan_id: 'ef'.repeat(32),
+      fee_sat: '300',
+      total_input_sat: '10300',
+      total_output_sat: '10000',
+      size_vbytes: '180',
+      target_count: 5,
+      output_size_sat: 2_000
+    })),
+    commitPreparedCreateUtxos: jest.fn(() => ({ txid: 'ef'.repeat(32) })),
+    cancelCreateUtxosPlan: jest.fn(() => ({ cancelled: true })),
     listPendingVanillaTransactions: jest.fn(() => [{
       txid: 'cd'.repeat(32),
       operation_type: 'SendBtc'
@@ -899,6 +910,48 @@ describe('BTC ops', () => {
         block_height: 200
       }])
     expect(node.listAddressReceipts).toHaveBeenCalledWith('bcrt1ptest')
+  })
+
+  it('prepares, commits, and cancels an explicit RGB wallet UTXO setup', async () => {
+    const node = makeNode()
+    const account = makeAccount({ node })
+    const request = {
+      up_to: true,
+      num: 5,
+      size: 2_000,
+      fee_rate: 2,
+      skip_sync: false
+    }
+
+    const plan = await account.prepareCreateUtxos(request)
+
+    expect(plan).toEqual({
+      plan_id: 'ef'.repeat(32),
+      fee_sat: '300',
+      total_input_sat: '10300',
+      total_output_sat: '10000',
+      size_vbytes: '180',
+      target_count: 5,
+      output_size_sat: 2_000
+    })
+    expect(node.prepareCreateUtxos).toHaveBeenCalledWith(request)
+    await expect(account.commitPreparedCreateUtxos({ plan_id: plan.plan_id }))
+      .resolves.toEqual({ txid: plan.plan_id })
+    await expect(account.cancelCreateUtxosPlan({ plan_id: plan.plan_id }))
+      .resolves.toEqual({ cancelled: true })
+  })
+
+  it.each([
+    ['prepareCreateUtxos', { up_to: true, fee_rate: 2, skip_sync: false }],
+    ['commitPreparedCreateUtxos', { plan_id: 'ef'.repeat(32) }],
+    ['cancelCreateUtxosPlan', { plan_id: 'ef'.repeat(32) }]
+  ])('fails closed when the native binding lacks %s()', async (method, request) => {
+    const node = makeNode({ [method]: undefined })
+    const account = makeAccount({ node })
+
+    await expect(account[method](request)).rejects.toThrow(
+      `does not expose ${method}()`
+    )
   })
 
   it('getBalance parses vanilla.spendable to a bigint', async () => {

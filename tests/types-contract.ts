@@ -17,11 +17,13 @@ import type {
   IRgbLightningBinding,
   BtcSendRequest,
   CommitPreparedSendRequest,
+  CreateUtxosRequest,
   DecodedLightningInvoice,
   DecodedRgbInvoice,
   AddressReceipt,
   PendingRgbSendPlan,
   PreparedRgbSend,
+  PreparedCreateUtxos,
   PreparedSend,
   LnurlPayOptions,
   LspLiquidityTimeoutError,
@@ -84,6 +86,17 @@ const preparedCommit: CommitPreparedSendRequest = {
 }
 const committedBtc = account.commitPreparedBtcSend(preparedCommit)
 const cancelledBtc = account.cancelBtcSendPlan({ plan_id: preparedCommit.plan_id })
+const createUtxosRequest: CreateUtxosRequest = {
+  up_to: true,
+  num: 5,
+  size: 2_000,
+  fee_rate: 2,
+  skip_sync: false
+}
+const preparedCreateUtxos: Promise<PreparedCreateUtxos> =
+  account.prepareCreateUtxos(createUtxosRequest)
+const committedCreateUtxos = account.commitPreparedCreateUtxos(preparedCommit)
+const cancelledCreateUtxos = account.cancelCreateUtxosPlan(preparedCommit)
 const preparedRgb: Promise<PreparedRgbSend> = account.prepareRgbSend({
   donation: false,
   fee_rate: 2,
@@ -123,6 +136,9 @@ void lnurlOptions
 void preparedBtc
 void committedBtc
 void cancelledBtc
+void preparedCreateUtxos
+void committedCreateUtxos
+void cancelledCreateUtxos
 void preparedRgb
 void pendingRgb
 void addressReceipts

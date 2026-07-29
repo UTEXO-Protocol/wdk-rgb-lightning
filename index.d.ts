@@ -441,6 +441,19 @@ export interface PreparedRgbSend extends PreparedSend {
   batch_transfer_idx: number
 }
 
+export interface CreateUtxosRequest {
+  up_to: boolean
+  num?: number
+  size?: number
+  fee_rate: number
+  skip_sync: boolean
+}
+
+export interface PreparedCreateUtxos extends PreparedSend {
+  target_count: number
+  output_size_sat: number
+}
+
 export interface CommitPreparedSendRequest {
   plan_id: string
 }
@@ -817,6 +830,9 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   prepareBtcSend(request: BtcSendRequest): Promise<PreparedSend>
   commitPreparedBtcSend(request: CommitPreparedSendRequest): Promise<CommittedBtcSend>
   cancelBtcSendPlan(request: { plan_id: string }): Promise<{ cancelled: true }>
+  prepareCreateUtxos(request: CreateUtxosRequest): Promise<PreparedCreateUtxos>
+  commitPreparedCreateUtxos(request: CommitPreparedSendRequest): Promise<CommittedBtcSend>
+  cancelCreateUtxosPlan(request: { plan_id: string }): Promise<{ cancelled: true }>
   listPendingVanillaTransactions(): Promise<readonly PendingVanillaTransaction[]>
   listAddressReceipts(address: string): Promise<readonly AddressReceipt[]>
   sendTransaction(tx: Transaction | object): Promise<TransactionResult>

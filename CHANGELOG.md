@@ -40,6 +40,10 @@ while pre-`1.0`.
   its transaction id and decimal-safe fee totals, idempotently commit that
   exact native plan, cancel abandoned BTC or RGB plans, and inspect bounded
   pending plans for crash recovery.
+- Explicit, reviewable RGB wallet UTXO setup with `prepareCreateUtxos()`,
+  `commitPreparedCreateUtxos()`, and `cancelCreateUtxosPlan()`. Requests and
+  native responses are strictly validated, monetary values remain decimal
+  strings, and no PSBT material crosses the WDK boundary.
 - Strict response validation for prepared plans, committed transactions, BTC
   cancellation acknowledgements, and pending-operation records. Malformed or
   lossy native binding responses fail closed at the WDK boundary.

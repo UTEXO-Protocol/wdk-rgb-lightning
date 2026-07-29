@@ -84,6 +84,10 @@ try {
     packageJson.peerDependencies[nativePackage],
     nativePackage
   )
+  const nativePackageSpec = registryPackage
+    ? `${nativePackage}@${nativeVersion}`
+    : process.env.WDK_RGB_LIGHTNING_NODE_SPEC ??
+      'github:UTEXO-Protocol/rgb-lightning-node-nodejs#iris-wallet'
 
   writeFileSync(
     path.join(temporaryRoot, 'package.json'),
@@ -101,7 +105,7 @@ try {
     '--no-fund',
     '--save-exact',
     packageSpec,
-    `${nativePackage}@${nativeVersion}`
+    nativePackageSpec
   ], { cwd: temporaryRoot })
 
   const runtimeInstallations = runAndCapture(

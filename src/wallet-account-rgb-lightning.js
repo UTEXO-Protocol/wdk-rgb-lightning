@@ -54,6 +54,10 @@ import {
   validatePreparedSendResponse,
   validateSendPlanRequest
 } from './send-plan-contract.js'
+import {
+  validateCreateUtxosRequest,
+  validatePreparedCreateUtxosResponse
+} from './rgb-utxo-setup-contract.js'
 import { validateAddressReceipts } from './address-receipt-contract.js'
 
 export { PENDING_ADDRESS }
@@ -996,6 +1000,39 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       )
     }
     return validateAddressReceipts(this._node.listAddressReceipts(address))
+  }
+
+  async prepareCreateUtxos (request) {
+    if (typeof this._node.prepareCreateUtxos !== 'function') {
+      throw new Error(
+        'The installed RGB Lightning native binding does not expose prepareCreateUtxos()'
+      )
+    }
+    return validatePreparedCreateUtxosResponse(
+      this._node.prepareCreateUtxos(validateCreateUtxosRequest(request))
+    )
+  }
+
+  async commitPreparedCreateUtxos (request) {
+    if (typeof this._node.commitPreparedCreateUtxos !== 'function') {
+      throw new Error(
+        'The installed RGB Lightning native binding does not expose commitPreparedCreateUtxos()'
+      )
+    }
+    return validateCommittedBtcSendResponse(
+      this._node.commitPreparedCreateUtxos(validateSendPlanRequest(request))
+    )
+  }
+
+  async cancelCreateUtxosPlan (request) {
+    if (typeof this._node.cancelCreateUtxosPlan !== 'function') {
+      throw new Error(
+        'The installed RGB Lightning native binding does not expose cancelCreateUtxosPlan()'
+      )
+    }
+    return validateCancelBtcSendPlanResponse(
+      this._node.cancelCreateUtxosPlan(validateSendPlanRequest(request))
+    )
   }
 
   /**
