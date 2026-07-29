@@ -454,6 +454,22 @@ export interface PreparedCreateUtxos extends PreparedSend {
   output_size_sat: number
 }
 
+export interface RgbAllocation {
+  asset_id: string | null
+  assignment: string
+  settled: boolean
+}
+
+export interface RgbUnspent {
+  utxo: {
+    outpoint: string
+    btc_amount: number
+    colorable: boolean
+  }
+  rgb_allocations: readonly RgbAllocation[]
+  pending_blinded: number
+}
+
 export interface CommitPreparedSendRequest {
   plan_id: string
 }
@@ -718,7 +734,7 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
   getTransactionsByTxid(txid: string, skipSync?: boolean): Promise<object>
 
   /** Returns the account's unspent Bitcoin outputs. */
-  listUnspents(skipSync?: boolean): Promise<object>
+  listUnspents(skipSync?: boolean): Promise<readonly RgbUnspent[]>
 
   /** Estimates the Bitcoin fee rate for a confirmation target. */
   estimateFee(blocks: number): Promise<object>

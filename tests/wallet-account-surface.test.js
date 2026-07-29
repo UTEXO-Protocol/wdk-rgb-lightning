@@ -153,7 +153,7 @@ function makeNode (overrides = {}) {
     }]),
     listTransactions: jest.fn(() => ({ transactions: [] })),
     listTransactionsByTxid: jest.fn(() => []),
-    listUnspents: jest.fn(() => ({ unspents: [] })),
+    listUnspents: jest.fn(() => []),
     createUtxos: jest.fn(() => undefined),
     estimateFee: jest.fn(() => ({ fee_rate: 12 })),
     sendOnionMessage: jest.fn(() => undefined),
@@ -1101,14 +1101,14 @@ describe('BTC ops', () => {
   })
 
   it('listUnspents forwards to node.listUnspents', async () => {
-    const listUnspents = jest.fn(() => ({ unspents: [] }))
+    const listUnspents = jest.fn(() => [])
     const account = makeAccount({ node: makeNode({ listUnspents }) })
-    await expect(account.listUnspents(false)).resolves.toEqual({ unspents: [] })
+    await expect(account.listUnspents(false)).resolves.toEqual([])
     expect(listUnspents).toHaveBeenCalledWith(false)
   })
 
   it('listUnspents normalizes skipSync to boolean', async () => {
-    const listUnspents = jest.fn(() => ({ unspents: [] }))
+    const listUnspents = jest.fn(() => [])
     const account = makeAccount({ node: makeNode({ listUnspents }) })
     await account.listUnspents(1)
     const arg = listUnspents.mock.calls[0][0]

@@ -1,7 +1,12 @@
 const TXID_PATTERN = /^[0-9a-f]{64}$/i
+const OUTPOINT_PATTERN = /^([0-9a-f]{64}):(\d+)$/i
 const DECIMAL_PATTERN = /^(0|[1-9]\d*)$/
 const UINT8_MAX = 255
 const UINT32_MAX = 4_294_967_295
+const MAX_UNSPENTS = 10_000
+const MAX_ALLOCATIONS_PER_UNSPENT = 255
+const MAX_ASSET_ID_LENGTH = 512
+const MAX_ASSIGNMENT_LENGTH = 512
 
 function fail (path, expectation) {
   throw new TypeError(`${path} must ${expectation}`)
@@ -33,11 +38,37 @@ function requireBoolean (value, path) {
   return value
 }
 
+function requireNonNegativeSafeInteger (value, maximum, path) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > maximum) {
+    fail(path, `be an integer from 0 through ${maximum}`)
+  }
+  return value
+}
+
 function requirePositiveSafeInteger (value, maximum, path) {
   if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
     fail(path, `be an integer from 1 through ${maximum}`)
   }
   return value
+}
+
+function requireBoundedString (value, maximumLength, path, nullable = false) {
+  if (nullable && value === null) return null
+  if (typeof value !== 'string' || value.length === 0 || value.length > maximumLength) {
+    fail(path, `be a non-empty string no longer than ${maximumLength} characters`)
+  }
+  return value
+}
+
+function requireOutpoint (value, path) {
+  if (typeof value !== 'string') fail(path, 'be a Bitcoin outpoint')
+  const match = OUTPOINT_PATTERN.exec(value)
+  if (!match) fail(path, 'be a Bitcoin outpoint')
+  const vout = Number(match[2])
+  if (!Number.isSafeInteger(vout) || vout > UINT32_MAX) {
+    fail(path, `contain an output index from 0 through ${UINT32_MAX}`)
+  }
+  return `${match[1].toLowerCase()}:${vout}`
 }
 
 function requireDecimal (value, path) {
@@ -154,4 +185,89 @@ export function validatePreparedCreateUtxosResponse (value) {
       'prepared create UTXOs response.output_size_sat'
     )
   })
+}
+
+export function validateRgbUnspents (value) {
+  if (!Array.isArray(value) || value.length > MAX_UNSPENTS) {
+    fail('RGB unspents', `be an array with at most ${MAX_UNSPENTS} entries`)
+  }
+
+  const unspents = value.map((entry, index) => {
+    const path = `RGB unspents[${index}]`
+    const unspent = requireObject(entry, path)
+    requireExactKeys(
+      unspent,
+      ['utxo', 'rgb_allocations', 'pending_blinded'],
+      [],
+      path
+    )
+
+    const utxoPath = `${path}.utxo`
+    const utxo = requireObject(unspent.utxo, utxoPath)
+    requireExactKeys(
+      utxo,
+      ['outpoint', 'btc_amount', 'colorable'],
+      [],
+      utxoPath
+    )
+
+    const allocationsPath = `${path}.rgb_allocations`
+    if (
+      !Array.isArray(unspent.rgb_allocations) ||
+      unspent.rgb_allocations.length > MAX_ALLOCATIONS_PER_UNSPENT
+    ) {
+      fail(
+        allocationsPath,
+        `be an array with at most ${MAX_ALLOCATIONS_PER_UNSPENT} entries`
+      )
+    }
+
+    const rgbAllocations = unspent.rgb_allocations.map((entry, allocationIndex) => {
+      const allocationPath = `${allocationsPath}[${allocationIndex}]`
+      const allocation = requireObject(entry, allocationPath)
+      requireExactKeys(
+        allocation,
+        ['asset_id', 'assignment', 'settled'],
+        [],
+        allocationPath
+      )
+      return Object.freeze({
+        asset_id: requireBoundedString(
+          allocation.asset_id,
+          MAX_ASSET_ID_LENGTH,
+          `${allocationPath}.asset_id`,
+          true
+        ),
+        assignment: requireBoundedString(
+          allocation.assignment,
+          MAX_ASSIGNMENT_LENGTH,
+          `${allocationPath}.assignment`
+        ),
+        settled: requireBoolean(
+          allocation.settled,
+          `${allocationPath}.settled`
+        )
+      })
+    })
+
+    return Object.freeze({
+      utxo: Object.freeze({
+        outpoint: requireOutpoint(utxo.outpoint, `${utxoPath}.outpoint`),
+        btc_amount: requireNonNegativeSafeInteger(
+          utxo.btc_amount,
+          Number.MAX_SAFE_INTEGER,
+          `${utxoPath}.btc_amount`
+        ),
+        colorable: requireBoolean(utxo.colorable, `${utxoPath}.colorable`)
+      }),
+      rgb_allocations: Object.freeze(rgbAllocations),
+      pending_blinded: requireNonNegativeSafeInteger(
+        unspent.pending_blinded,
+        UINT32_MAX,
+        `${path}.pending_blinded`
+      )
+    })
+  })
+
+  return Object.freeze(unspents)
 }

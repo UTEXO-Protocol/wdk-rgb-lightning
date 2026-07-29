@@ -7,6 +7,7 @@
 import { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 
 import { AccountLockedError } from './errors.js'
+import { validateRgbUnspents } from './rgb-utxo-setup-contract.js'
 
 /** @typedef {import('@tetherto/wdk-wallet').Transaction} Transaction */
 /** @typedef {import('@tetherto/wdk-wallet').TransferOptions} TransferOptions */
@@ -434,10 +435,12 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
    *
    * @param {boolean} [skipSync=false] - Whether to skip a network sync before
    *   reading unspent outputs.
-   * @returns {Promise<object>} The native unspent-output response.
+   * @returns {Promise<ReadonlyArray<object>>} Validated native unspent outputs.
    */
   async listUnspents (skipSync = false) {
-    return this._reader.listUnspents(Boolean(skipSync))
+    return validateRgbUnspents(
+      await this._reader.listUnspents(Boolean(skipSync))
+    )
   }
 
   /**
