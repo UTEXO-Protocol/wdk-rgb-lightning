@@ -132,6 +132,9 @@ function activitySnapshot (overrides = {}) {
 }
 
 function accountWith (node) {
+  if (typeof node.refreshTransfers !== 'function') {
+    node.refreshTransfers = jest.fn(() => undefined)
+  }
   return new WalletAccountRgbLightning({
     binding: {
       ensureNode: jest.fn(() => node),
@@ -369,6 +372,7 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
     const result = await account.refreshWalletSnapshot()
 
     expect(node.syncWallet).toHaveBeenCalledWith({ mode: 'routine' })
+    expect(node.refreshTransfers).toHaveBeenCalledWith({ skip_sync: true })
     expect(node.walletSnapshot).toHaveBeenCalledWith({
       asset_ids: [],
       max_assets: 128,
@@ -397,6 +401,24 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
       error_code: 'FAILED_BDK_SYNC'
     })
     expect(node.walletSnapshot).not.toHaveBeenCalled()
+    expect(node.refreshTransfers).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when RGB consignment refresh fails', async () => {
+    const node = {
+      syncWallet: jest.fn(() => syncResult()),
+      refreshTransfers: jest.fn(() => {
+        throw new Error('proxy unavailable')
+      }),
+      walletSnapshot: jest.fn()
+    }
+
+    const error = await accountWith(node).refreshWalletSnapshot().catch((reason) => reason)
+
+    expect(error).toBeInstanceOf(WalletSyncError)
+    expect(error.code).toBe('WALLET_SYNC_RGB_TRANSFER_FAILURE')
+    expect(error.details).toEqual({ mode: 'routine' })
+    expect(node.walletSnapshot).not.toHaveBeenCalled()
   })
 
   it('uses FullScan recovery mode only when explicitly selected', async () => {
@@ -420,6 +442,7 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
     }
     const result = await accountWith(node).refreshWalletSnapshot()
     expect(node.syncWallet).toHaveBeenCalledTimes(2)
+    expect(node.refreshTransfers).toHaveBeenCalledTimes(2)
     expect(node.walletSnapshot).toHaveBeenCalledTimes(2)
     expect(result.snapshot.capture_sequence).toBe('8')
   })

@@ -201,6 +201,11 @@ Notes:
 - **Lightning claimable value is not routing capacity.** The snapshot keeps
   aggregate/per-channel claimable satoshis separate from inbound and outbound
   capacity. Consumers must not relabel either capacity as wallet-owned value.
+- **Snapshot refresh includes RGB transport reconciliation.** After both
+  Bitcoin keychains synchronize, `refreshWalletSnapshot()` advances pending
+  RGB consignments with `refreshTransfers({ skip_sync: true })` before
+  capturing balances and activity. A proxy or consignment refresh failure
+  fails the snapshot closed instead of returning stale asset state.
 
 - **`createInvoice` / `createLightningInvoice`** accept either RLN's native
   snake_case request or a camelCase convenience shape

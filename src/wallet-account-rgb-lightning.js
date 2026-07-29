@@ -522,6 +522,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     const node = this._node
     if (
       typeof node.syncWallet !== 'function' ||
+      typeof node.refreshTransfers !== 'function' ||
       typeof node.walletSnapshot !== 'function'
     ) {
       throw new WalletSnapshotError(
@@ -624,6 +625,22 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
             vanilla: sync.vanilla,
             colored: sync.colored
           })
+        }
+      )
+    }
+
+    try {
+      // syncWallet advances the Bitcoin keychains. RGB consignments have a
+      // separate transport lifecycle and must be refreshed before the
+      // snapshot is allowed to represent current asset state.
+      await node.refreshTransfers({ skip_sync: true })
+    } catch (error) {
+      throw new WalletSyncError(
+        'The native RGB transfer synchronization failed.',
+        {
+          code: 'WALLET_SYNC_RGB_TRANSFER_FAILURE',
+          cause: error,
+          details: Object.freeze({ mode })
         }
       )
     }
