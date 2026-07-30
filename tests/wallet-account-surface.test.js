@@ -450,33 +450,81 @@ describe('getAddress', () => {
     await expect(account.getAddress()).rejects.toBeInstanceOf(AccountLockedError)
   })
 
-  it('coalesces configured activation and returns only the real native address', async () => {
-    let unlocked = false
+  it('coalesces address discovery across the native auto-unlock transition', async () => {
+    let lifecycle = 'locked'
+    let releaseUnlock
+    const unlockPending = new Promise((resolve) => { releaseUnlock = resolve })
     const address = jest.fn(() => {
-      if (!unlocked) throw new Error('SdkNode not created — call unlock() first')
+      if (lifecycle === 'unlocking') {
+        throw new Error('Cannot call other APIs while node is changing state')
+      }
+      if (lifecycle === 'locked') {
+        throw new Error('SdkNode not created — call unlock() first')
+      }
       return { address: 'tb1qactivated' }
     })
-    const unlock = jest.fn(() => { unlocked = true })
+    const unlock = jest.fn(async () => {
+      lifecycle = 'unlocking'
+      await unlockPending
+      lifecycle = 'unlocked'
+    })
     const account = makeAccount(
       { node: makeNode({ address }), unlock },
       { autoUnlockRequest: AUTO_UNLOCK_REQUEST }
     )
 
-    await expect(Promise.all([
-      account.getAddress(),
-      account.getAddress()
-    ])).resolves.toEqual(['tb1qactivated', 'tb1qactivated'])
+    const first = account.getAddress()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(unlock).toHaveBeenCalledTimes(1)
+
+    const second = account.getAddress()
+    releaseUnlock()
+
+    await expect(Promise.all([first, second]))
+      .resolves.toEqual(['tb1qactivated', 'tb1qactivated'])
 
     expect(unlock).toHaveBeenCalledTimes(1)
     expect(unlock).toHaveBeenCalledWith(AUTO_UNLOCK_REQUEST)
-    expect(address).toHaveBeenCalledTimes(4)
+    expect(address).toHaveBeenCalledTimes(2)
+  })
+
+  it('waits for an explicit unlock before reading the native address', async () => {
+    let lifecycle = 'locked'
+    let releaseUnlock
+    const unlockPending = new Promise((resolve) => { releaseUnlock = resolve })
+    const address = jest.fn(() => {
+      if (lifecycle !== 'unlocked') {
+        throw new Error('Cannot call other APIs while node is changing state')
+      }
+      return { address: 'tb1qready' }
+    })
+    const unlock = jest.fn(async () => {
+      lifecycle = 'unlocking'
+      await unlockPending
+      lifecycle = 'unlocked'
+    })
+    const account = makeAccount({ node: makeNode({ address }), unlock })
+
+    const unlocking = account.unlock(AUTO_UNLOCK_REQUEST)
+    await Promise.resolve()
+    expect(unlock).toHaveBeenCalledTimes(1)
+
+    const pendingAddress = account.getAddress()
+    expect(address).not.toHaveBeenCalled()
+    releaseUnlock()
+
+    await expect(unlocking).resolves.toEqual({ ok: true })
+    await expect(pendingAddress).resolves.toBe('tb1qready')
+    expect(address).toHaveBeenCalledTimes(1)
   })
 
   it('does not hide an automatic activation failure behind an address marker', async () => {
+    const unlock = jest.fn(() => { throw new Error('indexer unavailable') })
     const account = makeAccount(
       {
         node: makeNode({ address: () => { throw new Error('LockedNode') } }),
-        unlock: () => { throw new Error('indexer unavailable') }
+        unlock
       },
       { autoUnlockRequest: AUTO_UNLOCK_REQUEST }
     )
@@ -486,6 +534,12 @@ describe('getAddress', () => {
       code: 'UNLOCK_FAILED',
       message: 'indexer unavailable'
     })
+    await expect(account.getAddress()).rejects.toMatchObject({
+      name: 'UnlockError',
+      code: 'UNLOCK_FAILED',
+      message: 'indexer unavailable'
+    })
+    expect(unlock).toHaveBeenCalledTimes(2)
   })
 
   it('returns a non-throwing locked state for pre-unlock UI loaders', async () => {

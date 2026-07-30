@@ -134,6 +134,8 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     /** @private */ this._autoRecoverStaleVssFence = bindings.autoRecoverStaleVssFence === true
     /** @private @type {{ request: object, promise: Promise<{ ok: true }> } | null} */
     this._unlockInFlight = null
+    /** @private @type {Promise<string> | null} */
+    this._addressInFlight = null
     /** @private @type {WalletAccountReadOnlyRgbLightning | null} */
     this._readOnlyAccount = null
     /** @private @type {Promise<void>} */
@@ -218,19 +220,35 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * WDK React Native Core discovers an account by loading its address before
    * exposing extension methods. When explicitly configured, activate the full
    * RGB node at that boundary and then return only the real native address.
+   * Address discovery is single-flight because WDK Core can mount multiple
+   * consumers in one render. A read that overlaps native unlock must join that
+   * transition instead of calling another native API while RLN changes state.
    * Standalone and read-only consumers retain the ordinary locked error.
    */
   async getAddress () {
-    try {
-      return await super.getAddress()
-    } catch (error) {
-      if (!(error instanceof AccountLockedError) || !this._autoUnlockRequest) {
-        throw error
-      }
-    }
+    if (this._addressInFlight) return this._addressInFlight
 
-    await this.unlock(this._autoUnlockRequest)
-    return super.getAddress()
+    const operation = (async () => {
+      if (this._unlockInFlight) await this._unlockInFlight.promise
+
+      try {
+        return await super.getAddress()
+      } catch (error) {
+        if (!(error instanceof AccountLockedError) || !this._autoUnlockRequest) {
+          throw error
+        }
+      }
+
+      await this.unlock(this._autoUnlockRequest)
+      return super.getAddress()
+    })()
+
+    this._addressInFlight = operation
+    try {
+      return await operation
+    } finally {
+      if (this._addressInFlight === operation) this._addressInFlight = null
+    }
   }
 
   /** Idempotent shutdown. */
