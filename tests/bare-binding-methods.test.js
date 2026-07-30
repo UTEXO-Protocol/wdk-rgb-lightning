@@ -27,10 +27,17 @@ function fakeNode () {
     operationSequence += 1
     return {
       contract_version: 1,
-      operation_id: `operation-${operationSequence}`,
-      kind: 'unlock',
+      operation_id: `123e4567-e89b-42d3-a456-${String(operationSequence).padStart(12, '0')}`,
+      kind: 'unlock_with_native_external_signer',
       state: 'succeeded',
-      cancellation_requested: false
+      created_at_ms: '1000',
+      started_at_ms: '1001',
+      finished_at_ms: '1002',
+      updated_at_ms: '1002',
+      cancellation_requested: false,
+      can_cancel_immediately: false,
+      adoption_count: 0,
+      adopted_existing: false
     }
   })
   node.nativeOperationStatus = jest.fn()
