@@ -319,12 +319,12 @@ export class NodeRgbLightningBinding {
    * @throws {Error} - If native node shutdown or signer destruction fails.
    */
   shutdown () {
-    let failure
+    const failures = []
     if (this._node) {
       try {
         this._node.shutdown()
       } catch (error) {
-        failure = error
+        failures.push(error)
       } finally {
         this._node = null
       }
@@ -333,7 +333,7 @@ export class NodeRgbLightningBinding {
       try {
         this._signer.destroy()
       } catch (error) {
-        failure ??= error
+        failures.push(error)
       } finally {
         this._signer = null
       }
@@ -343,7 +343,10 @@ export class NodeRgbLightningBinding {
     wipeSecret(this._fallbackSeedHex)
     this._seedHex = undefined
     this._fallbackSeedHex = undefined
-    if (failure) throw failure
+    if (failures.length === 1) throw failures[0]
+    if (failures.length > 1) {
+      throw new AggregateError(failures, 'RGB Lightning shutdown failed')
+    }
   }
 
   /** @returns {string} - Native module health status. */

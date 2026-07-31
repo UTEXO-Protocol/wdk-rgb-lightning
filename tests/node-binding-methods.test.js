@@ -54,6 +54,7 @@ function fakeNode () {
     vssBackup: jest.fn(() => ({ version: 7 })),
     vssDeleteAll: jest.fn(() => ({ deleted_keys: 12 })),
     apayNew: jest.fn(() => realAsyncOrderNewResponse()),
+    detachExternalSigner: jest.fn(),
     shutdown: jest.fn()
   }
   node.startUnlockWithNativeExternalSigner = jest.fn((signer, request) => {
@@ -565,8 +566,11 @@ describe('shutdown', () => {
     b._seedHex = primarySeed
     b._fallbackSeedHex = fallbackSeed
     b.shutdown()
+    expect(node.detachExternalSigner).not.toHaveBeenCalled()
     expect(node.shutdown).toHaveBeenCalledTimes(1)
     expect(signer.destroy).toHaveBeenCalledTimes(1)
+    expect(node.shutdown.mock.invocationCallOrder[0])
+      .toBeLessThan(signer.destroy.mock.invocationCallOrder[0])
     expect(b._node).toBeNull()
     expect(b._signer).toBeNull()
     expect(b._sdkInitDone).toBe(false)

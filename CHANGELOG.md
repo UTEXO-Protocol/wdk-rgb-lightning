@@ -28,6 +28,9 @@ while pre-`1.0`.
 ## [Unreleased]
 
 ### Added
+- Stable native Lightning `failure_code` fields on immediate send results and
+  persisted payment records, allowing callers to distinguish route, expiry,
+  duplicate-payment, recipient, retry, and restart-abandonment failures.
 - Exact `DecodedRgbInvoice` and tagged `DecodedRgbAssignment` typing across
   the WDK account boundary.
 - Exact `DecodedLightningInvoice` typing across the WDK account boundary,

@@ -398,6 +398,8 @@ export interface SendPaymentResult {
   payment_hash: string | null
   payment_secret: string | null
   status: LightningPaymentStatus
+  /** Stable machine-readable native failure reason when status is Failed. */
+  failure_code: string | null
 }
 
 export interface LightningPayment {
@@ -414,6 +416,8 @@ export interface LightningPayment {
   description_hash: string | null
   /** Actual routing fee reported by LDK after a successful outbound payment. */
   fee_paid_msat: number | null
+  /** Stable machine-readable native failure reason when status is Failed. */
+  failure_code: string | null
 }
 
 /** RGB assignment discriminant accepted by RLN's `parse_assignment_kind`. */

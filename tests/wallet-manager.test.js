@@ -155,25 +155,30 @@ describe('WalletManagerRgbLightning', () => {
     const binding = FakeBinding.instances[0]
     expect(account.keyPair.privateKey).toBeNull()
     manager.dispose()
-    expect(binding.bootstrap).toHaveBeenCalledTimes(2)
+    expect(binding.bootstrap).toHaveBeenCalledTimes(1)
     expect(binding.shutdown).toHaveBeenCalledTimes(1)
-    expect(binding.bootstrap.mock.invocationCallOrder[1])
-      .toBeLessThan(binding.shutdown.mock.invocationCallOrder[0])
   })
 
-  it('still destroys the signer when base account cleanup fails', async () => {
+  it('still destroys the signer when account cleanup fails', async () => {
     const manager = new TestManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
     const account = await manager.getAccount()
     const binding = FakeBinding.instances[0]
-    Object.defineProperty(account, 'keyPair', {
-      configurable: true,
-      get: () => {
-        throw new Error('account cleanup failed')
-      }
-    })
+    account.dispose = jest.fn(() => { throw new Error('account cleanup failed') })
 
     expect(() => manager.dispose()).toThrow('account cleanup failed')
     expect(binding.shutdown).toHaveBeenCalledTimes(1)
+    expect(manager._binding).toBeNull()
+  })
+
+  it('can dispose after an explicit account shutdown released native identity', async () => {
+    const manager = new TestManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
+    const account = await manager.getAccount()
+    const binding = FakeBinding.instances[0]
+
+    await account.shutdown()
+
+    expect(() => manager.dispose()).not.toThrow()
+    expect(binding.shutdown).toHaveBeenCalledTimes(2)
     expect(manager._binding).toBeNull()
   })
 

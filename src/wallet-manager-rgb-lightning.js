@@ -221,33 +221,54 @@ export default class WalletManagerRgbLightning extends WalletManager {
   }
 
   dispose () {
-    let accountDisposalError
-    let bindingShutdownError
+    const failures = []
 
-    // The base manager inspects account.keyPair while clearing its account
-    // cache. RGB Lightning derives that public identity from the external
-    // signer, so the signer must remain attached until base disposal finishes.
-    try {
-      super.dispose()
-    } catch (error) {
-      accountDisposalError = error
+    // WalletManager.dispose() probes account.keyPair before deciding whether
+    // to call account.dispose(). That is not valid for this manager after the
+    // app has explicitly shut down its external signer at the lock boundary.
+    // RGB Lightning owns every account in this cache, so dispose them directly
+    // without touching native identity state.
+    for (const account of Object.values(this._accounts)) {
+      try {
+        account.dispose()
+      } catch (error) {
+        failures.push(error)
+      }
     }
+    this._accounts = {}
+
+    if (this._defaultSigner) {
+      try {
+        this._defaultSigner.dispose()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    this._defaultSigner = undefined
+
+    for (const signer of Object.values(this._signers)) {
+      try {
+        signer.dispose()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    this._signers = {}
 
     try {
       this._binding?.shutdown()
     } catch (error) {
-      bindingShutdownError = error
+      failures.push(error)
     } finally {
       this._binding = null
     }
 
-    if (accountDisposalError && bindingShutdownError) {
+    if (failures.length === 1) throw failures[0]
+    if (failures.length > 1) {
       throw new AggregateError(
-        [accountDisposalError, bindingShutdownError],
-        'Failed to dispose RGB Lightning accounts and binding'
+        failures,
+        'Failed to dispose RGB Lightning accounts, signers, and binding'
       )
     }
-    if (accountDisposalError) throw accountDisposalError
-    if (bindingShutdownError) throw bindingShutdownError
   }
 }

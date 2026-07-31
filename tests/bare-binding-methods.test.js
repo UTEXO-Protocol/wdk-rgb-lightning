@@ -20,6 +20,7 @@ function fakeNode () {
     vssBackup: jest.fn(() => ({ version: 7 })),
     vssDeleteAll: jest.fn(() => ({ deleted_keys: 12 })),
     apayNew: jest.fn(() => ({ order_id: 'order-1' })),
+    detachExternalSigner: jest.fn(),
     shutdown: jest.fn()
   }
   node.startUnlockWithNativeExternalSigner = jest.fn((signer, request) => {
@@ -333,6 +334,20 @@ describe('BareRgbLightningBinding', () => {
     expect(binding._signer).toBeNull()
     expect(primarySeed.every((byte) => byte === 0)).toBe(true)
     expect(fallbackSeed.every((byte) => byte === 0)).toBe(true)
+  })
+
+  it('stops the node before destroying its signer without reusing the node handle', () => {
+    const binding = makeBinding()
+    const node = fakeNode()
+    const signer = fakeSigner()
+    binding._node = node
+    binding._signer = signer
+
+    binding.shutdown()
+
+    expect(node.detachExternalSigner).not.toHaveBeenCalled()
+    expect(node.shutdown.mock.invocationCallOrder[0])
+      .toBeLessThan(signer.destroy.mock.invocationCallOrder[0])
   })
 
   it('wipes retained seeds when signer destruction fails', () => {
