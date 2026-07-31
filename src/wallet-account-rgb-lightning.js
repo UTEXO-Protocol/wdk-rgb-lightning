@@ -86,6 +86,11 @@ function sameUnlockRequest (left, right) {
 }
 
 const STALE_VSS_FENCE_PATTERN = /VSS store_id is owned by another rgb-lightning-node instance|__rln_instance__/i
+const WALLET_SYNC_PARTIAL_RETRY_DELAYS_MS = Object.freeze([250, 750])
+
+function wait (durationMs) {
+  return new Promise((resolve) => setTimeout(resolve, durationMs))
+}
 
 function isStaleVssFenceError (error) {
   let current = error
@@ -652,45 +657,61 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
 
   /** @private */
   async _synchronizeWalletForSnapshot (node, mode) {
+    const partialAttempts = []
     let sync
-    try {
-      sync = validateWalletSyncResponse(
-        await node.syncWallet({ mode }),
-        mode
-      )
-    } catch (error) {
-      const contractFailure = error instanceof WalletSnapshotContractError
-      throw new WalletSyncError(
-        contractFailure
-          ? `The native wallet sync response does not match contract v${WALLET_SNAPSHOT_CONTRACT_VERSION}: ${error.message}.`
-          : 'The native wallet synchronization failed.',
-        {
-          code: contractFailure
-            ? 'WALLET_SYNC_CONTRACT_MISMATCH'
-            : 'WALLET_SYNC_NATIVE_FAILURE',
-          cause: error,
-          details: Object.freeze({
-            mode,
-            ...(contractFailure
-              ? { contractPath: error.path, contractExpectation: error.expectation }
-              : {})
-          })
-        }
-      )
-    }
 
-    if (sync.vanilla.status !== 'succeeded' || sync.colored.status !== 'succeeded') {
-      throw new WalletSyncError(
-        'The native wallet synchronization did not complete for both keychains.',
-        {
-          code: 'WALLET_SYNC_PARTIAL_FAILURE',
-          details: Object.freeze({
-            mode,
-            vanilla: sync.vanilla,
-            colored: sync.colored
-          })
-        }
-      )
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        sync = validateWalletSyncResponse(
+          await node.syncWallet({ mode }),
+          mode
+        )
+      } catch (error) {
+        const contractFailure = error instanceof WalletSnapshotContractError
+        throw new WalletSyncError(
+          contractFailure
+            ? `The native wallet sync response does not match contract v${WALLET_SNAPSHOT_CONTRACT_VERSION}: ${error.message}.`
+            : 'The native wallet synchronization failed.',
+          {
+            code: contractFailure
+              ? 'WALLET_SYNC_CONTRACT_MISMATCH'
+              : 'WALLET_SYNC_NATIVE_FAILURE',
+            cause: error,
+            details: Object.freeze({
+              mode,
+              ...(contractFailure
+                ? { contractPath: error.path, contractExpectation: error.expectation }
+                : {})
+            })
+          }
+        )
+      }
+
+      if (sync.vanilla.status === 'succeeded' && sync.colored.status === 'succeeded') {
+        break
+      }
+
+      partialAttempts.push(Object.freeze({
+        attempt: attempt + 1,
+        vanilla: sync.vanilla,
+        colored: sync.colored
+      }))
+      const retryDelayMs = WALLET_SYNC_PARTIAL_RETRY_DELAYS_MS[attempt]
+      if (retryDelayMs === undefined) {
+        throw new WalletSyncError(
+          'The native wallet synchronization did not complete for both keychains.',
+          {
+            code: 'WALLET_SYNC_PARTIAL_FAILURE',
+            details: Object.freeze({
+              mode,
+              vanilla: sync.vanilla,
+              colored: sync.colored,
+              attempts: Object.freeze(partialAttempts)
+            })
+          }
+        )
+      }
+      await wait(retryDelayMs)
     }
 
     try {

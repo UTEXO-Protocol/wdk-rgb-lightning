@@ -467,8 +467,45 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
       status: 'failed',
       error_code: 'FAILED_BDK_SYNC'
     })
+    expect(error.details.attempts).toHaveLength(3)
+    expect(error.details.attempts).toEqual([
+      {
+        attempt: 1,
+        vanilla: { status: 'failed', error_code: 'FAILED_BDK_SYNC' },
+        colored: syncResult().colored
+      },
+      {
+        attempt: 2,
+        vanilla: { status: 'failed', error_code: 'FAILED_BDK_SYNC' },
+        colored: syncResult().colored
+      },
+      {
+        attempt: 3,
+        vanilla: { status: 'failed', error_code: 'FAILED_BDK_SYNC' },
+        colored: syncResult().colored
+      }
+    ])
+    expect(node.syncWallet).toHaveBeenCalledTimes(3)
     expect(node.walletSnapshot).not.toHaveBeenCalled()
     expect(node.refreshTransfers).not.toHaveBeenCalled()
+  })
+
+  it('recovers a transient partial keychain synchronization', async () => {
+    const node = {
+      syncWallet: jest.fn()
+        .mockReturnValueOnce(syncResult({
+          vanilla: { status: 'failed', error_code: 'FAILED_BDK_SYNC' }
+        }))
+        .mockReturnValueOnce(syncResult()),
+      walletSnapshot: jest.fn(() => snapshot())
+    }
+
+    const result = await accountWith(node).refreshWalletSnapshot()
+
+    expect(result.sync.vanilla.status).toBe('succeeded')
+    expect(node.syncWallet).toHaveBeenCalledTimes(2)
+    expect(node.refreshTransfers).toHaveBeenCalledTimes(1)
+    expect(node.walletSnapshot).toHaveBeenCalledTimes(1)
   })
 
   it('fails closed when RGB consignment refresh fails', async () => {
@@ -522,7 +559,7 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
     const node = {
       syncWallet: jest.fn()
         .mockReturnValueOnce(syncResult())
-        .mockReturnValueOnce(syncResult({
+        .mockReturnValue(syncResult({
           vanilla: { status: 'failed', error_code: 'FAILED_BDK_SYNC' }
         })),
       walletSnapshot: jest.fn(() => snapshot({
@@ -538,6 +575,7 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
 
     expect(error).toBeInstanceOf(WalletSyncError)
     expect(error.code).toBe('WALLET_SYNC_PARTIAL_FAILURE')
+    expect(node.syncWallet).toHaveBeenCalledTimes(4)
     expect(node.walletSnapshot).toHaveBeenCalledTimes(1)
   })
 
