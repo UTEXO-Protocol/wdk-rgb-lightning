@@ -4,8 +4,9 @@
 // you may not use this file except in compliance with the License.
 'use strict'
 
-export const WALLET_SNAPSHOT_CONTRACT_VERSION = 2
-export const WALLET_SNAPSHOT_NATIVE_SOURCE = 'rgb-lightning-node-v0.10.0-beta.3+utexo-wallet-v2'
+export const WALLET_SNAPSHOT_CONTRACT_VERSION = 3
+export const WALLET_SYNC_CONTRACT_VERSION = 2
+export const WALLET_SNAPSHOT_NATIVE_SOURCE = 'rgb-lightning-node-v0.10.0-beta.3+utexo-wallet-v3'
 
 const NATIVE_LIMITS = Object.freeze({
   assets: 128,
@@ -204,8 +205,8 @@ function syncKeychain (value, path) {
 export function validateWalletSyncResponse (value, expectedMode) {
   const response = record(value, 'sync')
   exactKeys(response, ['contract_version', 'mode', 'vanilla', 'colored'], [], 'sync')
-  if (response.contract_version !== WALLET_SNAPSHOT_CONTRACT_VERSION) {
-    fail('sync.contract_version', `must equal ${WALLET_SNAPSHOT_CONTRACT_VERSION}`)
+  if (response.contract_version !== WALLET_SYNC_CONTRACT_VERSION) {
+    fail('sync.contract_version', `must equal ${WALLET_SYNC_CONTRACT_VERSION}`)
   }
   if (response.mode !== expectedMode) fail('sync.mode', `must equal ${expectedMode}`)
   syncKeychain(response.vanilla, 'sync.vanilla')
@@ -382,20 +383,33 @@ function snapshotTransaction (value, path) {
 function snapshotPayment (value, path) {
   const item = record(value, path)
   const fields = [
-    'amt_msat', 'asset_amount', 'asset_id', 'payment_hash', 'payment_type',
-    'status', 'created_at', 'updated_at', 'payee_pubkey', 'fee_paid_msat'
+    'amt_msat', 'asset_amount', 'asset_id', 'carrier_msat', 'payment_hash',
+    'payment_type', 'status', 'created_at', 'updated_at', 'expires_at',
+    'payee_pubkey', 'fee_paid_msat', 'failure_code'
   ]
   exactKeys(item, fields, [], path)
   nullableDecimal(item.amt_msat, `${path}.amt_msat`)
   nullableDecimal(item.asset_amount, `${path}.asset_amount`)
   nullableText(item.asset_id, `${path}.asset_id`, 256)
+  nullableDecimal(item.carrier_msat, `${path}.carrier_msat`)
   text(item.payment_hash, `${path}.payment_hash`, 128)
   oneOf(item.payment_type, ['Outbound', 'InboundAutoClaim', 'InboundHodl'], `${path}.payment_type`)
   oneOf(item.status, ['Pending', 'Claimable', 'Claiming', 'Succeeded', 'Cancelled', 'Failed'], `${path}.status`)
   decimal(item.created_at, `${path}.created_at`)
   decimal(item.updated_at, `${path}.updated_at`)
+  nullableDecimal(item.expires_at, `${path}.expires_at`)
   text(item.payee_pubkey, `${path}.payee_pubkey`, 130)
   nullableDecimal(item.fee_paid_msat, `${path}.fee_paid_msat`)
+  nullableText(item.failure_code, `${path}.failure_code`, 128)
+  if (item.asset_id === null && (item.asset_amount !== null || item.carrier_msat !== null)) {
+    fail(path, 'must not contain RGB amount or carrier metadata without an asset ID')
+  }
+  if (item.asset_id !== null && item.carrier_msat !== item.amt_msat) {
+    fail(`${path}.carrier_msat`, 'must equal amt_msat for an RGB payment')
+  }
+  if (item.expires_at !== null && BigInt(item.expires_at) < BigInt(item.created_at)) {
+    fail(`${path}.expires_at`, 'must not precede created_at')
+  }
 }
 
 function transferEndpoint (value, path) {

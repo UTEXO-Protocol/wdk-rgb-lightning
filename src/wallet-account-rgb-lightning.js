@@ -37,6 +37,7 @@ import {
 } from './errors.js'
 import {
   WALLET_SNAPSHOT_CONTRACT_VERSION,
+  WALLET_SYNC_CONTRACT_VERSION,
   WalletSnapshotContractError,
   isCoherentWalletSnapshot,
   normalizeWalletSnapshotOptions,
@@ -670,7 +671,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
         const contractFailure = error instanceof WalletSnapshotContractError
         throw new WalletSyncError(
           contractFailure
-            ? `The native wallet sync response does not match contract v${WALLET_SNAPSHOT_CONTRACT_VERSION}: ${error.message}.`
+            ? `The native wallet sync response does not match contract v${WALLET_SYNC_CONTRACT_VERSION}: ${error.message}.`
             : 'The native wallet synchronization failed.',
           {
             code: contractFailure
@@ -1156,6 +1157,10 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     const address = typeof response === 'string' ? response : response?.address
     if (typeof address !== 'string' || address.length === 0) {
       throw new Error('RGB Lightning node returned an invalid rotated address')
+    }
+    const currentAddress = await super.getAddress()
+    if (currentAddress !== address) {
+      throw new Error('RGB Lightning node did not persist the rotated address')
     }
     return address
   }

@@ -1134,8 +1134,20 @@ describe('BTC ops', () => {
   })
 
   it('rotateAddress accepts the native string response form', async () => {
-    const account = makeAccount({ node: makeNode({ rotateAddress: () => 'tb1qstringrotated' }) })
+    const account = makeAccount({
+      node: makeNode({
+        address: () => ({ address: 'tb1qstringrotated' }),
+        rotateAddress: () => 'tb1qstringrotated'
+      })
+    })
     await expect(account.rotateAddress()).resolves.toBe('tb1qstringrotated')
+  })
+
+  it('rotateAddress rejects a native rotation that was not persisted as current', async () => {
+    const account = makeAccount({ node: makeNode() })
+    await expect(account.rotateAddress()).rejects.toThrow(
+      'did not persist the rotated address'
+    )
   })
 
   it('getTransactions forwards to node.listTransactions with coerced skipSync', async () => {

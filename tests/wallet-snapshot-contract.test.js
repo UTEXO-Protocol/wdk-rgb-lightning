@@ -34,8 +34,8 @@ function syncResult (overrides = {}) {
 
 function snapshot (overrides = {}) {
   return {
-    contract_version: 2,
-    native_source: 'rgb-lightning-node-v0.10.0-beta.3+utexo-wallet-v2',
+    contract_version: 3,
+    native_source: 'rgb-lightning-node-v0.10.0-beta.3+utexo-wallet-v3',
     capture_sequence: '1',
     capture_attempts: 2,
     stable_capture_count: 2,
@@ -120,13 +120,16 @@ function activitySnapshot (overrides = {}) {
       amt_msat: '1000',
       asset_amount: null,
       asset_id: null,
+      carrier_msat: null,
       payment_hash: 'hash-1',
       payment_type: 'InboundAutoClaim',
       status: 'Succeeded',
       created_at: '1000',
       updated_at: '1001',
+      expires_at: '4600',
       payee_pubkey: '02abc',
-      fee_paid_msat: null
+      fee_paid_msat: null,
+      failure_code: null
     }],
     transfers: [{
       asset_id: 'asset-1',
@@ -295,6 +298,34 @@ describe('wallet snapshot response contract', () => {
       .toBe('1250')
   })
 
+  it('requires RGB carrier metadata to remain bound to the RGB payment', () => {
+    const options = normalizeWalletSnapshotOptions({
+      includeActivity: true,
+      assetIds: ['asset-1']
+    })
+    const value = activitySnapshot()
+    Object.assign(value.payments[0], {
+      asset_id: 'asset-1',
+      asset_amount: '2500000',
+      carrier_msat: '1000'
+    })
+
+    expect(validateWalletSnapshotResponse(value, options).payments[0]).toMatchObject({
+      asset_id: 'asset-1',
+      asset_amount: '2500000',
+      carrier_msat: '1000'
+    })
+
+    const invalid = activitySnapshot()
+    Object.assign(invalid.payments[0], {
+      asset_id: 'asset-1',
+      asset_amount: '2500000',
+      carrier_msat: '999'
+    })
+    expect(() => validateWalletSnapshotResponse(invalid, options))
+      .toThrow('snapshot.payments[0].carrier_msat')
+  })
+
   it('accepts transfer endpoint metadata and nullable transfer fields', () => {
     const options = normalizeWalletSnapshotOptions({
       includeActivity: true,
@@ -447,7 +478,7 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
       max_activity_items: 1000,
       include_activity: false
     })
-    expect(result.contractVersion).toBe(2)
+    expect(result.contractVersion).toBe(3)
     expect(Object.isFrozen(result)).toBe(true)
     expect(Object.isFrozen(result.snapshot.btc)).toBe(true)
   })
@@ -669,10 +700,10 @@ describe('WalletAccountRgbLightning.refreshWalletSnapshot', () => {
     expect(error).toBeInstanceOf(WalletSnapshotError)
     expect(error.code).toBe(code)
     if (code === 'WALLET_SNAPSHOT_CONTRACT_MISMATCH') {
-      expect(error.message).toContain('snapshot.contract_version must equal 2')
+      expect(error.message).toContain('snapshot.contract_version must equal 3')
       expect(error.details).toEqual({
         contractPath: 'snapshot.contract_version',
-        contractExpectation: 'must equal 2'
+        contractExpectation: 'must equal 3'
       })
     }
   })

@@ -135,13 +135,16 @@ export interface WalletSnapshotPayment {
   amt_msat: DecimalString | null
   asset_amount: DecimalString | null
   asset_id: string | null
+  carrier_msat: DecimalString | null
   payment_hash: string
   payment_type: 'Outbound' | 'InboundAutoClaim' | 'InboundHodl'
   status: 'Pending' | 'Claimable' | 'Claiming' | 'Succeeded' | 'Cancelled' | 'Failed'
   created_at: DecimalString
   updated_at: DecimalString
+  expires_at: DecimalString | null
   payee_pubkey: string
   fee_paid_msat: DecimalString | null
+  failure_code: string | null
 }
 
 export interface WalletSnapshotTransferEndpoint {
@@ -406,11 +409,13 @@ export interface LightningPayment {
   amt_msat: number | null
   asset_amount: number | null
   asset_id: string | null
+  carrier_msat: number | null
   payment_hash: string
   payment_type: RgbPaymentType
   status: LightningPaymentStatus
   created_at: number
   updated_at: number
+  expires_at: number | null
   payee_pubkey: string
   preimage: string | null
   description_hash: string | null
