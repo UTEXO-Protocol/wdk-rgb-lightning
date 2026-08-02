@@ -15,10 +15,6 @@ const WDK_SEED_HEX = '5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6
 const NODE_SEED_V2 = WDK_SEED_HEX.slice(0, 64)
 const NODE_SEED_V1 = 'd6560f02547828d8d76fc84ea68e74dcccea5599e735cee1fa5f2742289cda58'
 const AUTO_UNLOCK_REQUEST = {
-  bitcoind_rpc_username: 'user',
-  bitcoind_rpc_password: 'password',
-  bitcoind_rpc_host: '127.0.0.1',
-  bitcoind_rpc_port: 18443,
   indexer_url: 'tcp://127.0.0.1:50001',
   proxy_endpoint: 'rpc://127.0.0.1:3000/json-rpc',
   announce_addresses: [],
@@ -111,8 +107,57 @@ describe('WalletManagerRgbLightning', () => {
     expect(() => new TestManager(MNEMONIC, {
       network: 'regtest',
       dataDir: '/wallet',
-      autoUnlockRequest: { ...AUTO_UNLOCK_REQUEST, bitcoind_rpc_port: 0 }
-    })).toThrow('autoUnlockRequest.bitcoind_rpc_port must be a valid TCP port')
+      autoUnlockRequest: {
+        ...AUTO_UNLOCK_REQUEST,
+        bitcoind_rpc_username: 'user',
+        bitcoind_rpc_password: 'password',
+        bitcoind_rpc_host: '127.0.0.1',
+        bitcoind_rpc_port: 18443
+      }
+    })).toThrow('autoUnlockRequest must provide exactly one chain backend')
+  })
+
+  it('accepts a complete bitcoind backend without an indexer', async () => {
+    const bitcoindRequest = {
+      bitcoind_rpc_username: 'user',
+      bitcoind_rpc_password: 'password',
+      bitcoind_rpc_host: '127.0.0.1',
+      bitcoind_rpc_port: 18443,
+      proxy_endpoint: 'rpc://127.0.0.1:3000/json-rpc',
+      announce_addresses: [],
+      announce_alias: 'wallet-test'
+    }
+    const manager = new TestManager(MNEMONIC, {
+      network: 'regtest',
+      dataDir: '/wallet',
+      autoUnlockRequest: bitcoindRequest
+    })
+
+    expect((await manager.getAccount())._autoUnlockRequest).toEqual(bitcoindRequest)
+  })
+
+  it('rejects incomplete and absent chain backends', () => {
+    const commonRequest = {
+      proxy_endpoint: AUTO_UNLOCK_REQUEST.proxy_endpoint,
+      announce_addresses: AUTO_UNLOCK_REQUEST.announce_addresses,
+      announce_alias: AUTO_UNLOCK_REQUEST.announce_alias
+    }
+
+    expect(() => new TestManager(MNEMONIC, {
+      network: 'regtest',
+      dataDir: '/wallet',
+      autoUnlockRequest: commonRequest
+    })).toThrow('autoUnlockRequest must provide exactly one chain backend')
+
+    expect(() => new TestManager(MNEMONIC, {
+      network: 'regtest',
+      dataDir: '/wallet',
+      autoUnlockRequest: {
+        ...commonRequest,
+        bitcoind_rpc_username: 'user',
+        bitcoind_rpc_port: 18443
+      }
+    })).toThrow('autoUnlockRequest.bitcoind_rpc_password must be a non-empty string')
   })
 
   it('supports explicit v2-only and legacy-only modes', async () => {

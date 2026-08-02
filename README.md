@@ -110,15 +110,14 @@ const manager = new WalletManagerRgbLightning(seedPhrase, {
 const account = await manager.getAccount(0) // RGB Lightning is single-account
 
 await account.unlock({
-  bitcoind_rpc_username: 'user',
-  bitcoind_rpc_password: 'pass',
-  bitcoind_rpc_host: '127.0.0.1',
-  bitcoind_rpc_port: 18443,
   indexer_url: 'tcp://localhost:50001',
   proxy_endpoint: 'rpc://localhost:3000/json-rpc',
   announce_addresses: [],
   announce_alias: 'my-node'
 })
+
+// Configure exactly one chain backend: either `indexer_url`, as above, or all
+// four `bitcoind_rpc_*` fields. The native node rejects requests with both.
 
 const info = await account.getNodeInfo()
 console.log(info.pubkey)

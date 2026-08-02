@@ -601,16 +601,31 @@ export interface RgbLightningWalletConfig extends RgbLightningBindingConfig {
   announceAlias?: string
 }
 
-export interface RgbLightningNodeUnlockRequest {
-  bitcoind_rpc_username: string
-  bitcoind_rpc_password: string
-  bitcoind_rpc_host: string
-  bitcoind_rpc_port: number
-  indexer_url: string
+interface RgbLightningNodeUnlockRequestBase {
   proxy_endpoint: string
   announce_addresses: string[]
   announce_alias: string
 }
+
+export interface RgbLightningBitcoindUnlockRequest extends RgbLightningNodeUnlockRequestBase {
+  bitcoind_rpc_username: string
+  bitcoind_rpc_password: string
+  bitcoind_rpc_host: string
+  bitcoind_rpc_port: number
+  indexer_url?: never
+}
+
+export interface RgbLightningIndexerUnlockRequest extends RgbLightningNodeUnlockRequestBase {
+  indexer_url: string
+  bitcoind_rpc_username?: never
+  bitcoind_rpc_password?: never
+  bitcoind_rpc_host?: never
+  bitcoind_rpc_port?: never
+}
+
+export type RgbLightningNodeUnlockRequest =
+  | RgbLightningBitcoindUnlockRequest
+  | RgbLightningIndexerUnlockRequest
 
 export type NativeOperationState =
   | 'queued'

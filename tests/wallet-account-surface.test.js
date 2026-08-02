@@ -29,7 +29,6 @@ const AUTO_UNLOCK_REQUEST = Object.freeze({
   bitcoind_rpc_password: 'password',
   bitcoind_rpc_host: '127.0.0.1',
   bitcoind_rpc_port: 18443,
-  indexer_url: 'tcp://127.0.0.1:50001',
   proxy_endpoint: 'rpc://127.0.0.1:3000/json-rpc',
   announce_addresses: Object.freeze([]),
   announce_alias: 'wallet-test'
