@@ -1014,6 +1014,23 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   }
 
   /**
+   * Validate and register a standalone RGB contract without creating an
+   * allocation or transfer. Intended for trusted, network-scoped contract
+   * preload during wallet bootstrap.
+   *
+   * @param {Object} request
+   * @returns {Promise<object>}
+   */
+  async importRgbContract (request) {
+    if (typeof this._node.importRgbContract !== 'function') {
+      throw new Error(
+        'The installed RGB Lightning native binding does not expose importRgbContract()'
+      )
+    }
+    return this._node.importRgbContract(request)
+  }
+
+  /**
    * Send an RGB asset. Forwarded verbatim to RLN's `sendRgb`
    * (`JsonSendRgbRequest`):
    *   {

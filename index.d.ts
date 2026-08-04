@@ -491,6 +491,17 @@ export interface ImportRgbTransferConsignmentResult {
   metadata: object
 }
 
+export interface ImportRgbContractRequest {
+  contract_base64: string
+  expected_asset_id: string
+}
+
+export interface ImportRgbContractResult {
+  asset_id: string
+  already_imported: boolean
+  metadata: object
+}
+
 export interface BtcSendRequest {
   amount: number
   address: string
@@ -963,6 +974,7 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   failTransfers(request: object): Promise<object>
   createRgbInvoice(request: CreateRgbInvoiceRequest | object): Promise<object>
   importRgbTransferConsignment(request: ImportRgbTransferConsignmentRequest): Promise<ImportRgbTransferConsignmentResult>
+  importRgbContract(request: ImportRgbContractRequest): Promise<ImportRgbContractResult>
   sendRgbAsset(request: SendRgbAssetRequest | object): Promise<object>
   prepareRgbSend(request: SendRgbAssetRequest): Promise<PreparedRgbSend>
   commitPreparedRgbSend(request: CommitPreparedSendRequest): Promise<CommittedRgbSend>

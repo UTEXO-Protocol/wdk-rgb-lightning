@@ -126,6 +126,11 @@ function makeNode (overrides = {}) {
       already_imported: false,
       metadata: { name: 'Asset' }
     })),
+    importRgbContract: jest.fn((r) => ({
+      asset_id: r.expected_asset_id,
+      already_imported: false,
+      metadata: { name: 'Approved Asset' }
+    })),
     prepareRgbSend: jest.fn(() => ({
       plan_id: 'ab'.repeat(32),
       batch_transfer_idx: 7,
@@ -947,6 +952,32 @@ describe('RGB invoices / transfers / media', () => {
       consignment_base64: 'Y29uc2lnbm1lbnQ=',
       offchain_txid: '11'.repeat(32)
     })).rejects.toThrow('does not expose importRgbTransferConsignment()')
+  })
+
+  it('importRgbContract forwards to node.importRgbContract', async () => {
+    const node = makeNode()
+    const account = makeAccount({ node })
+    const req = {
+      contract_base64: 'Y29udHJhY3Q=',
+      expected_asset_id: 'rgb:approved'
+    }
+
+    await expect(account.importRgbContract(req)).resolves.toEqual({
+      asset_id: 'rgb:approved',
+      already_imported: false,
+      metadata: { name: 'Approved Asset' }
+    })
+    expect(node.importRgbContract).toHaveBeenCalledWith(req)
+  })
+
+  it('fails closed when the native binding lacks importRgbContract()', async () => {
+    const node = makeNode({ importRgbContract: undefined })
+    const account = makeAccount({ node })
+
+    await expect(account.importRgbContract({
+      contract_base64: 'Y29udHJhY3Q=',
+      expected_asset_id: 'rgb:approved'
+    })).rejects.toThrow('does not expose importRgbContract()')
   })
 
   it('prepares and commits an exact RGB transaction plan', async () => {
