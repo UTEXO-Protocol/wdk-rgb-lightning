@@ -70,6 +70,10 @@
     },
     "./package": {
       "default": "./package.json"
+    },
+    "./lsp-info": {
+      "types": "./lsp-info.d.ts",
+      "default": "./src/lsp-info.js"
     }
   },
   "publishConfig": {

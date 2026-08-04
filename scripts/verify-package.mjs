@@ -107,6 +107,7 @@ const requiredRootFiles = [
   'index-node.js',
   'index.d.ts',
   'index.js',
+  'lsp-info.d.ts',
   'package.json'
 ]
 const requiredRuntimeFiles = [
