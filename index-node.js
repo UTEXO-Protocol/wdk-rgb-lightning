@@ -38,6 +38,7 @@ export {
 // LSP client surface — see ./src/lsp-client.js, lnurl-pay.js, lsp-helpers.js.
 // Pure-fetch implementations; identical module under Bare (./index-bare.js).
 export { LspClient, LspError } from './src/lsp-client.js'
+export { parseLspInfo } from './src/lsp-info.js'
 export {
   LnurlPayError,
   UMA_PREFIX,

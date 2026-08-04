@@ -483,42 +483,55 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   }
 
   /**
+   * Fetch and validate this account's configured LSP discovery document.
+   *
+   * @param {{ timeoutMs?: number }} [opts]
+   * @returns {Promise<import('../index.js').LspInfo>}
+   */
+  async getLspInfo (opts = {}) {
+    const { baseUrl, bearerToken } = this.getLspConfig()
+    if (!baseUrl) {
+      throw new Error('getLspInfo: lspBaseUrl not set')
+    }
+    return new LspClient({
+      baseUrl,
+      defaultHeaders: bearerToken ? { Authorization: `Bearer ${bearerToken}` } : undefined
+    }).getInfo(opts)
+  }
+
+  /**
    * Build a {@link UtexoLsp} — the composed LSP flow object (connect,
    * wait-for-channel, receive/send asset, pay address, enable Lightning
    * Address, claim pending). Mirrors `@utexo/rgb-sdk-rn`'s
    * `wallet.createLsp(peer?)`.
    *
    * No-arg form auto-discovers the peer from the wallet's `lspBaseUrl`:
-   * pubkey via `GET /get_info`, host from the base URL, port from
-   * `peerPort` (default 9735).
+   * pubkey, host, and port via `GET /get_info`. A caller-supplied
+   * `peerPort` overrides the advertised port for legacy deployments.
    *
    * Explicit form takes a full LspPeer
    * (`{ baseUrl, peerPubkey, peerHost, peerPort, bearerToken?, timeoutMs?, allowHttp? }`).
    *
    * @param {object} [peer]
-   * @param {number} [peerPort=9735]  Used only by the auto-discover form.
+   * @param {number} [peerPort]  Used only by the auto-discover form.
    * @returns {Promise<UtexoLsp>}
    */
-  async createLsp (peer, peerPort = 9735) {
+  async createLsp (peer, peerPort) {
     if (peer) return new UtexoLsp(this, peer)
 
     const { baseUrl, bearerToken } = this.getLspConfig()
     if (!baseUrl) {
       throw new Error('createLsp: lspBaseUrl not set — pass a peer explicitly or construct the wallet with lspBaseUrl')
     }
-    const http = new LspClient({
-      baseUrl,
-      defaultHeaders: bearerToken ? { Authorization: `Bearer ${bearerToken}` } : undefined
-    })
-    const info = await http.getInfo()
+    const info = await this.getLspInfo()
     if (!info || typeof info.pubkey !== 'string' || info.pubkey.length === 0) {
       throw new Error('createLsp: LSP /get_info returned no pubkey')
     }
     return new UtexoLsp(this, {
       baseUrl,
       peerPubkey: info.pubkey,
-      peerHost: new URL(baseUrl).hostname,
-      peerPort,
+      peerHost: info.host ?? new URL(baseUrl).hostname,
+      peerPort: peerPort ?? info.port ?? 9735,
       bearerToken: bearerToken ?? undefined
     })
   }

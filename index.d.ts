@@ -24,6 +24,38 @@ export type Network = 'mainnet' | 'testnet' | 'regtest' | 'signet'
 /** Integer encoded as base-10 text so values never cross JS's safe-number boundary. */
 export type DecimalString = `${bigint}`
 
+export type LspAssetSchema = 'Nia' | 'Uda' | 'Cfa' | 'Ifa'
+
+export interface LspSupportedAsset {
+  asset_id: string
+  schema: LspAssetSchema
+  ticker?: string
+  name: string
+  precision: number
+}
+
+export interface LspInfo {
+  api_version: 1
+  pubkey: string
+  network: Network
+  host?: string
+  port?: number
+  supported_assets: readonly LspSupportedAsset[]
+  min_payment_size_msat: DecimalString
+  max_payment_size_msat: DecimalString
+  min_channel_balance_sat: DecimalString
+  max_channel_balance_sat: DecimalString
+  min_initial_client_balance_msat: DecimalString
+  max_initial_client_balance_msat: DecimalString
+  min_channel_asset_amount: DecimalString
+  max_channel_asset_amount: DecimalString
+  virtual_channel_mode?: string
+  lightning_address_min_sendable_msat: DecimalString
+  lightning_address_max_sendable_msat: DecimalString
+}
+
+export function parseLspInfo(value: unknown): LspInfo
+
 export type WalletSyncMode = 'routine' | 'recovery'
 
 export type WalletSyncKeychainResult =
@@ -890,6 +922,8 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   }): Promise<BootstrapLspResult>
   /** The lspBaseUrl / lspBearerToken this node was constructed with. */
   getLspConfig(): { baseUrl: string | null; bearerToken: string | null }
+  /** Fetch and validate the configured LSP discovery document. */
+  getLspInfo(opts?: { timeoutMs?: number }): Promise<LspInfo>
   /**
    * Build the composed {@link UtexoLsp} flow object. No-arg form
    * auto-discovers the peer from the wallet's lspBaseUrl.
@@ -1041,7 +1075,7 @@ export interface LspBridgeResult {
 export class LspClient {
   constructor(opts: LspClientOptions)
   health(opts?: { timeoutMs?: number }): Promise<object | null>
-  getInfo(opts?: { timeoutMs?: number }): Promise<object | null>
+  getInfo(opts?: { timeoutMs?: number }): Promise<LspInfo>
   lnurlDiscovery(username: string, opts?: { timeoutMs?: number }): Promise<LnurlPayDiscovery>
   lnurlCallback(username: string, amountMsat: bigint | number | string, opts?: { assetId?: string; assetAmount?: bigint | number | string; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[] }>
   /** Full LUD-06 resolution routed through this LSP's baseUrl (discovery + callback). */

@@ -58,6 +58,29 @@ const DECODED_RGB_INVOICE = Object.freeze({
   transport_endpoints: Object.freeze(['rpc://127.0.0.1:3000/json-rpc'])
 })
 
+function lspInfo (overrides = {}) {
+  return {
+    api_version: 1,
+    pubkey: '02' + 'ab'.repeat(32),
+    network: 'signet',
+    host: 'lsp.example',
+    port: 9735,
+    supported_assets: [],
+    min_payment_size_msat: '1000',
+    max_payment_size_msat: '20000000',
+    min_channel_balance_sat: '200000',
+    max_channel_balance_sat: '200000',
+    min_initial_client_balance_msat: '30000000',
+    max_initial_client_balance_msat: '30000000',
+    min_channel_asset_amount: '1',
+    max_channel_asset_amount: '1',
+    virtual_channel_mode: 'trusted_no_broadcast',
+    lightning_address_min_sendable_msat: '3000000',
+    lightning_address_max_sendable_msat: '20000000',
+    ...overrides
+  }
+}
+
 // Build a fake RLN node whose methods are jest.fn returning canned
 // values. Every method the account forwards to is present so we can
 // assert forwarding + arg pass-through.
@@ -1456,11 +1479,12 @@ describe('createLsp', () => {
   })
 
   it('auto-discovers the peer from lspBaseUrl via GET /get_info', async () => {
-    // No-arg form: pubkey from /get_info, host from the base URL hostname,
-    // port from the peerPort default (9735). Real LSP /get_info returns the
-    // node pubkey (hex 33-byte compressed key); stub getInfo so no network.
     const getInfoSpy = jest.spyOn(LspClient.prototype, 'getInfo')
-      .mockResolvedValue({ pubkey: 'ab'.repeat(33), num_channels: 4 })
+      .mockResolvedValue(lspInfo({
+        pubkey: '02' + 'ab'.repeat(32),
+        host: 'peer.lsp.example',
+        port: 19735
+      }))
     try {
       const account = makeAccount({
         _config: { lspBaseUrl: 'https://lsp.example:8443/api', lspBearerToken: 'tok' }
@@ -1468,12 +1492,11 @@ describe('createLsp', () => {
       const lsp = await account.createLsp()
       expect(lsp).toBeInstanceOf(UtexoLsp)
       expect(lsp.account).toBe(account)
-      // peer must be assembled from /get_info + base URL hostname + default port.
       expect(lsp.peer).toEqual({
         baseUrl: 'https://lsp.example:8443/api',
-        peerPubkey: 'ab'.repeat(33),
-        peerHost: 'lsp.example',
-        peerPort: 9735,
+        peerPubkey: '02' + 'ab'.repeat(32),
+        peerHost: 'peer.lsp.example',
+        peerPort: 19735,
         bearerToken: 'tok'
       })
       expect(getInfoSpy).toHaveBeenCalledTimes(1)
@@ -1484,7 +1507,7 @@ describe('createLsp', () => {
 
   it('honours an explicit peerPort override in the no-arg form', async () => {
     const getInfoSpy = jest.spyOn(LspClient.prototype, 'getInfo')
-      .mockResolvedValue({ pubkey: 'cd'.repeat(33) })
+      .mockResolvedValue(lspInfo({ pubkey: '03' + 'cd'.repeat(32) }))
     try {
       const account = makeAccount({ _config: { lspBaseUrl: 'https://lsp.example' } })
       const lsp = await account.createLsp(undefined, 9999)
@@ -1499,7 +1522,7 @@ describe('createLsp', () => {
 
   it('throws when /get_info returns no pubkey', async () => {
     const getInfoSpy = jest.spyOn(LspClient.prototype, 'getInfo')
-      .mockResolvedValue({ num_channels: 0 })
+      .mockResolvedValue(lspInfo({ pubkey: undefined }))
     try {
       const account = makeAccount({ _config: { lspBaseUrl: 'https://lsp.example' } })
       await expect(account.createLsp()).rejects.toThrow(/returned no pubkey/)

@@ -10,6 +10,7 @@ import {
   snakeCaseRgbParams,
   toUint64String
 } from './lsp-utils.js'
+import { parseLspInfo } from './lsp-info.js'
 
 // Thin typed wrapper around utexo-lsp's HTTP API. Side-effect free:
 // methods build URLs, send JSON, validate response status, and return
@@ -177,15 +178,17 @@ export class LspClient {
   health (opts = {}) { return this._req('GET', '/health', undefined, opts) }
 
   /**
-   * Returns the LSP's view of its upstream RLN node (pubkey, channel summary, etc).
+   * Returns the LSP's public identity, supported assets, and operating policy.
    *
    * @param {object} [opts] - Per-call request options.
    * @param {number} [opts.timeoutMs] - Override the constructor's timeout in
    *   milliseconds.
-   * @returns {Promise<object|null>} - Parsed LSP node information.
+   * @returns {Promise<import('../index.js').LspInfo>} - Validated LSP information.
    * @throws {LspError} - If transport, HTTP, size, or JSON validation fails.
    */
-  getInfo (opts = {}) { return this._req('GET', '/get_info', undefined, opts) }
+  async getInfo (opts = {}) {
+    return parseLspInfo(await this._req('GET', '/get_info', undefined, opts))
+  }
 
   /**
    * LUD-06 discovery for a Lightning Address hosted by this LSP.
