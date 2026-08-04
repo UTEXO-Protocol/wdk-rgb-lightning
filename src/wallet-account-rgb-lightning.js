@@ -984,6 +984,23 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   async createRgbInvoice (request) { return this._node.rgbInvoice(request) }
 
   /**
+   * Import and persist an RGB asset from a transfer consignment. This is a
+   * mutating wallet operation and requires a native binding that exposes
+   * `importRgbTransferConsignment`.
+   *
+   * @param {Object} request
+   * @returns {Promise<object>}
+   */
+  async importRgbTransferConsignment (request) {
+    if (typeof this._node.importRgbTransferConsignment !== 'function') {
+      throw new Error(
+        'The installed RGB Lightning native binding does not expose importRgbTransferConsignment()'
+      )
+    }
+    return this._node.importRgbTransferConsignment(request)
+  }
+
+  /**
    * Send an RGB asset. Forwarded verbatim to RLN's `sendRgb`
    * (`JsonSendRgbRequest`):
    *   {

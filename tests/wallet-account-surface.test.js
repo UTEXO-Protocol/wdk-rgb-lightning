@@ -98,6 +98,11 @@ function makeNode (overrides = {}) {
     rgbInvoice: jest.fn((r) => ({ rgbinv: r })),
     decodeRgbInvoice: jest.fn(() => DECODED_RGB_INVOICE),
     sendRgb: jest.fn((r) => ({ txid: 'rgbtx', echo: r })),
+    importRgbTransferConsignment: jest.fn((r) => ({
+      asset_id: r.expected_asset_id ?? 'rgb:asset',
+      already_imported: false,
+      metadata: { name: 'Asset' }
+    })),
     prepareRgbSend: jest.fn(() => ({
       plan_id: 'ab'.repeat(32),
       batch_transfer_idx: 7,
@@ -892,6 +897,33 @@ describe('RGB invoices / transfers / media', () => {
     const req = { recipient_id: 'rgb:abc' }
     await expect(account.sendRgbAsset(req)).resolves.toMatchObject({ txid: 'rgbtx' })
     expect(node.sendRgb).toHaveBeenCalledWith(req)
+  })
+
+  it('importRgbTransferConsignment forwards to node.importRgbTransferConsignment', async () => {
+    const node = makeNode()
+    const account = makeAccount({ node })
+    const req = {
+      consignment_base64: 'Y29uc2lnbm1lbnQ=',
+      offchain_txid: '11'.repeat(32),
+      expected_asset_id: 'rgb:asset'
+    }
+
+    await expect(account.importRgbTransferConsignment(req)).resolves.toEqual({
+      asset_id: 'rgb:asset',
+      already_imported: false,
+      metadata: { name: 'Asset' }
+    })
+    expect(node.importRgbTransferConsignment).toHaveBeenCalledWith(req)
+  })
+
+  it('fails closed when the native binding lacks importRgbTransferConsignment()', async () => {
+    const node = makeNode({ importRgbTransferConsignment: undefined })
+    const account = makeAccount({ node })
+
+    await expect(account.importRgbTransferConsignment({
+      consignment_base64: 'Y29uc2lnbm1lbnQ=',
+      offchain_txid: '11'.repeat(32)
+    })).rejects.toThrow('does not expose importRgbTransferConsignment()')
   })
 
   it('prepares and commits an exact RGB transaction plan', async () => {
