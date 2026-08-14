@@ -28,6 +28,10 @@ while pre-`1.0`.
 ## [Unreleased]
 
 ### Added
+- Validated standalone RGB contract and transfer-consignment import boundaries.
+  Requests are exact and bounded, transaction IDs are canonicalized, native
+  responses are schema-checked, and an import fails closed if the returned
+  asset differs from `expected_asset_id`.
 - Stable native Lightning `failure_code` fields on immediate send results and
   persisted payment records, allowing callers to distinguish route, expiry,
   duplicate-payment, recipient, retry, and restart-abandonment failures.

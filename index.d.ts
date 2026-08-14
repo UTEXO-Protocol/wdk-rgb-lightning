@@ -480,8 +480,11 @@ export interface SendRgbAssetRequest {
 }
 
 export interface ImportRgbTransferConsignmentRequest {
+  /** Raw binary transfer consignment encoded with standard base64. */
   consignment_base64: string
+  /** Exact off-chain RGB transaction id associated with the accepted transfer. */
   offchain_txid: string
+  /** Optional fail-closed assertion for the consignment's derived asset id. */
   expected_asset_id?: string
 }
 
@@ -492,7 +495,9 @@ export interface ImportRgbTransferConsignmentResult {
 }
 
 export interface ImportRgbContractRequest {
+  /** Trusted, network-scoped binary RGB contract encoded with standard base64. */
   contract_base64: string
+  /** Required fail-closed assertion for the contract's derived asset id. */
   expected_asset_id: string
 }
 

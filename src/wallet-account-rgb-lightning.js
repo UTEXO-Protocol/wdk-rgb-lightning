@@ -60,6 +60,12 @@ import {
   validateCreateUtxosRequest,
   validatePreparedCreateUtxosResponse
 } from './rgb-utxo-setup-contract.js'
+import {
+  validateImportRgbContractRequest,
+  validateImportRgbContractResult,
+  validateImportRgbTransferConsignmentRequest,
+  validateImportRgbTransferConsignmentResult
+} from './rgb-import-contract.js'
 import { validateAddressReceipts } from './address-receipt-contract.js'
 
 export { PENDING_ADDRESS }
@@ -1010,7 +1016,12 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
         'The installed RGB Lightning native binding does not expose importRgbTransferConsignment()'
       )
     }
-    return this._node.importRgbTransferConsignment(request)
+    const validatedRequest = validateImportRgbTransferConsignmentRequest(request)
+    const result = await this._node.importRgbTransferConsignment(validatedRequest)
+    return validateImportRgbTransferConsignmentResult(
+      result,
+      validatedRequest.expected_asset_id
+    )
   }
 
   /**
@@ -1027,7 +1038,12 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
         'The installed RGB Lightning native binding does not expose importRgbContract()'
       )
     }
-    return this._node.importRgbContract(request)
+    const validatedRequest = validateImportRgbContractRequest(request)
+    const result = await this._node.importRgbContract(validatedRequest)
+    return validateImportRgbContractResult(
+      result,
+      validatedRequest.expected_asset_id
+    )
   }
 
   /**

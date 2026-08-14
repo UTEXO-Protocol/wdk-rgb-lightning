@@ -87,7 +87,7 @@ try {
   const nativePackageSpec = registryPackage
     ? `${nativePackage}@${nativeVersion}`
     : process.env.WDK_RGB_LIGHTNING_NODE_SPEC ??
-      'github:UTEXO-Protocol/rgb-lightning-node-nodejs#iris-wallet'
+      'github:UTEXO-Protocol/rgb-lightning-node-nodejs#ed494dabc6d4ea4c7c572dad0a3857b683f7e1f2'
 
   writeFileSync(
     path.join(temporaryRoot, 'package.json'),

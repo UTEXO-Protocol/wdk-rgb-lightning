@@ -189,6 +189,16 @@ are async and forward to the active binding.
 
 Notes:
 
+- **`importRgbContract()` registers trusted contract metadata only.** Call it
+  with a network-scoped, independently validated binary contract encoded as
+  base64 and the exact expected asset id. It creates no allocation and leaves
+  the asset balance at zero. Repeating the same import is idempotent; a payload
+  whose derived asset id differs from `expected_asset_id` fails closed.
+- **`importRgbTransferConsignment()` is not a substitute for receiving.** It
+  persists metadata from a transfer the native receive path has already
+  accepted and requires the exact off-chain transaction id. Normal BTC/RGB
+  settlement must still use the protocol receive flow.
+
 - **`refreshWalletSnapshot()` is the production balance/history refresh.** It
   serializes native refreshes, coalesces identical requests, FullSyncs both
   Vanilla and Colored keychains in `routine` mode, and FullScans both only in
