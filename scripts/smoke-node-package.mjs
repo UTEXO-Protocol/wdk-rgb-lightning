@@ -87,7 +87,7 @@ try {
   const nativePackageSpec = registryPackage
     ? `${nativePackage}@${nativeVersion}`
     : process.env.WDK_RGB_LIGHTNING_NODE_SPEC ??
-      'github:UTEXO-Protocol/rgb-lightning-node-nodejs#dd131addea8ed662c552e897e5fd3e2832f02e8b'
+      'github:UTEXO-Protocol/rgb-lightning-node-nodejs#941568fb94410f43c5f59d2e5c4daf1843c9b245'
 
   writeFileSync(
     path.join(temporaryRoot, 'package.json'),
