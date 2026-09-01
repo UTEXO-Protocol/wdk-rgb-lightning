@@ -6,7 +6,7 @@
 
 export const WALLET_SNAPSHOT_CONTRACT_VERSION = 3
 export const WALLET_SYNC_CONTRACT_VERSION = 2
-export const WALLET_SNAPSHOT_NATIVE_SOURCE = 'rgb-lightning-node-v0.10.0-beta.3+utexo-wallet-v3'
+export const WALLET_SNAPSHOT_NATIVE_SOURCE = 'rgb-lightning-node-v0.11.0-beta.3+utexo-wallet-v3'
 
 const NATIVE_LIMITS = Object.freeze({
   assets: 128,

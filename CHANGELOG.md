@@ -86,6 +86,12 @@ while pre-`1.0`.
   >=0.1.0-beta.12 <0.2.0`, the first releases that preserve Lightning CLTV
   metadata through the C-FFI decode response.
 
+### Fixed
+- Aligned the wallet snapshot runtime fingerprint and public TypeScript
+  contract with the required v0.11 native peers. Snapshot refreshes now accept
+  `rgb-lightning-node-v0.11.0-beta.3+utexo-wallet-v3` and continue to reject
+  snapshots from incompatible native runtimes.
+
 ## [0.1.0-beta.15] — 2026-07-23
 
 ### Added

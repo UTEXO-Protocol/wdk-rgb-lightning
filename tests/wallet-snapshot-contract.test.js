@@ -35,7 +35,7 @@ function syncResult (overrides = {}) {
 function snapshot (overrides = {}) {
   return {
     contract_version: 3,
-    native_source: 'rgb-lightning-node-v0.10.0-beta.3+utexo-wallet-v3',
+    native_source: 'rgb-lightning-node-v0.11.0-beta.3+utexo-wallet-v3',
     capture_sequence: '1',
     capture_attempts: 2,
     stable_capture_count: 2,
