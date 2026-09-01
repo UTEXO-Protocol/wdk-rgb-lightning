@@ -6,6 +6,7 @@
 
 import WalletManager from '@tetherto/wdk-wallet'
 import { mnemonicToSeedSync } from 'bip39'
+import { normalizeAutoUnlockRequest } from './node-unlock-request.js'
 import WalletAccountRgbLightning from './wallet-account-rgb-lightning.js'
 
 const MEMPOOL_SPACE_URL = 'https://mempool.space'
@@ -24,6 +25,8 @@ const MEMPOOL_SPACE_URL = 'https://mempool.space'
  *   proxyEndpoint?: string,
  *   announceAddresses?: string[],
  *   announceAlias?: string,
+ *   autoUnlockRequest?: object,
+ *   autoRecoverStaleVssFence?: boolean,
  *   nodeSeedDerivation?: 'auto'|'wdk-seed-v2'|'legacy-v1'
  * }} RgbLightningWalletConfig
  */
@@ -71,8 +74,9 @@ export function legacyWdkSeedToNodeSeedHex (seed) {
  *   the mnemonic ourselves — we derive a 32-byte VLS node entropy
  *   from it on demand and hand it to RLN's `NativeExternalSigner`,
  *   which runs the VLS signer entirely in-process. RLN's on-disk
- *   state only contains identifying public data (xpubs, node id,
- *   master fingerprint via the key-source file), never the seed.
+ *   state contains identifying public data plus the VLS commitment-state
+ *   database. It never contains the seed; the same mnemonic is still required
+ *   to reopen the signer after a restart.
  */
 export default class WalletManagerRgbLightning extends WalletManager {
   /**
@@ -98,7 +102,8 @@ export default class WalletManagerRgbLightning extends WalletManager {
    * @param {RgbLightningWalletConfig} config
    */
   constructor (seed, config = {}) {
-    super(seed, config)
+    const { autoUnlockRequest, autoRecoverStaleVssFence, ...managerConfig } = config
+    super(seed, managerConfig)
 
     if (!config.network) throw new Error('network configuration is required.')
     if (!config.dataDir) {
@@ -109,6 +114,8 @@ export default class WalletManagerRgbLightning extends WalletManager {
     }
 
     /** @private */ this._network = config.network
+    /** @private */ this._autoUnlockRequest = normalizeAutoUnlockRequest(autoUnlockRequest)
+    /** @private */ this._autoRecoverStaleVssFence = autoRecoverStaleVssFence === true
     /** @private @type {IRgbLightningBinding | null} */
     this._binding = null
   }
@@ -174,7 +181,11 @@ export default class WalletManagerRgbLightning extends WalletManager {
         )
       }
 
-      this._accounts[index] = new WalletAccountRgbLightning({ binding })
+      this._accounts[index] = new WalletAccountRgbLightning({
+        binding,
+        autoUnlockRequest: this._autoUnlockRequest,
+        autoRecoverStaleVssFence: this._autoRecoverStaleVssFence
+      })
     }
     return this._accounts[index]
   }
@@ -210,10 +221,54 @@ export default class WalletManagerRgbLightning extends WalletManager {
   }
 
   dispose () {
-    if (this._binding) {
-      this._binding.shutdown()
+    const failures = []
+
+    // WalletManager.dispose() probes account.keyPair before deciding whether
+    // to call account.dispose(). That is not valid for this manager after the
+    // app has explicitly shut down its external signer at the lock boundary.
+    // RGB Lightning owns every account in this cache, so dispose them directly
+    // without touching native identity state.
+    for (const account of Object.values(this._accounts)) {
+      try {
+        account.dispose()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    this._accounts = {}
+
+    if (this._defaultSigner) {
+      try {
+        this._defaultSigner.dispose()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    this._defaultSigner = undefined
+
+    for (const signer of Object.values(this._signers)) {
+      try {
+        signer.dispose()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    this._signers = {}
+
+    try {
+      this._binding?.shutdown()
+    } catch (error) {
+      failures.push(error)
+    } finally {
       this._binding = null
     }
-    super.dispose()
+
+    if (failures.length === 1) throw failures[0]
+    if (failures.length > 1) {
+      throw new AggregateError(
+        failures,
+        'Failed to dispose RGB Lightning accounts, signers, and binding'
+      )
+    }
   }
 }

@@ -24,6 +24,63 @@ import { UnlockError, AccountLockedError, ApayError } from '../src/errors.js'
 import { LspClient } from '../src/lsp-client.js'
 import { UtexoLsp } from '../src/utexo-lsp.js'
 
+const AUTO_UNLOCK_REQUEST = Object.freeze({
+  bitcoind_rpc_username: 'user',
+  bitcoind_rpc_password: 'password',
+  bitcoind_rpc_host: '127.0.0.1',
+  bitcoind_rpc_port: 18443,
+  proxy_endpoint: 'rpc://127.0.0.1:3000/json-rpc',
+  announce_addresses: Object.freeze([]),
+  announce_alias: 'wallet-test'
+})
+
+const DECODED_LIGHTNING_INVOICE = Object.freeze({
+  amt_msat: 3_000_000,
+  expiry_sec: 3_600,
+  timestamp: 1_750_000_000,
+  asset_id: null,
+  asset_amount: null,
+  payment_hash: '11'.repeat(32),
+  payment_secret: '22'.repeat(32),
+  payee_pubkey: '02' + '33'.repeat(32),
+  min_final_cltv_expiry_delta: 42,
+  network: 'Regtest'
+})
+
+const DECODED_RGB_INVOICE = Object.freeze({
+  recipient_id: 'bcrt:utxob:test',
+  recipient_type: 'Blind',
+  asset_schema: 'Nia',
+  asset_id: 'rgb:test',
+  assignment: Object.freeze({ type: 'Fungible', value: 0 }),
+  network: 'Regtest',
+  expiration_timestamp: 1_750_003_600,
+  transport_endpoints: Object.freeze(['rpc://127.0.0.1:3000/json-rpc'])
+})
+
+function lspInfo (overrides = {}) {
+  return {
+    api_version: 1,
+    pubkey: '02' + 'ab'.repeat(32),
+    network: 'signet',
+    host: 'lsp.example',
+    port: 9735,
+    supported_assets: [],
+    min_payment_size_msat: '1000',
+    max_payment_size_msat: '20000000',
+    min_channel_balance_sat: '200000',
+    max_channel_balance_sat: '200000',
+    min_initial_client_balance_msat: '30000000',
+    max_initial_client_balance_msat: '30000000',
+    min_channel_asset_amount: '1',
+    max_channel_asset_amount: '1',
+    virtual_channel_mode: 'trusted_no_broadcast',
+    lightning_address_min_sendable_msat: '3000000',
+    lightning_address_max_sendable_msat: '20000000',
+    ...overrides
+  }
+}
+
 // Build a fake RLN node whose methods are jest.fn returning canned
 // values. Every method the account forwards to is present so we can
 // assert forwarding + arg pass-through.
@@ -42,7 +99,7 @@ function makeNode (overrides = {}) {
     disconnectPeer: jest.fn(() => undefined),
     listPeers: jest.fn(() => ({ peers: [] })),
     lnInvoice: jest.fn((r) => ({ invoice: 'lnbc1', payment_hash: 'ph', echo: r })),
-    decodeLnInvoice: jest.fn((i) => ({ decoded: i })),
+    decodeLnInvoice: jest.fn(() => DECODED_LIGHTNING_INVOICE),
     invoiceStatus: jest.fn((i) => ({ status: 'Pending', echo: i })),
     cancelHodlInvoice: jest.fn(() => undefined),
     claimHodlInvoice: jest.fn((r) => ({ claimed: r })),
@@ -62,16 +119,73 @@ function makeNode (overrides = {}) {
     refreshTransfers: jest.fn(() => undefined),
     failTransfers: jest.fn((r) => ({ failed: r })),
     rgbInvoice: jest.fn((r) => ({ rgbinv: r })),
-    decodeRgbInvoice: jest.fn((i) => ({ decodedRgb: i })),
+    decodeRgbInvoice: jest.fn(() => DECODED_RGB_INVOICE),
     sendRgb: jest.fn((r) => ({ txid: 'rgbtx', echo: r })),
+    importRgbTransferConsignment: jest.fn((r) => ({
+      asset_id: r.expected_asset_id ?? 'rgb:asset',
+      already_imported: false,
+      metadata: { name: 'Asset' }
+    })),
+    importRgbContract: jest.fn((r) => ({
+      asset_id: r.expected_asset_id,
+      already_imported: false,
+      metadata: { name: 'Approved Asset' }
+    })),
+    prepareRgbSend: jest.fn(() => ({
+      plan_id: 'ab'.repeat(32),
+      batch_transfer_idx: 7,
+      fee_sat: '100',
+      total_input_sat: '10000',
+      total_output_sat: '9900',
+      size_vbytes: '140'
+    })),
+    commitPreparedRgbSend: jest.fn(() => ({
+      txid: 'ab'.repeat(32),
+      batch_transfer_idx: 7
+    })),
+    cancelRgbSendPlan: jest.fn(() => ({ cancelled: true })),
+    listPendingRgbSendPlans: jest.fn(() => [{
+      plan_id: 'ab'.repeat(32),
+      batch_transfer_idx: 7
+    }]),
     inflate: jest.fn((r) => ({ inflated: r })),
     getAssetMedia: jest.fn((d) => ({ media: d })),
     postAssetMedia: jest.fn((r) => ({ posted: r })),
     btcBalance: jest.fn(() => ({ vanilla: { spendable: 1234, settled: 1000 } })),
     sendBtc: jest.fn((r) => ({ txid: 'btctx', echo: r })),
+    prepareBtcSend: jest.fn(() => ({
+      plan_id: 'ab'.repeat(32),
+      fee_sat: '100',
+      total_input_sat: '10000',
+      total_output_sat: '9900',
+      size_vbytes: '140'
+    })),
+    commitPreparedBtcSend: jest.fn(() => ({ txid: 'ab'.repeat(32) })),
+    cancelBtcSendPlan: jest.fn(() => ({ cancelled: true })),
+    prepareCreateUtxos: jest.fn(() => ({
+      plan_id: 'ef'.repeat(32),
+      fee_sat: '300',
+      total_input_sat: '10300',
+      total_output_sat: '10000',
+      size_vbytes: '180',
+      target_count: 5,
+      output_size_sat: 2_000
+    })),
+    commitPreparedCreateUtxos: jest.fn(() => ({ txid: 'ef'.repeat(32) })),
+    cancelCreateUtxosPlan: jest.fn(() => ({ cancelled: true })),
+    listPendingVanillaTransactions: jest.fn(() => [{
+      txid: 'cd'.repeat(32),
+      operation_type: 'SendBtc'
+    }]),
+    listAddressReceipts: jest.fn(() => [{
+      txid: 'ef'.repeat(32),
+      amount_sat: '125000',
+      confirmations: 2,
+      block_height: 200
+    }]),
     listTransactions: jest.fn(() => ({ transactions: [] })),
     listTransactionsByTxid: jest.fn(() => []),
-    listUnspents: jest.fn(() => ({ unspents: [] })),
+    listUnspents: jest.fn(() => []),
     createUtxos: jest.fn(() => undefined),
     estimateFee: jest.fn(() => ({ fee_rate: 12 })),
     sendOnionMessage: jest.fn(() => undefined),
@@ -94,14 +208,18 @@ function makeBinding (overrides = {}) {
     bootstrap: jest.fn(() => ({ node_id: 'aa'.repeat(33) })),
     shutdown: jest.fn(() => undefined),
     apayNew: jest.fn(() => ({ order_id: 'o1' })),
+    clearVssFence: jest.fn(() => undefined),
     vssStatus: jest.fn(() => ({ configured: false, url: null, allowHttp: false, lastBackupVersion: null })),
     ...bindingOverrides
   }
   return binding
 }
 
-function makeAccount (bindingOverrides = {}) {
-  return new WalletAccountRgbLightning({ binding: makeBinding(bindingOverrides) })
+function makeAccount (bindingOverrides = {}, options = {}) {
+  return new WalletAccountRgbLightning({
+    binding: makeBinding(bindingOverrides),
+    ...options
+  })
 }
 
 describe('construction', () => {
@@ -154,6 +272,110 @@ describe('lifecycle', () => {
     expect(err).toBeInstanceOf(UnlockError)
     expect(err.message).toBe('Rln(NotInitialized): bad creds')
     expect(err.code).toBe('UNLOCK_FAILED')
+  })
+
+  it('does not clear a stale VSS fence unless the host opts in', async () => {
+    const clearVssFence = jest.fn()
+    const account = makeAccount({
+      unlock: () => {
+        throw new Error('VSS store_id is owned by another rgb-lightning-node instance')
+      },
+      clearVssFence
+    })
+
+    await expect(account.unlock(AUTO_UNLOCK_REQUEST)).rejects.toMatchObject({
+      name: 'UnlockError',
+      code: 'UNLOCK_FAILED'
+    })
+    expect(clearVssFence).not.toHaveBeenCalled()
+  })
+
+  it('clears a stale VSS fence once and retries unlock when explicitly enabled', async () => {
+    const unlock = jest.fn()
+      .mockImplementationOnce(() => {
+        throw new Error(
+          'VSS store_id is owned by another rgb-lightning-node instance; delete the `__rln_instance__` key from VSS first'
+        )
+      })
+      .mockImplementationOnce(() => undefined)
+    const clearVssFence = jest.fn()
+    const account = makeAccount(
+      { unlock, clearVssFence },
+      { autoRecoverStaleVssFence: true }
+    )
+
+    await expect(account.unlock(AUTO_UNLOCK_REQUEST)).resolves.toEqual({ ok: true })
+    expect(clearVssFence).toHaveBeenCalledTimes(1)
+    expect(clearVssFence).toHaveBeenCalledWith(AUTO_UNLOCK_REQUEST.bitcoind_rpc_password)
+    expect(unlock).toHaveBeenCalledTimes(2)
+    expect(unlock).toHaveBeenNthCalledWith(2, AUTO_UNLOCK_REQUEST)
+  })
+
+  it('does not clear VSS for unrelated unlock failures even when recovery is enabled', async () => {
+    const clearVssFence = jest.fn()
+    const account = makeAccount(
+      {
+        unlock: () => { throw new Error('Rln(Conflict): Invalid indexer') },
+        clearVssFence
+      },
+      { autoRecoverStaleVssFence: true }
+    )
+
+    await expect(account.unlock(AUTO_UNLOCK_REQUEST)).rejects.toMatchObject({
+      name: 'UnlockError',
+      message: 'Rln(Conflict): Invalid indexer'
+    })
+    expect(clearVssFence).not.toHaveBeenCalled()
+  })
+
+  it('does not attempt stale-fence recovery without a clear-fence password', async () => {
+    const clearVssFence = jest.fn()
+    const account = makeAccount(
+      {
+        unlock: () => { throw new Error('__rln_instance__ belongs to a previous owner') },
+        clearVssFence
+      },
+      { autoRecoverStaleVssFence: true }
+    )
+
+    await expect(account.unlock({})).rejects.toMatchObject({
+      name: 'UnlockError',
+      code: 'UNLOCK_FAILED'
+    })
+    expect(clearVssFence).not.toHaveBeenCalled()
+  })
+
+  it('coalesces concurrent unlock calls at the account boundary', async () => {
+    const unlock = jest.fn()
+    const account = makeAccount({ unlock })
+
+    await expect(Promise.all([
+      account.unlock(AUTO_UNLOCK_REQUEST),
+      account.unlock(AUTO_UNLOCK_REQUEST)
+    ])).resolves.toEqual([{ ok: true }, { ok: true }])
+
+    expect(unlock).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a conflicting concurrent unlock request', async () => {
+    let release
+    const pending = new Promise((resolve) => { release = resolve })
+    const unlock = jest.fn(() => pending)
+    const account = makeAccount({ unlock })
+    const first = account.unlock(AUTO_UNLOCK_REQUEST)
+    const conflicting = account.unlock({
+      ...AUTO_UNLOCK_REQUEST,
+      bitcoind_rpc_host: 'other-host'
+    })
+
+    await expect(conflicting).rejects.toMatchObject({
+      name: 'UnlockError',
+      code: 'UNLOCK_FAILED',
+      message: 'A different RGB Lightning unlock request is already in progress.'
+    })
+    release()
+    await expect(first).resolves.toEqual({ ok: true })
+    expect(unlock).toHaveBeenCalledTimes(1)
   })
 
   it('getBootstrap returns the binding bootstrap dictionary verbatim', async () => {
@@ -219,6 +441,29 @@ describe('apayNew', () => {
     expect(err).toBeInstanceOf(ApayError)
     expect(err.message).toBe('lsp unreachable')
   })
+
+  it('forwards signed Lightning Address registration without downgrading', async () => {
+    const response = { order_id: 'order-attested' }
+    const apayNew = jest.fn()
+    const apayNewWithAddress = jest.fn(() => response)
+    const account = makeAccount({ apayNew, apayNewWithAddress })
+
+    await expect(account.apayNewWithAddress('host', 'alice', 'lsp.example')).resolves.toBe(response)
+    expect(apayNewWithAddress).toHaveBeenCalledWith('host', 'alice', 'lsp.example')
+    expect(apayNew).not.toHaveBeenCalled()
+  })
+
+  it('wraps address-attestation failures in ApayError', async () => {
+    const account = makeAccount({
+      apayNewWithAddress: () => { throw new Error('attestation rejected') }
+    })
+    const error = await account
+      .apayNewWithAddress('host', 'alice', 'lsp.example')
+      .catch((cause) => cause)
+
+    expect(error).toBeInstanceOf(ApayError)
+    expect(error.message).toBe('attestation rejected')
+  })
 })
 
 describe('node info / network / sync', () => {
@@ -258,6 +503,98 @@ describe('getAddress', () => {
   it('throws AccountLockedError instead of returning a synthetic address', async () => {
     const account = makeAccount({ node: makeNode({ address: () => { throw new Error('NotInitialized') } }) })
     await expect(account.getAddress()).rejects.toBeInstanceOf(AccountLockedError)
+  })
+
+  it('coalesces address discovery across the native auto-unlock transition', async () => {
+    let lifecycle = 'locked'
+    let releaseUnlock
+    const unlockPending = new Promise((resolve) => { releaseUnlock = resolve })
+    const address = jest.fn(() => {
+      if (lifecycle === 'unlocking') {
+        throw new Error('Cannot call other APIs while node is changing state')
+      }
+      if (lifecycle === 'locked') {
+        throw new Error('SdkNode not created — call unlock() first')
+      }
+      return { address: 'tb1qactivated' }
+    })
+    const unlock = jest.fn(async () => {
+      lifecycle = 'unlocking'
+      await unlockPending
+      lifecycle = 'unlocked'
+    })
+    const account = makeAccount(
+      { node: makeNode({ address }), unlock },
+      { autoUnlockRequest: AUTO_UNLOCK_REQUEST }
+    )
+
+    const first = account.getAddress()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(unlock).toHaveBeenCalledTimes(1)
+
+    const second = account.getAddress()
+    releaseUnlock()
+
+    await expect(Promise.all([first, second]))
+      .resolves.toEqual(['tb1qactivated', 'tb1qactivated'])
+
+    expect(unlock).toHaveBeenCalledTimes(1)
+    expect(unlock).toHaveBeenCalledWith(AUTO_UNLOCK_REQUEST)
+    expect(address).toHaveBeenCalledTimes(2)
+  })
+
+  it('waits for an explicit unlock before reading the native address', async () => {
+    let lifecycle = 'locked'
+    let releaseUnlock
+    const unlockPending = new Promise((resolve) => { releaseUnlock = resolve })
+    const address = jest.fn(() => {
+      if (lifecycle !== 'unlocked') {
+        throw new Error('Cannot call other APIs while node is changing state')
+      }
+      return { address: 'tb1qready' }
+    })
+    const unlock = jest.fn(async () => {
+      lifecycle = 'unlocking'
+      await unlockPending
+      lifecycle = 'unlocked'
+    })
+    const account = makeAccount({ node: makeNode({ address }), unlock })
+
+    const unlocking = account.unlock(AUTO_UNLOCK_REQUEST)
+    await Promise.resolve()
+    expect(unlock).toHaveBeenCalledTimes(1)
+
+    const pendingAddress = account.getAddress()
+    expect(address).not.toHaveBeenCalled()
+    releaseUnlock()
+
+    await expect(unlocking).resolves.toEqual({ ok: true })
+    await expect(pendingAddress).resolves.toBe('tb1qready')
+    expect(address).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not hide an automatic activation failure behind an address marker', async () => {
+    const unlock = jest.fn(() => { throw new Error('indexer unavailable') })
+    const account = makeAccount(
+      {
+        node: makeNode({ address: () => { throw new Error('LockedNode') } }),
+        unlock
+      },
+      { autoUnlockRequest: AUTO_UNLOCK_REQUEST }
+    )
+
+    await expect(account.getAddress()).rejects.toMatchObject({
+      name: 'UnlockError',
+      code: 'UNLOCK_FAILED',
+      message: 'indexer unavailable'
+    })
+    await expect(account.getAddress()).rejects.toMatchObject({
+      name: 'UnlockError',
+      code: 'UNLOCK_FAILED',
+      message: 'indexer unavailable'
+    })
+    expect(unlock).toHaveBeenCalledTimes(2)
   })
 
   it('returns a non-throwing locked state for pre-unlock UI loaders', async () => {
@@ -420,7 +757,7 @@ describe('invoices', () => {
   it('decodeInvoice forwards to node.decodeLnInvoice', async () => {
     const node = makeNode()
     const account = makeAccount({ node })
-    await expect(account.decodeInvoice('lnbc1')).resolves.toEqual({ decoded: 'lnbc1' })
+    await expect(account.decodeInvoice('lnbc1')).resolves.toEqual(DECODED_LIGHTNING_INVOICE)
     expect(node.decodeLnInvoice).toHaveBeenCalledWith('lnbc1')
   })
 
@@ -504,7 +841,7 @@ describe('payments', () => {
   it('sendPayment forwards to node.sendPayment', async () => {
     const node = makeNode()
     const account = makeAccount({ node })
-    const req = { invoice: 'lnbc1' }
+    const req = { invoice: 'lnbc1', max_total_routing_fee_msat: 1_250 }
     await expect(account.sendPayment(req)).resolves.toMatchObject({ payment_hash: 'sp' })
     expect(node.sendPayment).toHaveBeenCalledWith(req)
   })
@@ -601,7 +938,8 @@ describe('RGB invoices / transfers / media', () => {
   it('decodeRgbInvoice forwards to node.decodeRgbInvoice', async () => {
     const node = makeNode()
     const account = makeAccount({ node })
-    await expect(account.decodeRgbInvoice('rgb:abc')).resolves.toEqual({ decodedRgb: 'rgb:abc' })
+    await expect(account.decodeRgbInvoice('rgb:abc')).resolves.toEqual(DECODED_RGB_INVOICE)
+    expect(node.decodeRgbInvoice).toHaveBeenCalledWith('rgb:abc')
   })
 
   it('sendRgbAsset forwards to node.sendRgb', async () => {
@@ -610,6 +948,82 @@ describe('RGB invoices / transfers / media', () => {
     const req = { recipient_id: 'rgb:abc' }
     await expect(account.sendRgbAsset(req)).resolves.toMatchObject({ txid: 'rgbtx' })
     expect(node.sendRgb).toHaveBeenCalledWith(req)
+  })
+
+  it('importRgbTransferConsignment forwards to node.importRgbTransferConsignment', async () => {
+    const node = makeNode()
+    const account = makeAccount({ node })
+    const req = {
+      consignment_base64: 'Y29uc2lnbm1lbnQ=',
+      offchain_txid: '11'.repeat(32),
+      expected_asset_id: 'rgb:asset'
+    }
+
+    await expect(account.importRgbTransferConsignment(req)).resolves.toEqual({
+      asset_id: 'rgb:asset',
+      already_imported: false,
+      metadata: { name: 'Asset' }
+    })
+    expect(node.importRgbTransferConsignment).toHaveBeenCalledWith(req)
+  })
+
+  it('fails closed when the native binding lacks importRgbTransferConsignment()', async () => {
+    const node = makeNode({ importRgbTransferConsignment: undefined })
+    const account = makeAccount({ node })
+
+    await expect(account.importRgbTransferConsignment({
+      consignment_base64: 'Y29uc2lnbm1lbnQ=',
+      offchain_txid: '11'.repeat(32)
+    })).rejects.toThrow('does not expose importRgbTransferConsignment()')
+  })
+
+  it('importRgbContract forwards to node.importRgbContract', async () => {
+    const node = makeNode()
+    const account = makeAccount({ node })
+    const req = {
+      contract_base64: 'Y29udHJhY3Q=',
+      expected_asset_id: 'rgb:approved'
+    }
+
+    await expect(account.importRgbContract(req)).resolves.toEqual({
+      asset_id: 'rgb:approved',
+      already_imported: false,
+      metadata: { name: 'Approved Asset' }
+    })
+    expect(node.importRgbContract).toHaveBeenCalledWith(req)
+  })
+
+  it('fails closed when the native binding lacks importRgbContract()', async () => {
+    const node = makeNode({ importRgbContract: undefined })
+    const account = makeAccount({ node })
+
+    await expect(account.importRgbContract({
+      contract_base64: 'Y29udHJhY3Q=',
+      expected_asset_id: 'rgb:approved'
+    })).rejects.toThrow('does not expose importRgbContract()')
+  })
+
+  it('prepares and commits an exact RGB transaction plan', async () => {
+    const node = makeNode()
+    const account = makeAccount({ node })
+    const sendRequest = { recipient_groups: [] }
+    const plan = await account.prepareRgbSend(sendRequest)
+
+    expect(plan.fee_sat).toBe('100')
+    expect(node.prepareRgbSend).toHaveBeenCalledWith(sendRequest)
+    await expect(account.commitPreparedRgbSend({
+      plan_id: plan.plan_id
+    })).resolves.toMatchObject({
+      txid: plan.plan_id,
+      batch_transfer_idx: 7
+    })
+    await expect(account.cancelRgbSendPlan({
+      plan_id: plan.plan_id
+    })).resolves.toEqual({ cancelled: true })
+    await expect(account.listPendingRgbSendPlans()).resolves.toEqual([{
+      plan_id: plan.plan_id,
+      batch_transfer_idx: 7
+    }])
   })
 
   it('getAssetMedia forwards the digest', async () => {
@@ -627,6 +1041,81 @@ describe('RGB invoices / transfers / media', () => {
 })
 
 describe('BTC ops', () => {
+  it('prepares, commits, and cancels exact BTC transaction plans', async () => {
+    const node = makeNode()
+    const account = makeAccount({ node })
+    const sendRequest = {
+      amount: 1_000,
+      address: 'bcrt1ptest',
+      fee_rate: 2,
+      skip_sync: false
+    }
+    const plan = await account.prepareBtcSend(sendRequest)
+
+    expect(plan.fee_sat).toBe('100')
+    expect(node.prepareBtcSend).toHaveBeenCalledWith(sendRequest)
+    await expect(account.commitPreparedBtcSend({
+      plan_id: plan.plan_id
+    })).resolves.toEqual({ txid: plan.plan_id })
+    await expect(account.cancelBtcSendPlan({ plan_id: plan.plan_id }))
+      .resolves.toEqual({ cancelled: true })
+    await expect(account.listPendingVanillaTransactions())
+      .resolves.toEqual([{
+        txid: 'cd'.repeat(32),
+        operation_type: 'SendBtc'
+      }])
+    await expect(account.listAddressReceipts('bcrt1ptest'))
+      .resolves.toEqual([{
+        txid: 'ef'.repeat(32),
+        amount_sat: '125000',
+        confirmations: 2,
+        block_height: 200
+      }])
+    expect(node.listAddressReceipts).toHaveBeenCalledWith('bcrt1ptest')
+  })
+
+  it('prepares, commits, and cancels an explicit RGB wallet UTXO setup', async () => {
+    const node = makeNode()
+    const account = makeAccount({ node })
+    const request = {
+      up_to: true,
+      num: 5,
+      size: 2_000,
+      fee_rate: 2,
+      skip_sync: false
+    }
+
+    const plan = await account.prepareCreateUtxos(request)
+
+    expect(plan).toEqual({
+      plan_id: 'ef'.repeat(32),
+      fee_sat: '300',
+      total_input_sat: '10300',
+      total_output_sat: '10000',
+      size_vbytes: '180',
+      target_count: 5,
+      output_size_sat: 2_000
+    })
+    expect(node.prepareCreateUtxos).toHaveBeenCalledWith(request)
+    await expect(account.commitPreparedCreateUtxos({ plan_id: plan.plan_id }))
+      .resolves.toEqual({ txid: plan.plan_id })
+    await expect(account.cancelCreateUtxosPlan({ plan_id: plan.plan_id }))
+      .resolves.toEqual({ cancelled: true })
+  })
+
+  it.each([
+    ['prepareCreateUtxos', { up_to: true, fee_rate: 2, skip_sync: false }],
+    ['commitPreparedCreateUtxos', { plan_id: 'ef'.repeat(32) }],
+    ['cancelCreateUtxosPlan', { plan_id: 'ef'.repeat(32) }]
+  ])('fails closed when the native binding lacks %s()', async (method, request) => {
+    const node = makeNode({ [method]: undefined })
+    const account = makeAccount({ node })
+
+    await expect(account[method](request)).rejects.toThrow(
+      `does not expose ${method}()`
+    )
+  })
+
   it('getBalance parses vanilla.spendable to a bigint', async () => {
     const account = makeAccount({
       node: makeNode({ btcBalance: () => ({ vanilla: { spendable: 4242, settled: 100 } }) })
@@ -753,8 +1242,20 @@ describe('BTC ops', () => {
   })
 
   it('rotateAddress accepts the native string response form', async () => {
-    const account = makeAccount({ node: makeNode({ rotateAddress: () => 'tb1qstringrotated' }) })
+    const account = makeAccount({
+      node: makeNode({
+        address: () => ({ address: 'tb1qstringrotated' }),
+        rotateAddress: () => 'tb1qstringrotated'
+      })
+    })
     await expect(account.rotateAddress()).resolves.toBe('tb1qstringrotated')
+  })
+
+  it('rotateAddress rejects a native rotation that was not persisted as current', async () => {
+    const account = makeAccount({ node: makeNode() })
+    await expect(account.rotateAddress()).rejects.toThrow(
+      'did not persist the rotated address'
+    )
   })
 
   it('getTransactions forwards to node.listTransactions with coerced skipSync', async () => {
@@ -774,14 +1275,14 @@ describe('BTC ops', () => {
   })
 
   it('listUnspents forwards to node.listUnspents', async () => {
-    const listUnspents = jest.fn(() => ({ unspents: [] }))
+    const listUnspents = jest.fn(() => [])
     const account = makeAccount({ node: makeNode({ listUnspents }) })
-    await expect(account.listUnspents(false)).resolves.toEqual({ unspents: [] })
+    await expect(account.listUnspents(false)).resolves.toEqual([])
     expect(listUnspents).toHaveBeenCalledWith(false)
   })
 
   it('listUnspents normalizes skipSync to boolean', async () => {
-    const listUnspents = jest.fn(() => ({ unspents: [] }))
+    const listUnspents = jest.fn(() => [])
     const account = makeAccount({ node: makeNode({ listUnspents }) })
     await account.listUnspents(1)
     const arg = listUnspents.mock.calls[0][0]
@@ -1032,11 +1533,12 @@ describe('createLsp', () => {
   })
 
   it('auto-discovers the peer from lspBaseUrl via GET /get_info', async () => {
-    // No-arg form: pubkey from /get_info, host from the base URL hostname,
-    // port from the peerPort default (9735). Real LSP /get_info returns the
-    // node pubkey (hex 33-byte compressed key); stub getInfo so no network.
     const getInfoSpy = jest.spyOn(LspClient.prototype, 'getInfo')
-      .mockResolvedValue({ pubkey: 'ab'.repeat(33), num_channels: 4 })
+      .mockResolvedValue(lspInfo({
+        pubkey: '02' + 'ab'.repeat(32),
+        host: 'peer.lsp.example',
+        port: 19735
+      }))
     try {
       const account = makeAccount({
         _config: { lspBaseUrl: 'https://lsp.example:8443/api', lspBearerToken: 'tok' }
@@ -1044,12 +1546,11 @@ describe('createLsp', () => {
       const lsp = await account.createLsp()
       expect(lsp).toBeInstanceOf(UtexoLsp)
       expect(lsp.account).toBe(account)
-      // peer must be assembled from /get_info + base URL hostname + default port.
       expect(lsp.peer).toEqual({
         baseUrl: 'https://lsp.example:8443/api',
-        peerPubkey: 'ab'.repeat(33),
-        peerHost: 'lsp.example',
-        peerPort: 9735,
+        peerPubkey: '02' + 'ab'.repeat(32),
+        peerHost: 'peer.lsp.example',
+        peerPort: 19735,
         bearerToken: 'tok'
       })
       expect(getInfoSpy).toHaveBeenCalledTimes(1)
@@ -1060,7 +1561,7 @@ describe('createLsp', () => {
 
   it('honours an explicit peerPort override in the no-arg form', async () => {
     const getInfoSpy = jest.spyOn(LspClient.prototype, 'getInfo')
-      .mockResolvedValue({ pubkey: 'cd'.repeat(33) })
+      .mockResolvedValue(lspInfo({ pubkey: '03' + 'cd'.repeat(32) }))
     try {
       const account = makeAccount({ _config: { lspBaseUrl: 'https://lsp.example' } })
       const lsp = await account.createLsp(undefined, 9999)
@@ -1075,7 +1576,7 @@ describe('createLsp', () => {
 
   it('throws when /get_info returns no pubkey', async () => {
     const getInfoSpy = jest.spyOn(LspClient.prototype, 'getInfo')
-      .mockResolvedValue({ num_channels: 0 })
+      .mockResolvedValue(lspInfo({ pubkey: undefined }))
     try {
       const account = makeAccount({ _config: { lspBaseUrl: 'https://lsp.example' } })
       await expect(account.createLsp()).rejects.toThrow(/returned no pubkey/)

@@ -110,15 +110,14 @@ const manager = new WalletManagerRgbLightning(seedPhrase, {
 const account = await manager.getAccount(0) // RGB Lightning is single-account
 
 await account.unlock({
-  bitcoind_rpc_username: 'user',
-  bitcoind_rpc_password: 'pass',
-  bitcoind_rpc_host: '127.0.0.1',
-  bitcoind_rpc_port: 18443,
   indexer_url: 'tcp://localhost:50001',
   proxy_endpoint: 'rpc://localhost:3000/json-rpc',
   announce_addresses: [],
   announce_alias: 'my-node'
 })
+
+// Configure exactly one chain backend: either `indexer_url`, as above, or all
+// four `bitcoind_rpc_*` fields. The native node rejects requests with both.
 
 const info = await account.getNodeInfo()
 console.log(info.pubkey)
@@ -159,6 +158,8 @@ and a regtest stack via Docker Compose — lives in
 | `virtualPeerPubkeys` | — | Trust list of peer node_ids allowed to open `trusted_no_broadcast` virtual channels (the LSP's node_id for APay). |
 | `permissiveSignerPolicy` | `true` | Loosen the VLS policy filter for in-process single-user use. |
 | `nodeSeedDerivation` | `auto` | New nodes use WDK's normalized BIP-39 seed directly; existing beta nodes retry the legacy identity only on an exact persisted-identity mismatch. Use `wdk-seed-v2` or `legacy-v1` to disable auto-detection. |
+| `autoUnlockRequest` | — | Optional typed node request for integrations that load `getAddress()` before exposing account extensions, including WDK React Native Core. Concurrent activation is coalesced and only the real native address is returned. Omit it for explicit/manual unlock. |
+| `autoRecoverStaleVssFence` | `false` | Optional single-retry recovery for RLN's stale VSS `__rln_instance__` fence during unlock. Enable only in hosts that can guarantee no other live node is using the same VSS store. |
 | `vssUrl` / `vssAllowHttp` / `vssAllowEmptyRestore` | — | VSS cloud backup; see [below](#vss-cloud-backup). |
 | `lspBaseUrl` / `lspBearerToken` | — | LSP wiring for APay and the LSP client; see [below](#lsp-integration). |
 
@@ -171,22 +172,49 @@ are async and forward to the active binding.
 | Group | Methods |
 |-------|---------|
 | Lifecycle | `unlock(request)`, `getBootstrap()`, `shutdown()`, `dispose()` |
-| Node info | `getNodeInfo()`, `getNetworkInfo()`, `sync()`, `getAddress()`, `getAddressState()`, `rotateAddress()` |
+| Node info | `getNodeInfo()`, `getNetworkInfo()`, `refreshWalletSnapshot(options?)`, `sync()` (legacy), `getAddress()`, `getAddressState()`, `rotateAddress()` |
 | Peers | `connectPeer(pubkey@host:port)`, `disconnectPeer(request)`, `listPeers()` |
 | Channels | `openChannel(request)`, `closeChannel(request)`, `listChannels()`, `getChannelId(tempIdHex)` |
 | Invoices | `createInvoice(request)`, `createLightningInvoice(request)`, `decodeInvoice(invoice)`, `getInvoiceStatus(invoice)` |
 | HODL invoices | `createHodlInvoice({ paymentHash, ... })`, `cancelHodlInvoice(request)`, `claimHodlInvoice(request)` |
 | Payments | `sendPayment(request)`, `keysend(request)`, `listPayments()`, `getPayment(hash, type)` |
 | RGB assets | `listAssets(filter?)`, `getAssetBalance(id)`, `getAssetMetadata(id)`, `listTransfers(id)`, `listTransfersByTxid(txid)`, `refreshTransfers(req)`, `failTransfers(req)` |
-| RGB invoices/transfers | `createRgbInvoice(request)`, `decodeRgbInvoice(invoice)`, `sendRgbAsset(request)`, `getAssetMedia(digest)`, `postAssetMedia(request)` |
+| RGB invoices/transfers | `createRgbInvoice(request)`, `decodeRgbInvoice(invoice)`, `importRgbTransferConsignment(request)`, `importRgbContract(request)`, `sendRgbAsset(request)`, `getAssetMedia(digest)`, `postAssetMedia(request)` |
 | RGB issuance (forwarded) | `issueAssetNia(request)`, `issueAssetUda(request)`, `issueAssetCfa(request)`, `issueAssetIfa(request)`, `inflate(request)` — forward to the binding; `@utexo/wdk-wallet-rgb` is the supported path (see note) |
-| BTC | `getBalance(skipSync?)`, `getBalanceDetails(skipSync?)`, `sendTransaction({ to, value, ... })`, `sendBtc(nativeRequest)`, `getTransactions(skipSync?)`, `getTransactionsByTxid(txid)`, `listUnspents(skipSync?)`, `createUtxos(request)`, `estimateFee(blocks)` |
+| BTC | `getBalance(skipSync?)`, `getBalanceDetails(skipSync?)`, `sendTransaction({ to, value, ... })`, `sendBtc(nativeRequest)`, `prepareBtcSend(request)`, `commitPreparedBtcSend(request)`, `cancelBtcSendPlan(request)`, `getTransactions(skipSync?)`, `getTransactionsByTxid(txid)`, `listUnspents(skipSync?)`, `createUtxos(request)`, `prepareCreateUtxos(request)`, `commitPreparedCreateUtxos(request)`, `cancelCreateUtxosPlan(request)`, `estimateFee(blocks)` |
 | WDK-standard | `index`, `path`, `keyPair`, `sign(message)`, `verify(message, signature)`, `transfer(options)`, `quoteTransfer(options)`, `quoteSendTransaction(tx)`, `getTransactionReceipt(hash)`, `toReadOnlyAccount()` |
 | Diagnostics | `sendOnionMessage(request)`, `checkIndexerUrl(url)`, `checkProxyEndpoint(endpoint)` |
 | VSS | `vssStatus()`, `vssBackup()`, `clearVssFence(password)` |
-| APay / LSP | `apayNew(hostNodeId)`, `bootstrapLsp({ peerPubkeyAndAddr, hostNodeId? })`, `getLspConfig()`, `createLsp(peer?)` |
+| APay / LSP | `apayNewWithAddress(hostNodeId, username, domain)`, `apayNew(hostNodeId)` (legacy), `bootstrapLsp({ peerPubkeyAndAddr, hostNodeId? })`, `getLspConfig()`, `createLsp(peer?)` |
 
 Notes:
+
+- **`importRgbContract()` registers trusted contract metadata only.** Call it
+  with a network-scoped, independently validated binary contract encoded as
+  base64 and the exact expected asset id. It creates no allocation and leaves
+  the asset balance at zero. Repeating the same import is idempotent; a payload
+  whose derived asset id differs from `expected_asset_id` fails closed.
+- **`importRgbTransferConsignment()` is not a substitute for receiving.** It
+  persists metadata from a transfer the native receive path has already
+  accepted and requires the exact off-chain transaction id. Normal BTC/RGB
+  settlement must still use the protocol receive flow.
+
+- **`refreshWalletSnapshot()` is the production balance/history refresh.** It
+  serializes native refreshes, coalesces identical requests, FullSyncs both
+  Vanilla and Colored keychains in `routine` mode, and FullScans both only in
+  explicit `recovery` mode. It validates the complete version-1 response,
+  preserves all monetary values as decimal strings, and retries one capture
+  if the chain tip changes between its before/after observations. The legacy
+  `sync()` remains for compatibility but only performs RLN's old Colored
+  FastSync and must not drive portfolio state.
+- **Lightning claimable value is not routing capacity.** The snapshot keeps
+  aggregate/per-channel claimable satoshis separate from inbound and outbound
+  capacity. Consumers must not relabel either capacity as wallet-owned value.
+- **Snapshot refresh includes RGB transport reconciliation.** After both
+  Bitcoin keychains synchronize, `refreshWalletSnapshot()` advances pending
+  RGB consignments with `refreshTransfers({ skip_sync: true })` before
+  capturing balances and activity. A proxy or consignment refresh failure
+  fails the snapshot closed instead of returning stale asset state.
 
 - **`createInvoice` / `createLightningInvoice`** accept either RLN's native
   snake_case request or a camelCase convenience shape
@@ -196,7 +224,10 @@ Notes:
   `options.recipient` (BOLT11 invoice, LN pubkey, BTC address, or RGB
   invoice) and dispatches to the right primitive. `options.token` is an RGB
   `asset_id` when present. Amounts are msats for LN flows and sats for
-  on-chain flows.
+  on-chain flows. An on-chain RGB invoice whose recipient type is `Witness`
+  requires `options.witnessData.amountSats`; that value funds the Bitcoin
+  witness output and is not a fee. The router rejects witness data on blinded
+  recipients instead of silently ignoring it.
 - **`getBalance()` returns `bigint` satoshis**, matching WDK's account
   contract. `getTokenBalance(assetId)` returns the spendable RGB amount as a
   `bigint` and falls back to the settled amount when needed.
@@ -204,7 +235,9 @@ Notes:
   it rejects with `AccountLockedError`; UI loaders can call
   `getAddressState()` for `{ status: 'locked', address: null }`. The WDK
   bindings initialize RLN with address reuse enabled so reads stay stable;
-  `rotateAddress()` is the explicit mutating operation for advancing it.
+  `rotateAddress()` is the explicit mutating operation for advancing it. A full
+  account configured with `autoUnlockRequest` first coalesces native activation
+  and then retries the real address; the read-only account contract is unchanged.
 - **`sendTransaction()` uses WDK's `{ to, value, feeRate?,
   confirmationTarget? }` input and `{ hash, fee }` result.** `sendBtc()` is
   the explicit low-level escape hatch for RLN's native request format.
@@ -341,10 +374,18 @@ cross-host callbacks require the explicit `allowCrossHostCallback: true` opt-in.
 
 Set `vssUrl` at construction to mirror LDK channel state and RGB wallet data
 to a remote VSS key-value store in near-real-time. Payloads are client-side
-encrypted (XChaCha20-Poly1305, keyed via HKDF of a signing key derived from
-the BIP-39 mnemonic at BIP-32 path `m/535'/1'`); the server sees only
-ciphertext, and recovery requires the original seed. Plain `http://` is
-rejected for non-loopback hosts unless `vssAllowHttp: true`.
+encrypted by RLN before upload; the VSS server sees only ciphertext. In
+internal-mnemonic mode RLN derives the VSS identity from the BIP-39 wallet
+secret; in this package's external-signer mode RLN reconstructs the same VSS
+identity from the persisted key-source identity written by the signer
+bootstrap. Recovery still requires recreating the same signer/node identity
+from the original seed. Plain `http://` is rejected for non-loopback hosts
+unless `vssAllowHttp: true`.
+
+VSS currently replicates RLN's LDK and wallet key-value state, but it does not
+replicate the external VLS signer's redb database stored below `dataDir`.
+Consequently, process restarts on the same device are supported, while
+cross-device recovery with open channels is not yet a complete recovery path.
 
 - `account.vssStatus()` — local view: whether VSS is configured, the URL +
   allow-http flag, and the snapshot version from the most recent
@@ -355,6 +396,10 @@ rejected for non-loopback hosts unless `vssAllowHttp: true`.
   ownership fence after a previous node died holding it (restarts otherwise
   fail with `Rln(VssFenceHeld)`). Only call this when certain the previous
   owner is gone — pointing two live nodes at one VSS store corrupts state.
+- `autoRecoverStaleVssFence: true` — host-level opt-in that applies the same
+  clear-fence operation once during unlock, and only for the exact stale-owner
+  fence error. Keep it disabled for production until ownership/liveness policy
+  is implemented around the VSS service.
 
 VSS operations on a wallet constructed without `vssUrl` throw
 `VssNotConfiguredError`.
@@ -367,23 +412,30 @@ the wallet's behalf. Against a production LSP this requires
 `enableVirtualChannelsV0: true` and the LSP's node_id in
 `virtualPeerPubkeys`.
 
-- `account.apayNew(hostNodeId)` — register with the LSP as an APay recipient
-  (`hostNodeId` is the LSP node_id, hex). Requires `lspBaseUrl`
-  (and `lspBearerToken` if the LSP enforces auth).
+- `account.apayNewWithAddress(hostNodeId, username, domain)` — register one APay
+  hash batch carrying the wallet node's signed Lightning Address attestation.
+  `lsp.enableLightningAddress()` resolves the LSP-provisioned address first and
+  uses this method by default.
+- `account.apayNew(hostNodeId)` — legacy unattested registration. It remains
+  available for compatibility, but `enableLightningAddress()` uses it only
+  when explicitly called with `{ requireAddressAttestation: false }`.
 - `account.bootstrapLsp({ peerPubkeyAndAddr, hostNodeId? })` — connect to the
   LSP peer, wait until it appears in `listPeers`, then (if `hostNodeId` is
   given) call `apayNew`. Refuses to register before the peer is visible to
   avoid RLN's host-response timeout (throws `ApayError` with code
   `APAY_PEER_NOT_VISIBLE`).
 
+Do not call `apayNew` immediately before `enableLightningAddress`. The native
+batch size can fill the LSP hash-pool cap in one request, so a second registration
+may be rejected as `invalid_hash_batch`.
+
 ## Security model
 
 - **Seed never leaves the host.** The mnemonic is owned by the WDK secret
-  manager. The binding derives a 32-byte BIP-32 entropy, passes it once to
-  `NativeExternalSigner.create`, and RLN persists only public identifying
-  material (xpubs, node id, master fingerprint). Re-deriving from the same
-  mnemonic reproduces the same entropy, matches the on-disk key-source, and
-  keeps the LDK node identity stable across restarts.
+  manager. The binding derives 32-byte node entropy and passes it to
+  `NativeExternalSigner.createWithStorage`. The signer persists derived VLS
+  identity and channel commitment state below the account's app-private
+  `dataDir`; reopening still requires the original mnemonic.
 - **All channel-state crypto runs in-process** through
   [`vls-protocol-signer`][vls]. The signer's lifecycle is tied to the
   binding and is destroyed on `manager.dispose()`. Retained seed copies use

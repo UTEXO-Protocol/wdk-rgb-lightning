@@ -6,9 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 while pre-`1.0`.
 
+## [0.1.0-beta.19] - 2026-07-29
+
+### Fixed
+- Construct both React Native and Node external signers with disk-backed VLS
+  storage below the account's persistent `dataDir`. Per-commitment secrets and
+  points now survive process restarts, so restored channels remain signable.
+- Isolate the automatic legacy seed fallback in its own signer store to avoid
+  opening one VLS database with two wallet identities.
+
+### Changed
+- Raised native peer floors to `@utexo/rgb-lightning-node-bare
+  >=0.1.0-beta.19 <0.2.0` and `@utexo/rgb-lightning-node-nodejs
+  >=0.1.0-beta.15 <0.2.0`, the first releases exposing persistent signer
+  construction.
+- Documented that RLN VSS currently replicates LDK state but not the external
+  signer's redb database. Local restart recovery is supported; cross-device
+  recovery of open channels remains incomplete until signer-state backup is
+  implemented.
+
 ## [Unreleased]
 
 ### Added
+- Address-attested APay across the Bare and Node bindings, account surface, and
+  composed LSP flow. `enableLightningAddress()` now resolves the
+  LSP-provisioned address before submitting exactly one signed hash batch and
+  fails closed when the generated native method is unavailable. Legacy
+  unattested registration requires explicit `requireAddressAttestation: false`.
+- Validated standalone RGB contract and transfer-consignment import boundaries.
+  Requests are exact and bounded, transaction IDs are canonicalized, native
+  responses are schema-checked, and an import fails closed if the returned
+  asset differs from `expected_asset_id`.
+- Stable native Lightning `failure_code` fields on immediate send results and
+  persisted payment records, allowing callers to distinguish route, expiry,
+  duplicate-payment, recipient, retry, and restart-abandonment failures.
+- Exact `DecodedRgbInvoice` and tagged `DecodedRgbAssignment` typing across
+  the WDK account boundary.
+- Exact `DecodedLightningInvoice` typing across the WDK account boundary,
+  including `min_final_cltv_expiry_delta`.
+- Strict `listAddressReceipts(address)` validation and account exposure for
+  authoritative BTC receive settlement, partial-payment, confirmation, and
+  reorg reconciliation.
+- Exact BTC and RGB on-chain send-plan APIs. Accounts can prepare the native
+  unsigned transaction without exposing PSBT material to JavaScript, validate
+  its transaction id and decimal-safe fee totals, idempotently commit that
+  exact native plan, cancel abandoned BTC or RGB plans, and inspect bounded
+  pending plans for crash recovery.
+- Explicit, reviewable RGB wallet UTXO setup with `prepareCreateUtxos()`,
+  `commitPreparedCreateUtxos()`, and `cancelCreateUtxosPlan()`. Requests and
+  native responses are strictly validated, monetary values remain decimal
+  strings, and no PSBT material crosses the WDK boundary.
+- Strict response validation for prepared plans, committed transactions, BTC
+  cancellation acknowledgements, and pending-operation records. Malformed or
+  lossy native binding responses fail closed at the WDK boundary.
 - UMA address-format compatibility across Lightning Address payment flows.
   `$recipient@example.com` is normalized to `recipient@example.com` before
   LNURL discovery. New root exports include `isUmaAddress`,
@@ -16,9 +66,34 @@ while pre-`1.0`.
   `parseLightningAddress` now also returns the canonical address, domain, and
   whether the input used UMA form.
 
+### Changed
+- Raised native peer floors to `@utexo/rgb-lightning-node-bare
+  >=0.1.0-beta.20 <0.2.0` and `@utexo/rgb-lightning-node-nodejs
+  >=0.1.0-beta.16 <0.2.0`, the first published wrappers exposing
+  address-attested APay through their generated native APIs. The Node package
+  smoke now consumes the minimum registry peer and verifies that capability.
+- Raised native peer floors to `@utexo/rgb-lightning-node-bare
+  >=0.1.0-beta.18 <0.2.0` and `@utexo/rgb-lightning-node-nodejs
+  >=0.1.0-beta.14 <0.2.0`. These releases preserve duplicate-channel
+  protection while allowing a trusted virtual channel to be opened again
+  after the previous native session reaches its terminal abandoned state.
+- Raised native peer floors to `@utexo/rgb-lightning-node-bare
+  >=0.1.0-beta.17 <0.2.0` and `@utexo/rgb-lightning-node-nodejs
+  >=0.1.0-beta.13 <0.2.0`, the first releases with stable RGB assignment
+  decoding.
+- Raised native peer floors to `@utexo/rgb-lightning-node-bare
+  >=0.1.0-beta.16 <0.2.0` and `@utexo/rgb-lightning-node-nodejs
+  >=0.1.0-beta.12 <0.2.0`, the first releases that preserve Lightning CLTV
+  metadata through the C-FFI decode response.
+
 ## [0.1.0-beta.15] — 2026-07-23
 
 ### Added
+- **Versioned wallet refresh contract:** `account.refreshWalletSnapshot()`
+  serializes/coalesces refreshes, explicitly FullSyncs or recovery FullScans
+  both native keychains, validates bounded BigInt-safe snapshot DTOs, retries
+  one moving-tip capture, and reports partial sync, native, contract, and
+  coherence failures through `WalletSyncError` / `WalletSnapshotError`.
 - **First-class read-only account:** exported
   `WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly`, with
   all seven mandatory WDK reads plus node, channel, peer, invoice, payment,
@@ -39,6 +114,10 @@ while pre-`1.0`.
   identity mismatch, preserving existing node identities.
 
 ### Fixed
+- Wallet snapshot validation now canonicalizes only recognized legacy native
+  network casing (for example, `Regtest` to `regtest`) before enforcing the
+  strict v1 contract. This keeps source-PR installs compatible with published
+  beta.14 native prebuilds while unknown network names still fail closed.
 - WDK conformance for `index`, `path`, `keyPair`, `sign()`, `getBalance()`,
   `getTokenBalance()`, `sendTransaction()`, quotes, and confirmed receipt
   semantics. Balance failures are no longer silently converted to zero unless

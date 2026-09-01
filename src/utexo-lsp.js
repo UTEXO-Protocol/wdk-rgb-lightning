@@ -111,6 +111,8 @@ export function normalizeReceiveStatus (raw) {
 const DEFAULT_CHANNEL_TIMEOUT_MS = 120_000
 const DEFAULT_SETTLEMENT_TIMEOUT_MS = 60_000
 const DEFAULT_POLL_INTERVAL_MS = 2_000
+const LIGHTNING_ADDRESS_LOOKUP_ATTEMPTS = 8
+const LIGHTNING_ADDRESS_LOOKUP_DELAY_MS = 2_000
 
 // ── UtexoLsp ─────────────────────────────────────────────────────────────────
 
@@ -120,8 +122,8 @@ export class UtexoLsp {
    *
    * @param {object} account - A `WalletAccountRgbLightning` or compatible
    *   exposing connectPeer, sync, listChannels, createLightningInvoice,
-   *   getInvoiceStatus, sendPayment, getNodeInfo, apayNew, listPayments,
-   *   claimHodlInvoice.
+   *   getInvoiceStatus, sendPayment, getNodeInfo, apayNewWithAddress,
+   *   apayNew, listPayments, claimHodlInvoice.
    * @param {object} peer - LSP peer details: `{ baseUrl, peerPubkey, peerHost,
    *   peerPort, bearerToken?, timeoutMs?, allowHttp? }`.
    * @throws {TypeError} - If the account or peer base URL is missing or
@@ -407,29 +409,46 @@ export class UtexoLsp {
   // ── 8. Async / offline receive (APay) ─────────────────────────────────────────
 
   /**
-   * Register the async-payment hash pool with this LSP, then read back
-   * the auto-assigned Lightning Address for this wallet's pubkey. Call
-   * once after first unlock to enable offline receive.
+   * Register the async-payment hash pool with this LSP and return the
+   * auto-assigned Lightning Address for this wallet's pubkey. Call once after
+   * first unlock to enable offline receive.
    *
+   * The LSP provisions the address before registration. The production path
+   * resolves that address first and registers exactly one signed batch through
+   * `apayNewWithAddress`. Calling legacy `apayNew` first can consume the hash
+   * pool capacity and leaves the address ownership unattested.
+   *
+   * @param {object} [opts] - Registration policy.
+   * @param {boolean} [opts.requireAddressAttestation=true] - Require the
+   *   generated native address-attestation method. Set to `false` only for an
+   *   explicit legacy compatibility downgrade.
    * @returns {Promise<{ username:string, domain:string, address:string }>} - Auto-assigned
    *   Lightning Address components and full address.
    * @throws {LspError} - If LSP information or address lookup fails.
    * @throws {Error} - If the wallet is locked, the LSP response is malformed,
    *   or APay registration fails.
    */
-  async enableLightningAddress () {
-    const nodeInfo = await this.account.getNodeInfo()
-    const pubkey = String(nodeInfo?.pubkey ?? '')
-    if (!pubkey) throw new Error('UtexoLsp.enableLightningAddress: wallet not unlocked (no pubkey)')
-
+  async enableLightningAddress ({ requireAddressAttestation = true } = {}) {
+    const addr = await this._ownLightningAddress('UtexoLsp.enableLightningAddress')
     const lspInfo = await this.http.getInfo()
     const lspPubkey = lspInfo?.pubkey
     if (typeof lspPubkey !== 'string' || lspPubkey.length === 0) {
       throw new Error('UtexoLsp.enableLightningAddress: LSP /get_info returned no pubkey')
     }
-    await this.account.apayNew(lspPubkey)
 
-    const addr = await this.http.getLightningAddressByPubkey(pubkey)
+    if (requireAddressAttestation) {
+      if (typeof this.account.apayNewWithAddress !== 'function') {
+        throw new Error(
+          'UtexoLsp.enableLightningAddress: address-attested APay is unavailable; ' +
+          'install compatible native wrappers or explicitly set ' +
+          'requireAddressAttestation to false for legacy registration'
+        )
+      }
+      await this.account.apayNewWithAddress(lspPubkey, addr.username, addr.domain)
+    } else {
+      await this.account.apayNew(lspPubkey)
+    }
+
     return { username: addr.username, domain: addr.domain, address: `${addr.username}@${addr.domain}` }
   }
 
@@ -515,6 +534,37 @@ export class UtexoLsp {
   _raw (obj, camel, snake) {
     if (obj == null) return undefined
     return obj[camel] ?? obj[snake]
+  }
+
+  async _ownLightningAddress (context) {
+    const nodeInfo = await this.account.getNodeInfo()
+    const pubkey = String(nodeInfo?.pubkey ?? '')
+    if (!pubkey) throw new Error(`${context}: wallet not unlocked (no pubkey)`)
+
+    let lastError
+    for (let attempt = 0; attempt < LIGHTNING_ADDRESS_LOOKUP_ATTEMPTS; attempt += 1) {
+      try {
+        const address = await this.http.getLightningAddressByPubkey(pubkey)
+        if (
+          typeof address?.username === 'string' && address.username.length > 0 &&
+          typeof address?.domain === 'string' && address.domain.length > 0
+        ) {
+          return address
+        }
+        lastError = new Error('LSP returned an incomplete Lightning Address')
+      } catch (error) {
+        lastError = error
+      }
+
+      if (attempt + 1 < LIGHTNING_ADDRESS_LOOKUP_ATTEMPTS) {
+        await this._sleep(LIGHTNING_ADDRESS_LOOKUP_DELAY_MS)
+      }
+    }
+
+    throw new Error(
+      `${context}: LSP did not provision a Lightning Address for ${pubkey}. ` +
+      `Last error: ${String(lastError)}`
+    )
   }
 
   _checkAbort (signal) {

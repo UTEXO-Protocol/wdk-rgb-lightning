@@ -12,6 +12,8 @@
 
 import rln from '@utexo/rgb-lightning-node-nodejs'
 import { retainSecret, revealSecret, secretMatches, wipeSecret } from './secret-buffer.js'
+import { signerStoragePath } from './signer-storage-path.js'
+import { validateNativeOperationStatus, waitForNativeOperation } from './native-operation.js'
 
 const {
   SdkNode,
@@ -86,6 +88,8 @@ export class NodeRgbLightningBinding {
     this._sdkInitDone = false
     /** @type {number | null} Snapshot version returned by the most recent vssBackup(). */
     this._lastVssVersion = null
+    /** @type {string | null} Most recent adoptable native unlock operation. */
+    this._unlockOperationId = null
   }
 
   /**
@@ -126,9 +130,10 @@ export class NodeRgbLightningBinding {
       }
       return
     }
-    this._signer = NativeExternalSigner.create(
+    this._signer = NativeExternalSigner.createWithStorage(
       seedHex,
       this._config.network,
+      signerStoragePath(this._config.dataDir),
       this._config.permissiveSignerPolicy ?? true
     )
     wipeSecret(this._seedHex)
@@ -147,7 +152,7 @@ export class NodeRgbLightningBinding {
    * @throws {Error} - If no signer is attached or native initialization or
    *   unlock fails.
    */
-  unlock (unlockRequest) {
+  async unlock (unlockRequest, options = {}) {
     const node = this.ensureNode()
     if (!this._signer) {
       throw new Error('attachExternalSigner(seedHex) must be called before unlock()')
@@ -162,7 +167,9 @@ export class NodeRgbLightningBinding {
       this._sdkInitDone = true
     }
     try {
-      node.unlockWithNativeExternalSigner(this._signer, unlockRequest)
+      const operation = node.startUnlockWithNativeExternalSigner(this._signer, unlockRequest)
+      this._unlockOperationId = operation.operation_id
+      await waitForNativeOperation(node, operation, options.signal)
       wipeSecret(this._fallbackSeedHex)
       this._fallbackSeedHex = undefined
     } catch (error) {
@@ -172,9 +179,10 @@ export class NodeRgbLightningBinding {
       }
 
       const fallbackSeed = this._fallbackSeedHex
-      const fallbackSigner = NativeExternalSigner.create(
+      const fallbackSigner = NativeExternalSigner.createWithStorage(
         revealSecret(fallbackSeed),
         this._config.network,
+        signerStoragePath(this._config.dataDir, 'legacy'),
         this._config.permissiveSignerPolicy ?? true
       )
       try {
@@ -194,8 +202,32 @@ export class NodeRgbLightningBinding {
       wipeSecret(this._seedHex)
       this._seedHex = fallbackSeed
       this._fallbackSeedHex = undefined
-      node.unlockWithNativeExternalSigner(this._signer, unlockRequest)
+      const operation = node.startUnlockWithNativeExternalSigner(this._signer, unlockRequest)
+      this._unlockOperationId = operation.operation_id
+      await waitForNativeOperation(node, operation, options.signal)
     }
+  }
+
+  unlockOperationStatus () {
+    if (!this._unlockOperationId) return null
+    return validateNativeOperationStatus(
+      this.ensureNode().nativeOperationStatus(this._unlockOperationId)
+    )
+  }
+
+  adoptUnlockOperation (operationId) {
+    const status = validateNativeOperationStatus(
+      this.ensureNode().adoptNativeOperation(operationId)
+    )
+    this._unlockOperationId = status.operation_id
+    return status
+  }
+
+  cancelUnlockOperation () {
+    if (!this._unlockOperationId) return null
+    return validateNativeOperationStatus(
+      this.ensureNode().cancelNativeOperation(this._unlockOperationId)
+    )
   }
 
   /**
@@ -241,6 +273,10 @@ export class NodeRgbLightningBinding {
     return r
   }
 
+  vssDeleteAll (password) {
+    return this.ensureNode().vssDeleteAll({ password })
+  }
+
   /**
    * Local-view VSS status. RLN's C-FFI exposes no read-only
    * server-side backup-info query (unlike rgb-lib's `vssBackupInfo`),
@@ -278,17 +314,38 @@ export class NodeRgbLightningBinding {
   }
 
   /**
+   * Register an APay hash batch with a signed Lightning Address attestation.
+   *
+   * @param {string} hostNodeId - LSP node ID.
+   * @param {string} username - LSP-provisioned Lightning Address username.
+   * @param {string} domain - LSP-provisioned Lightning Address domain.
+   * @returns {object} - Native `AsyncOrderNewResponse`.
+   * @throws {Error} - If the installed native wrapper predates this generated
+   *   method or native APay registration fails.
+   */
+  apayNewWithAddress (hostNodeId, username, domain) {
+    const node = this.ensureNode()
+    if (typeof node.apayNewWithAddress !== 'function') {
+      throw new Error(
+        'Address-attested APay requires @utexo/rgb-lightning-node-nodejs ' +
+        'with apayNewWithAddress support'
+      )
+    }
+    return node.apayNewWithAddress(hostNodeId, username, domain)
+  }
+
+  /**
    * Stop the node and destroy the signer. The operation is idempotent.
    *
    * @throws {Error} - If native node shutdown or signer destruction fails.
    */
   shutdown () {
-    let failure
+    const failures = []
     if (this._node) {
       try {
         this._node.shutdown()
       } catch (error) {
-        failure = error
+        failures.push(error)
       } finally {
         this._node = null
       }
@@ -297,7 +354,7 @@ export class NodeRgbLightningBinding {
       try {
         this._signer.destroy()
       } catch (error) {
-        failure ??= error
+        failures.push(error)
       } finally {
         this._signer = null
       }
@@ -307,7 +364,10 @@ export class NodeRgbLightningBinding {
     wipeSecret(this._fallbackSeedHex)
     this._seedHex = undefined
     this._fallbackSeedHex = undefined
-    if (failure) throw failure
+    if (failures.length === 1) throw failures[0]
+    if (failures.length > 1) {
+      throw new AggregateError(failures, 'RGB Lightning shutdown failed')
+    }
   }
 
   /** @returns {string} - Native module health status. */

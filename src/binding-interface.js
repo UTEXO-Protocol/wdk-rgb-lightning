@@ -48,6 +48,17 @@
  * @property {string} [lspBearerToken] - Bearer token sent to the LSP's
  *   `/internal/*` endpoints. Omit when the LSP does not require authorization.
  *
+ * In internal-mnemonic mode, RLN derives VSS identity from the wallet secret.
+ * This package uses an external signer and persists its VLS commitment state
+ * below `dataDir`. Recovery requires both the original seed and that signer
+ * store. RLN's current VSS replication covers LDK state but not the external
+ * signer's redb store, so cross-device recovery of open channels is not yet a
+ * complete backup path.
+ *
+ * Wallet-manager-only policy fields such as `autoUnlockRequest` and
+ * `autoRecoverStaleVssFence` are intentionally not part of this native binding
+ * config. The manager consumes them before constructing the binding.
+ *
  * Concrete WDK bindings always send RLN `reuse_addresses: true`. This keeps
  * inherited read-only `getAddress()` calls pinned to the current address;
  * callers use the full account's explicit `rotateAddress()` command when
@@ -61,10 +72,16 @@
  * @property {(seedHex: string, fallbackSeedHex?: string) => void} attachExternalSigner - Build
  *   the in-process VLS signer from a host-supplied 32-byte seed.
  *   Must be called before `unlock()`.
- * @property {(unlockRequest: object) => void} unlock - Bring the node online.
+ * @property {(unlockRequest: object, options?: {signal?: AbortSignal}) => Promise<void>} unlock - Bring the node online.
  *   The first call initializes and unlocks a fresh data directory. Later calls
  *   treat the expected init `Rln(Conflict)` as already initialized and proceed
  *   with unlock.
+ * @property {() => object|null} unlockOperationStatus - Read the most recent
+ *   native unlock operation without starting another operation.
+ * @property {(operationId: string) => object} adoptUnlockOperation - Adopt an
+ *   existing native unlock operation owned by this node.
+ * @property {() => object|null} cancelUnlockOperation - Request cancellation
+ *   of the most recent native unlock operation.
  * @property {() => object} bootstrap - Return the signer's bootstrap payload
  *   (`node_id`, xpubs, and master fingerprint).
  * @property {(password: string) => void} clearVssFence - Forcibly take over a
@@ -77,6 +94,8 @@
  *   controlled checkpoints (e.g. "save state before app suspend") rather than
  *   relying on the implicit on-write flush. Requires configured VSS and a
  *   successful server flush.
+ * @property {(password: string) => {deleted_keys: number}} vssDeleteAll -
+ *   Permanently delete and verify the authenticated remote VSS store.
  * @property {() => { configured: boolean, url: string|null, allowHttp: boolean, lastBackupVersion: number|null }} vssStatus - Return
  *   local-view VSS status without a server round-trip: whether VSS was
  *   configured at construction, the URL + allow-http flag, and the
@@ -90,6 +109,12 @@
  *   accepts payments addressed to those hashes on the wallet's behalf
  *   while the wallet is offline. Argument is the LSP's node_id (hex).
  *   Returns the native AsyncOrderNewResponse unchanged.
+ * @property {(hostNodeId: string, username: string, domain: string) => object} apayNewWithAddress -
+ *   Register an APay hash batch carrying the wallet node's signed Lightning
+ *   Address attestation. Production Lightning Address registration uses this
+ *   method so the LSP can bind the batch to `username@domain` without trusting
+ *   caller-supplied identity data. Returns the native AsyncOrderNewResponse
+ *   unchanged.
  * @property {() => void} shutdown - Idempotently release the node handle and
  *   destroy the signer.
  */

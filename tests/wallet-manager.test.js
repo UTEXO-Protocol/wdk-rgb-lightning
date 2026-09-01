@@ -14,15 +14,29 @@ const MNEMONIC = 'abandon abandon abandon abandon abandon abandon abandon abando
 const WDK_SEED_HEX = '5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4'
 const NODE_SEED_V2 = WDK_SEED_HEX.slice(0, 64)
 const NODE_SEED_V1 = 'd6560f02547828d8d76fc84ea68e74dcccea5599e735cee1fa5f2742289cda58'
+const AUTO_UNLOCK_REQUEST = {
+  indexer_url: 'tcp://127.0.0.1:50001',
+  proxy_endpoint: 'rpc://127.0.0.1:3000/json-rpc',
+  announce_addresses: [],
+  announce_alias: 'wallet-test'
+}
 
 class FakeBinding {
   static instances = []
 
   constructor (config) {
     this._config = config
+    this._shutdown = false
     this.attachExternalSigner = jest.fn()
-    this.shutdown = jest.fn()
-    this.bootstrap = jest.fn(() => ({ node_id: '02' + '11'.repeat(32) }))
+    this.shutdown = jest.fn(() => {
+      this._shutdown = true
+    })
+    this.bootstrap = jest.fn(() => {
+      if (this._shutdown) {
+        throw new Error('attachExternalSigner(seedHex) must be called before bootstrap()')
+      }
+      return { node_id: '02' + '11'.repeat(32) }
+    })
     this.vssStatus = jest.fn(() => ({ configured: false, url: null, allowHttp: false, lastBackupVersion: null }))
     this.ensureNode = jest.fn(() => ({}))
     FakeBinding.instances.push(this)
@@ -70,6 +84,82 @@ describe('WalletManagerRgbLightning', () => {
     expect(FakeBinding.instances).toHaveLength(1)
   })
 
+  it('validates and isolates the optional automatic activation request', async () => {
+    const manager = new TestManager(MNEMONIC, {
+      network: 'regtest',
+      dataDir: '/wallet',
+      autoUnlockRequest: AUTO_UNLOCK_REQUEST,
+      autoRecoverStaleVssFence: true
+    })
+    const account = await manager.getAccount()
+    const binding = FakeBinding.instances[0]
+
+    expect(account._autoUnlockRequest).toEqual(AUTO_UNLOCK_REQUEST)
+    expect(account._autoRecoverStaleVssFence).toBe(true)
+    expect(account._autoUnlockRequest).not.toBe(AUTO_UNLOCK_REQUEST)
+    expect(Object.isFrozen(account._autoUnlockRequest)).toBe(true)
+    expect(Object.isFrozen(account._autoUnlockRequest.announce_addresses)).toBe(true)
+    expect(binding._config.autoUnlockRequest).toBeUndefined()
+    expect(binding._config.autoRecoverStaleVssFence).toBeUndefined()
+  })
+
+  it('rejects malformed automatic activation requests without exposing values', () => {
+    expect(() => new TestManager(MNEMONIC, {
+      network: 'regtest',
+      dataDir: '/wallet',
+      autoUnlockRequest: {
+        ...AUTO_UNLOCK_REQUEST,
+        bitcoind_rpc_username: 'user',
+        bitcoind_rpc_password: 'password',
+        bitcoind_rpc_host: '127.0.0.1',
+        bitcoind_rpc_port: 18443
+      }
+    })).toThrow('autoUnlockRequest must provide exactly one chain backend')
+  })
+
+  it('accepts a complete bitcoind backend without an indexer', async () => {
+    const bitcoindRequest = {
+      bitcoind_rpc_username: 'user',
+      bitcoind_rpc_password: 'password',
+      bitcoind_rpc_host: '127.0.0.1',
+      bitcoind_rpc_port: 18443,
+      proxy_endpoint: 'rpc://127.0.0.1:3000/json-rpc',
+      announce_addresses: [],
+      announce_alias: 'wallet-test'
+    }
+    const manager = new TestManager(MNEMONIC, {
+      network: 'regtest',
+      dataDir: '/wallet',
+      autoUnlockRequest: bitcoindRequest
+    })
+
+    expect((await manager.getAccount())._autoUnlockRequest).toEqual(bitcoindRequest)
+  })
+
+  it('rejects incomplete and absent chain backends', () => {
+    const commonRequest = {
+      proxy_endpoint: AUTO_UNLOCK_REQUEST.proxy_endpoint,
+      announce_addresses: AUTO_UNLOCK_REQUEST.announce_addresses,
+      announce_alias: AUTO_UNLOCK_REQUEST.announce_alias
+    }
+
+    expect(() => new TestManager(MNEMONIC, {
+      network: 'regtest',
+      dataDir: '/wallet',
+      autoUnlockRequest: commonRequest
+    })).toThrow('autoUnlockRequest must provide exactly one chain backend')
+
+    expect(() => new TestManager(MNEMONIC, {
+      network: 'regtest',
+      dataDir: '/wallet',
+      autoUnlockRequest: {
+        ...commonRequest,
+        bitcoind_rpc_username: 'user',
+        bitcoind_rpc_port: 18443
+      }
+    })).toThrow('autoUnlockRequest.bitcoind_rpc_password must be a non-empty string')
+  })
+
   it('supports explicit v2-only and legacy-only modes', async () => {
     const v2 = new TestManager(MNEMONIC, {
       network: 'regtest',
@@ -110,7 +200,31 @@ describe('WalletManagerRgbLightning', () => {
     const binding = FakeBinding.instances[0]
     expect(account.keyPair.privateKey).toBeNull()
     manager.dispose()
+    expect(binding.bootstrap).toHaveBeenCalledTimes(1)
     expect(binding.shutdown).toHaveBeenCalledTimes(1)
+  })
+
+  it('still destroys the signer when account cleanup fails', async () => {
+    const manager = new TestManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
+    const account = await manager.getAccount()
+    const binding = FakeBinding.instances[0]
+    account.dispose = jest.fn(() => { throw new Error('account cleanup failed') })
+
+    expect(() => manager.dispose()).toThrow('account cleanup failed')
+    expect(binding.shutdown).toHaveBeenCalledTimes(1)
+    expect(manager._binding).toBeNull()
+  })
+
+  it('can dispose after an explicit account shutdown released native identity', async () => {
+    const manager = new TestManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
+    const account = await manager.getAccount()
+    const binding = FakeBinding.instances[0]
+
+    await account.shutdown()
+
+    expect(() => manager.dispose()).not.toThrow()
+    expect(binding.shutdown).toHaveBeenCalledTimes(2)
+    expect(manager._binding).toBeNull()
   })
 
   it('dispose is a no-op before an account has created a binding', () => {

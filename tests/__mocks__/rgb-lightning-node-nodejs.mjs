@@ -19,6 +19,10 @@ const NativeExternalSigner = {
   create: () => ({
     bootstrap: () => ({}),
     destroy: () => {}
+  }),
+  createWithStorage: () => ({
+    bootstrap: () => ({}),
+    destroy: () => {}
   })
 }
 

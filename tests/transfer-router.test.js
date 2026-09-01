@@ -29,6 +29,7 @@ function makeAccount () {
   // transport_endpoints before building the native sendRgb request.
   account.decodeRgbInvoice = jest.fn(async () => ({
     recipient_id: 'recip123',
+    recipient_type: 'Blind',
     asset_id: 'assetFromInvoice',
     transport_endpoints: ['rpc://proxy.example/json-rpc']
   }))
@@ -106,6 +107,66 @@ describe('WalletAccountRgbLightning.transfer', () => {
       }]
     })
     expect(res).toEqual({ hash: 'rgbtxid', fee: 0n })
+  })
+
+  it('requires and forwards explicit Bitcoin output data for a Witness RGB invoice', async () => {
+    const account = makeAccount()
+    account.decodeRgbInvoice = jest.fn(async () => ({
+      recipient_id: 'witness-recipient',
+      recipient_type: 'Witness',
+      asset_id: 'assetFromInvoice',
+      transport_endpoints: ['rpc://proxy.example/json-rpc']
+    }))
+
+    await expect(account.transfer({
+      recipient: RGB_INVOICE,
+      amount: 5,
+      feeRate: 4
+    })).rejects.toThrow('witnessData.amountSats must be a positive safe integer')
+
+    await account.transfer({
+      recipient: RGB_INVOICE,
+      amount: 5,
+      feeRate: 4,
+      witnessData: { amountSats: 1_000, blinding: 7 }
+    })
+
+    expect(account.sendRgbAsset).toHaveBeenCalledWith(expect.objectContaining({
+      recipient_groups: [{
+        asset_id: 'assetFromInvoice',
+        recipients: [{
+          recipient_id: 'witness-recipient',
+          assignment_kind: 'Fungible',
+          assignment_amount: 5,
+          transport_endpoints: ['rpc://proxy.example/json-rpc'],
+          witness_data: { amount_sat: 1_000, blinding: 7 }
+        }]
+      }]
+    }))
+  })
+
+  it('rejects invalid or inapplicable RGB witness output data', async () => {
+    const account = makeAccount()
+    await expect(account.transfer({
+      recipient: RGB_INVOICE,
+      amount: 5,
+      feeRate: 1,
+      witnessData: { amountSats: 1_000 }
+    })).rejects.toThrow('witnessData is only valid for a Witness RGB invoice')
+
+    account.decodeRgbInvoice = jest.fn(async () => ({
+      recipient_id: 'witness-recipient',
+      recipient_type: 'Witness',
+      asset_id: 'assetFromInvoice',
+      transport_endpoints: ['rpc://proxy.example/json-rpc']
+    }))
+    await expect(account.transfer({
+      recipient: RGB_INVOICE,
+      amount: 5,
+      feeRate: 1,
+      witnessData: { amountSats: 1_000, blinding: -1 }
+    })).rejects.toThrow('witnessData.blinding must be a non-negative safe integer')
+    expect(account.sendRgbAsset).not.toHaveBeenCalled()
   })
 
   it('falls back to the invoice-encoded asset_id when no token is supplied', async () => {

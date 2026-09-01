@@ -21,6 +21,221 @@ import WalletManager, { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 
 export type Network = 'mainnet' | 'testnet' | 'regtest' | 'signet'
 
+/** Integer encoded as base-10 text so values never cross JS's safe-number boundary. */
+export type DecimalString = `${bigint}`
+
+export type LspAssetSchema = 'Nia' | 'Uda' | 'Cfa' | 'Ifa'
+
+export interface LspSupportedAsset {
+  asset_id: string
+  schema: LspAssetSchema
+  ticker?: string
+  name: string
+  precision: number
+}
+
+export interface LspInfo {
+  api_version: 1
+  pubkey: string
+  network: Network
+  host?: string
+  port?: number
+  supported_assets: readonly LspSupportedAsset[]
+  min_payment_size_msat: DecimalString
+  max_payment_size_msat: DecimalString
+  min_channel_balance_sat: DecimalString
+  max_channel_balance_sat: DecimalString
+  min_initial_client_balance_msat: DecimalString
+  max_initial_client_balance_msat: DecimalString
+  min_channel_asset_amount: DecimalString
+  max_channel_asset_amount: DecimalString
+  virtual_channel_mode?: string
+  lightning_address_min_sendable_msat: DecimalString
+  lightning_address_max_sendable_msat: DecimalString
+}
+
+export function parseLspInfo(value: unknown): LspInfo
+
+export type WalletSyncMode = 'routine' | 'recovery'
+
+export type WalletSyncKeychainResult =
+  | { status: 'succeeded'; checkpoint: WalletSnapshotNetwork }
+  | { status: 'failed'; error_code: string }
+
+export interface WalletSyncResponse {
+  contract_version: 2
+  mode: WalletSyncMode
+  vanilla: WalletSyncKeychainResult
+  colored: WalletSyncKeychainResult
+}
+
+export interface WalletSnapshotOptions {
+  mode?: WalletSyncMode
+  assetIds?: string[]
+  maxAssets?: number
+  maxChannels?: number
+  maxActivityItems?: number
+  includeActivity?: boolean
+}
+
+export interface WalletSnapshotNetwork {
+  network: Network
+  height: number
+  block_hash: string
+}
+
+export interface WalletSnapshotBalance {
+  settled: DecimalString
+  future: DecimalString
+  spendable: DecimalString
+}
+
+export interface WalletSnapshotBtc {
+  vanilla: WalletSnapshotBalance
+  colored: WalletSnapshotBalance
+}
+
+export interface WalletSnapshotAssetBalance extends WalletSnapshotBalance {
+  offchain_outbound: DecimalString
+  offchain_inbound: DecimalString
+}
+
+export interface WalletSnapshotAsset {
+  asset_id: string
+  ticker: string
+  name: string
+  precision: number
+  balance: WalletSnapshotAssetBalance
+}
+
+export interface WalletSnapshotNode {
+  pubkey: string
+  num_channels: DecimalString
+  num_usable_channels: DecimalString
+  claimable_onchain_sat: DecimalString
+  eventual_close_fees_sat: DecimalString
+  pending_outbound_payments_sat: DecimalString
+  num_peers: DecimalString
+  latest_rgs_snapshot_timestamp: DecimalString | null
+}
+
+export interface WalletSnapshotChannel {
+  channel_id: string
+  peer_pubkey: string
+  status: 'Opening' | 'Opened' | 'Closing'
+  ready: boolean
+  capacity_sat: DecimalString
+  claimable_onchain_sat: DecimalString
+  outbound_capacity_msat: DecimalString
+  inbound_capacity_msat: DecimalString
+  next_outbound_htlc_limit_msat: DecimalString
+  next_outbound_htlc_minimum_msat: DecimalString
+  is_usable: boolean
+  public: boolean
+  funding_txid: string | null
+  peer_alias: string | null
+  short_channel_id: DecimalString | null
+  asset_id: string | null
+  asset_local_amount: DecimalString | null
+  asset_remote_amount: DecimalString | null
+  virtual_open_mode: string | null
+}
+
+export interface WalletSnapshotBlockTime {
+  height: number
+  timestamp: DecimalString
+}
+
+export interface WalletSnapshotTransaction {
+  transaction_type: 'RgbSend' | 'Drain' | 'CreateUtxos' | 'SendBtc' | 'Incoming'
+  purpose:
+    | 'incoming_bitcoin'
+    | 'outgoing_bitcoin'
+    | 'rgb_anchor'
+    | 'wallet_drain'
+    | 'rgb_utxo_maintenance'
+  direction: 'incoming' | 'outgoing' | 'internal'
+  txid: string
+  received: DecimalString
+  sent: DecimalString
+  fee: DecimalString
+  external_value: DecimalString | null
+  confirmation_time: WalletSnapshotBlockTime | null
+}
+
+export interface WalletSnapshotPayment {
+  amt_msat: DecimalString | null
+  asset_amount: DecimalString | null
+  asset_id: string | null
+  carrier_msat: DecimalString | null
+  payment_hash: string
+  payment_type: 'Outbound' | 'InboundAutoClaim' | 'InboundHodl'
+  status: 'Pending' | 'Claimable' | 'Claiming' | 'Succeeded' | 'Cancelled' | 'Failed'
+  created_at: DecimalString
+  updated_at: DecimalString
+  expires_at: DecimalString | null
+  payee_pubkey: string
+  fee_paid_msat: DecimalString | null
+  failure_code: string | null
+}
+
+export interface WalletSnapshotTransferEndpoint {
+  endpoint: string
+  transport_type: string
+  used: boolean
+}
+
+export interface WalletSnapshotTransfer {
+  idx: number
+  created_at: DecimalString
+  updated_at: DecimalString
+  status: string
+  requested_assignment: WalletSnapshotRgbAssignment | null
+  assignments: WalletSnapshotRgbAssignment[]
+  kind: string
+  txid: string | null
+  recipient_id: string | null
+  receive_utxo: string | null
+  change_utxo: string | null
+  expiration: DecimalString | null
+  transport_endpoints: WalletSnapshotTransferEndpoint[]
+}
+
+export interface WalletSnapshotRgbAssignment {
+  kind: 'Fungible' | 'NonFungible' | 'InflationRight' | 'Any'
+  amount?: DecimalString
+}
+
+export interface WalletSnapshotAssetTransfers {
+  asset_id: string
+  transfers: WalletSnapshotTransfer[]
+}
+
+export interface WalletSnapshotResponse {
+  contract_version: 2
+  native_source: 'rgb-lightning-node-v0.10.0-beta.3+utexo-wallet-v2'
+  capture_sequence: DecimalString
+  capture_attempts: 2 | 3
+  stable_capture_count: 2
+  started_at_ms: DecimalString
+  completed_at_ms: DecimalString
+  network_before: WalletSnapshotNetwork
+  network_after: WalletSnapshotNetwork
+  node: WalletSnapshotNode
+  btc: WalletSnapshotBtc
+  assets: WalletSnapshotAsset[]
+  channels: WalletSnapshotChannel[]
+  transactions?: WalletSnapshotTransaction[]
+  payments?: WalletSnapshotPayment[]
+  transfers?: WalletSnapshotAssetTransfers[]
+}
+
+export interface WalletRefreshResult {
+  contractVersion: 1
+  sync: WalletSyncResponse
+  snapshot: WalletSnapshotResponse
+}
+
 export interface Transaction {
   to: string
   value: number | bigint
@@ -57,6 +272,17 @@ export interface TransferOptions {
   /** sat/vB override for on-chain flows. */
   feeRate?: number
   confirmationTarget?: number
+  /**
+   * Bitcoin witness output carried by an on-chain RGB transfer.
+   * Required when the decoded RGB invoice recipient type is `Witness` and
+   * rejected for blinded recipients.
+   */
+  witnessData?: {
+    /** Positive safe integer in satoshis. This is an output value, not a fee. */
+    amountSats: number
+    /** Optional non-negative safe-integer RGB witness blinding value. */
+    blinding?: number
+  }
 }
 
 export interface TransferResult {
@@ -100,6 +326,37 @@ export interface CreateLightningInvoiceRequest {
    * minimum, 42). Passthrough; RLN default applies when omitted.
    */
   minFinalCltvExpiryDelta?: number
+}
+
+/** Native BOLT11 decode result exposed by both supported RLN bindings. */
+export interface DecodedLightningInvoice {
+  amt_msat: number | null
+  expiry_sec: number
+  timestamp: number
+  asset_id: string | null
+  asset_amount: number | null
+  payment_hash: string
+  payment_secret: string
+  payee_pubkey: string | null
+  min_final_cltv_expiry_delta: number
+  network: string
+}
+
+export type DecodedRgbAssignment =
+  | { type: 'Fungible'; value: number }
+  | { type: 'NonFungible' }
+  | { type: 'InflationRight'; value: number }
+  | { type: 'Any' }
+
+export interface DecodedRgbInvoice {
+  recipient_id: string
+  recipient_type: 'Blind' | 'Witness'
+  asset_schema: string | null
+  asset_id: string | null
+  assignment: DecodedRgbAssignment
+  network: string
+  expiration_timestamp: number | null
+  transport_endpoints: string[]
 }
 
 export interface CreateHodlInvoiceParams {
@@ -151,6 +408,55 @@ export interface OpenChannelRequest {
  */
 export type RgbPaymentType = 'Outbound' | 'InboundAutoClaim' | 'InboundHodl'
 
+export type LightningPaymentStatus =
+  | 'Pending'
+  | 'Claimable'
+  | 'Claiming'
+  | 'Succeeded'
+  | 'Cancelled'
+  | 'Failed'
+
+export interface SendPaymentRequest {
+  invoice: string
+  amt_msat?: number
+  asset_id?: string
+  asset_amount?: number
+  /**
+   * Absolute maximum routing fee accepted by LDK for this payment, in millisatoshis.
+   * Callers should always set an explicit policy-derived cap.
+   */
+  max_total_routing_fee_msat?: number
+}
+
+export interface SendPaymentResult {
+  payment_id: string
+  payment_hash: string | null
+  payment_secret: string | null
+  status: LightningPaymentStatus
+  /** Stable machine-readable native failure reason when status is Failed. */
+  failure_code: string | null
+}
+
+export interface LightningPayment {
+  amt_msat: number | null
+  asset_amount: number | null
+  asset_id: string | null
+  carrier_msat: number | null
+  payment_hash: string
+  payment_type: RgbPaymentType
+  status: LightningPaymentStatus
+  created_at: number
+  updated_at: number
+  expires_at: number | null
+  payee_pubkey: string
+  preimage: string | null
+  description_hash: string | null
+  /** Actual routing fee reported by LDK after a successful outbound payment. */
+  fee_paid_msat: number | null
+  /** Stable machine-readable native failure reason when status is Failed. */
+  failure_code: string | null
+}
+
 /** RGB assignment discriminant accepted by RLN's `parse_assignment_kind`. */
 export type RgbAssignmentKind = 'Fungible' | 'NonFungible' | 'InflationRight' | 'ReplaceRight' | 'Any'
 
@@ -171,6 +477,112 @@ export interface SendRgbAssetRequest {
   fee_rate: number
   min_confirmations: number
   recipient_groups: Array<{ asset_id: string; recipients: RgbSendRecipient[] }>
+}
+
+export interface ImportRgbTransferConsignmentRequest {
+  /** Raw binary transfer consignment encoded with standard base64. */
+  consignment_base64: string
+  /** Exact off-chain RGB transaction id associated with the accepted transfer. */
+  offchain_txid: string
+  /** Optional fail-closed assertion for the consignment's derived asset id. */
+  expected_asset_id?: string
+}
+
+export interface ImportRgbTransferConsignmentResult {
+  asset_id: string
+  already_imported: boolean
+  metadata: object
+}
+
+export interface ImportRgbContractRequest {
+  /** Trusted, network-scoped binary RGB contract encoded with standard base64. */
+  contract_base64: string
+  /** Required fail-closed assertion for the contract's derived asset id. */
+  expected_asset_id: string
+}
+
+export interface ImportRgbContractResult {
+  asset_id: string
+  already_imported: boolean
+  metadata: object
+}
+
+export interface BtcSendRequest {
+  amount: number
+  address: string
+  fee_rate: number
+  skip_sync: boolean
+}
+
+export interface PreparedSend {
+  plan_id: string
+  fee_sat: DecimalString
+  total_input_sat: DecimalString
+  total_output_sat: DecimalString
+  size_vbytes: DecimalString
+}
+
+export interface PreparedRgbSend extends PreparedSend {
+  batch_transfer_idx: number
+}
+
+export interface CreateUtxosRequest {
+  up_to: boolean
+  num?: number
+  size?: number
+  fee_rate: number
+  skip_sync: boolean
+}
+
+export interface PreparedCreateUtxos extends PreparedSend {
+  target_count: number
+  output_size_sat: number
+}
+
+export interface RgbAllocation {
+  asset_id: string | null
+  assignment: string
+  settled: boolean
+}
+
+export interface RgbUnspent {
+  utxo: {
+    outpoint: string
+    btc_amount: number
+    colorable: boolean
+  }
+  rgb_allocations: readonly RgbAllocation[]
+  pending_blinded: number
+}
+
+export interface CommitPreparedSendRequest {
+  plan_id: string
+}
+
+export interface CommittedBtcSend {
+  txid: string
+}
+
+export interface CommittedRgbSend {
+  txid: string
+  batch_transfer_idx: number
+}
+
+export interface PendingVanillaTransaction {
+  txid: string
+  operation_type: 'CreateUtxos' | 'Drain' | 'SendBtc'
+}
+
+export interface PendingRgbSendPlan {
+  plan_id: string
+  batch_transfer_idx: number
+}
+
+export interface AddressReceipt {
+  txid: string
+  amount_sat: DecimalString
+  confirmations: number
+  block_height: number | null
 }
 
 /** Native `JsonRgbInvoiceRequest` shape for `createRgbInvoice`. */
@@ -225,6 +637,20 @@ export interface RgbLightningWalletConfig extends RgbLightningBindingConfig {
    * the legacy beta derivation only for an existing signer-identity mismatch.
    */
   nodeSeedDerivation?: 'auto' | 'wdk-seed-v2' | 'legacy-v1'
+  /**
+   * Optional node request used to activate the full account when an integration
+   * (including WDK React Native Core) loads its address before exposing account
+   * extension methods. The account returns only the real native address.
+   */
+  autoUnlockRequest?: RgbLightningNodeUnlockRequest
+  /**
+   * Opt-in recovery for a stale VSS single-writer fence during automatic or
+   * explicit unlock. When enabled, the account clears the fence once and retries
+   * unlock only for RLN's stale-owner `__rln_instance__` failure. Keep disabled
+   * unless the host can guarantee another live node is not using the same VSS
+   * store.
+   */
+  autoRecoverStaleVssFence?: boolean
   bitcoindRpcUsername?: string
   bitcoindRpcPassword?: string
   bitcoindRpcHost?: string
@@ -235,6 +661,55 @@ export interface RgbLightningWalletConfig extends RgbLightningBindingConfig {
   announceAlias?: string
 }
 
+interface RgbLightningNodeUnlockRequestBase {
+  proxy_endpoint: string
+  announce_addresses: string[]
+  announce_alias: string
+}
+
+export interface RgbLightningBitcoindUnlockRequest extends RgbLightningNodeUnlockRequestBase {
+  bitcoind_rpc_username: string
+  bitcoind_rpc_password: string
+  bitcoind_rpc_host: string
+  bitcoind_rpc_port: number
+  indexer_url?: never
+}
+
+export interface RgbLightningIndexerUnlockRequest extends RgbLightningNodeUnlockRequestBase {
+  indexer_url: string
+  bitcoind_rpc_username?: never
+  bitcoind_rpc_password?: never
+  bitcoind_rpc_host?: never
+  bitcoind_rpc_port?: never
+}
+
+export type RgbLightningNodeUnlockRequest =
+  | RgbLightningBitcoindUnlockRequest
+  | RgbLightningIndexerUnlockRequest
+
+export type NativeOperationState =
+  | 'queued'
+  | 'running'
+  | 'cancel_requested'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+
+export interface NativeOperationStatus {
+  contract_version: 1
+  operation_id: string
+  kind: 'unlock_with_native_external_signer'
+  state: NativeOperationState
+  created_at_ms: DecimalString
+  started_at_ms?: DecimalString
+  finished_at_ms?: DecimalString
+  updated_at_ms: DecimalString
+  cancellation_requested: boolean
+  can_cancel_immediately: boolean
+  adoption_count: number
+  error?: string
+}
+
 // ───────────────────────────────────────────────────────────────────
 // Bindings (low-level; usually not constructed directly)
 // ───────────────────────────────────────────────────────────────────
@@ -242,12 +717,20 @@ export interface RgbLightningWalletConfig extends RgbLightningBindingConfig {
 export interface IRgbLightningBinding {
   ensureNode(): unknown
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
-  unlock(unlockRequest: object): void
+  unlock(
+    unlockRequest: RgbLightningNodeUnlockRequest,
+    options?: { signal?: { readonly aborted: boolean } }
+  ): Promise<void>
+  unlockOperationStatus(): NativeOperationStatus | null
+  adoptUnlockOperation(operationId: string): NativeOperationStatus
+  cancelUnlockOperation(): NativeOperationStatus | null
   bootstrap(): object
   clearVssFence(password: string): void
   vssBackup(): { version: number }
+  vssDeleteAll(password: string): { deleted_keys: number }
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
+  apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   shutdown(): void
 }
 
@@ -255,12 +738,17 @@ export class NodeRgbLightningBinding implements IRgbLightningBinding {
   constructor(config: RgbLightningBindingConfig)
   ensureNode(): unknown
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
-  unlock(unlockRequest: object): void
+  unlock(unlockRequest: object, options?: { signal?: { readonly aborted: boolean } }): Promise<void>
+  unlockOperationStatus(): NativeOperationStatus | null
+  adoptUnlockOperation(operationId: string): NativeOperationStatus
+  cancelUnlockOperation(): NativeOperationStatus | null
   bootstrap(): object
   clearVssFence(password: string): void
   vssBackup(): { version: number }
+  vssDeleteAll(password: string): { deleted_keys: number }
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
+  apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   shutdown(): void
   static healthcheck(): string
   static isInitialized(): boolean
@@ -272,12 +760,17 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
   constructor(config: RgbLightningBindingConfig)
   ensureNode(): unknown
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
-  unlock(unlockRequest: object): void
+  unlock(unlockRequest: object, options?: { signal?: { readonly aborted: boolean } }): Promise<void>
+  unlockOperationStatus(): NativeOperationStatus | null
+  adoptUnlockOperation(operationId: string): NativeOperationStatus
+  cancelUnlockOperation(): NativeOperationStatus | null
   bootstrap(): object
   clearVssFence(password: string): void
   vssBackup(): { version: number }
+  vssDeleteAll(password: string): { deleted_keys: number }
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
+  apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   shutdown(): void
   static healthcheck(): string
   static isInitialized(): boolean
@@ -330,16 +823,16 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
   listPeers(): Promise<object>
 
   /** Decodes a BOLT11 Lightning invoice without paying it. */
-  decodeInvoice(invoice: string): Promise<object>
+  decodeInvoice(invoice: string): Promise<DecodedLightningInvoice>
 
   /** Returns the node's current status for a Lightning invoice. */
   getInvoiceStatus(invoice: string): Promise<object>
 
   /** Returns the node's Lightning payment history. */
-  listPayments(): Promise<object>
+  listPayments(): Promise<LightningPayment[]>
 
   /** Returns one Lightning payment by hash and payment type. */
-  getPayment(paymentHashHex: string, paymentType: RgbPaymentType): Promise<object>
+  getPayment(paymentHashHex: string, paymentType: RgbPaymentType): Promise<LightningPayment>
 
   /** Returns RGB assets, optionally filtered by asset schema. */
   listAssets(filterAssetSchemas?: string[]): Promise<object>
@@ -361,7 +854,7 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
   listTransfersByTxid(txid: string): Promise<object>
 
   /** Decodes an RGB invoice without creating a transfer. */
-  decodeRgbInvoice(invoice: string): Promise<object>
+  decodeRgbInvoice(invoice: string): Promise<DecodedRgbInvoice>
 
   /** Returns RGB asset media identified by its content digest. */
   getAssetMedia(digest: string): Promise<object>
@@ -382,7 +875,7 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
   getTransactionsByTxid(txid: string, skipSync?: boolean): Promise<object>
 
   /** Returns the account's unspent Bitcoin outputs. */
-  listUnspents(skipSync?: boolean): Promise<object>
+  listUnspents(skipSync?: boolean): Promise<readonly RgbUnspent[]>
 
   /** Estimates the Bitcoin fee rate for a confirmation target. */
   estimateFee(blocks: number): Promise<object>
@@ -411,14 +904,20 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
 }
 
 export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning {
-  constructor(bindings: { binding: IRgbLightningBinding })
+  constructor(bindings: {
+    binding: IRgbLightningBinding
+    autoUnlockRequest?: RgbLightningNodeUnlockRequest
+  })
 
   readonly index: 0
   readonly path: 'm'
   readonly keyPair: KeyPair
 
   // Lifecycle
-  unlock(unlockRequest: object): Promise<{ ok: true }>
+  unlock(unlockRequest: RgbLightningNodeUnlockRequest): Promise<{ ok: true }>
+  unlockOperationStatus(): Promise<NativeOperationStatus | null>
+  adoptUnlockOperation(operationId: string): Promise<NativeOperationStatus>
+  cancelUnlockOperation(): Promise<NativeOperationStatus | null>
   getBootstrap(): Promise<object>
   shutdown(): Promise<{ ok: true }>
 
@@ -427,12 +926,15 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   clearVssFence(password: string): Promise<{ ok: true }>
   /** @throws {VssNotConfiguredError} if built without a vssUrl. @throws {VssError} on failure. */
   vssBackup(): Promise<{ version: number }>
+  vssDeleteAll(password: string): Promise<{ deleted_keys: number }>
   /** Local-view status; does not hit the server. */
   vssStatus(): Promise<VssStatus>
 
   // APay / LSP bootstrap
   /** @throws {ApayError} on LSP failure. */
   apayNew(hostNodeId: string): Promise<object>
+  /** Register a hash batch carrying a native signature for `username@domain`. */
+  apayNewWithAddress(hostNodeId: string, username: string, domain: string): Promise<object>
   bootstrapLsp(opts: {
     peerPubkeyAndAddr: string
     hostNodeId?: string
@@ -441,6 +943,8 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   }): Promise<BootstrapLspResult>
   /** The lspBaseUrl / lspBearerToken this node was constructed with. */
   getLspConfig(): { baseUrl: string | null; bearerToken: string | null }
+  /** Fetch and validate the configured LSP discovery document. */
+  getLspInfo(opts?: { timeoutMs?: number }): Promise<LspInfo>
   /**
    * Build the composed {@link UtexoLsp} flow object. No-arg form
    * auto-discovers the peer from the wallet's lspBaseUrl.
@@ -450,7 +954,9 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   // Node info / network / sync
   getNodeInfo(): Promise<object>
   getNetworkInfo(): Promise<object>
+  /** @deprecated Uses the legacy Colored-only FastSync. */
   sync(): Promise<{ ok: true }>
+  refreshWalletSnapshot(options?: WalletSnapshotOptions): Promise<WalletRefreshResult>
 
   // Channels
   openChannel(request: OpenChannelRequest | object): Promise<object>
@@ -470,18 +976,32 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   claimHodlInvoice(request: object): Promise<object>
 
   // Payments
-  sendPayment(request: object): Promise<object>
+  sendPayment(request: SendPaymentRequest): Promise<SendPaymentResult>
   keysend(request: object): Promise<object>
 
   // RGB assets
   refreshTransfers(request: object): Promise<{ ok: true }>
   failTransfers(request: object): Promise<object>
   createRgbInvoice(request: CreateRgbInvoiceRequest | object): Promise<object>
+  importRgbTransferConsignment(request: ImportRgbTransferConsignmentRequest): Promise<ImportRgbTransferConsignmentResult>
+  importRgbContract(request: ImportRgbContractRequest): Promise<ImportRgbContractResult>
   sendRgbAsset(request: SendRgbAssetRequest | object): Promise<object>
+  prepareRgbSend(request: SendRgbAssetRequest): Promise<PreparedRgbSend>
+  commitPreparedRgbSend(request: CommitPreparedSendRequest): Promise<CommittedRgbSend>
+  cancelRgbSendPlan(request: { plan_id: string }): Promise<{ cancelled: true }>
+  listPendingRgbSendPlans(): Promise<readonly PendingRgbSendPlan[]>
   postAssetMedia(request: object): Promise<object>
 
   // BTC on-chain
-  sendBtc(request: object): Promise<object>
+  sendBtc(request: BtcSendRequest): Promise<CommittedBtcSend>
+  prepareBtcSend(request: BtcSendRequest): Promise<PreparedSend>
+  commitPreparedBtcSend(request: CommitPreparedSendRequest): Promise<CommittedBtcSend>
+  cancelBtcSendPlan(request: { plan_id: string }): Promise<{ cancelled: true }>
+  prepareCreateUtxos(request: CreateUtxosRequest): Promise<PreparedCreateUtxos>
+  commitPreparedCreateUtxos(request: CommitPreparedSendRequest): Promise<CommittedBtcSend>
+  cancelCreateUtxosPlan(request: { plan_id: string }): Promise<{ cancelled: true }>
+  listPendingVanillaTransactions(): Promise<readonly PendingVanillaTransaction[]>
+  listAddressReceipts(address: string): Promise<readonly AddressReceipt[]>
   sendTransaction(tx: Transaction | object): Promise<TransactionResult>
   rotateAddress(): Promise<string>
   createUtxos(request: object): Promise<{ ok: true }>
@@ -526,16 +1046,19 @@ export default class WalletManagerRgbLightning extends WalletManager {
 // ───────────────────────────────────────────────────────────────────
 
 export class RgbLightningError extends Error {
-  constructor(message: string, opts?: { code?: string; cause?: unknown })
+  constructor(message: string, opts?: { code?: string; cause?: unknown; details?: unknown })
   code: string
   cause?: unknown
-  toJSON(): { name: string; code: string; message: string; cause: unknown }
+  details?: unknown
+  toJSON(): { name: string; code: string; message: string; details: unknown; cause: unknown }
 }
 export class UnlockError extends RgbLightningError {}
 export class AccountLockedError extends RgbLightningError {}
 export class VssError extends RgbLightningError {}
 export class VssNotConfiguredError extends VssError {}
 export class ApayError extends RgbLightningError {}
+export class WalletSyncError extends RgbLightningError {}
+export class WalletSnapshotError extends RgbLightningError {}
 export class NotImplementedError extends RgbLightningError {}
 
 // ───────────────────────────────────────────────────────────────────
@@ -574,12 +1097,12 @@ export interface LspBridgeResult {
 export class LspClient {
   constructor(opts: LspClientOptions)
   health(opts?: { timeoutMs?: number }): Promise<object | null>
-  getInfo(opts?: { timeoutMs?: number }): Promise<object | null>
+  getInfo(opts?: { timeoutMs?: number }): Promise<LspInfo>
   lnurlDiscovery(username: string, opts?: { timeoutMs?: number }): Promise<LnurlPayDiscovery>
   lnurlCallback(username: string, amountMsat: bigint | number | string, opts?: { assetId?: string; assetAmount?: bigint | number | string; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[] }>
   /** Full LUD-06 resolution routed through this LSP's baseUrl (discovery + callback). */
   resolveAddress(username: string, amountMsat: bigint | number | string, opts?: { assetId?: string; assetAmount?: bigint | number | string; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[]; status?: string; reason?: string }>
-  /** Resolve the auto-assigned Lightning Address for a node pubkey (post-apayNew). */
+  /** Resolve the LSP-provisioned Lightning Address for a node pubkey before attested APay registration. */
   getLightningAddressByPubkey(peerPubkey: string, opts?: { timeoutMs?: number }): Promise<{ username: string; domain: string }>
   onchainSend(params: {
     rgbInvoice: string
@@ -765,6 +1288,14 @@ export interface LightningAddressInfo {
   address: string
 }
 
+export interface EnableLightningAddressOptions {
+  /**
+   * Require native signed address attestation. Defaults to true. Set false
+   * only for an explicit compatibility downgrade to legacy `apayNew`.
+   */
+  requireAddressAttestation?: boolean
+}
+
 export interface ClaimResult {
   paymentHash: string
   claimed: boolean
@@ -782,7 +1313,7 @@ export class UtexoLsp {
   waitForOutboundLiquidity(minMsat: number, opts?: WaitOptions): Promise<void>
   sendAsset(opts: SendAssetOptions): Promise<SendAssetResult>
   payAddress(opts: PayAddressOptions): Promise<{ invoice: string; sendResult: object }>
-  enableLightningAddress(): Promise<LightningAddressInfo>
+  enableLightningAddress(opts?: EnableLightningAddressOptions): Promise<LightningAddressInfo>
   claimPendingPayments(): Promise<ClaimResult[]>
 }
 

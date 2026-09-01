@@ -12,6 +12,29 @@ import { LspError, LspClient } from '../src/lsp-client.js'
 
 const BASE = 'https://lsp.utexo.io'
 
+function lspInfo (overrides = {}) {
+  return {
+    api_version: 1,
+    pubkey: '02' + 'ab'.repeat(32),
+    network: 'signet',
+    host: 'lsp.utexo.io',
+    port: 9735,
+    supported_assets: [],
+    min_payment_size_msat: '1000',
+    max_payment_size_msat: '20000000',
+    min_channel_balance_sat: '200000',
+    max_channel_balance_sat: '200000',
+    min_initial_client_balance_msat: '30000000',
+    max_initial_client_balance_msat: '30000000',
+    min_channel_asset_amount: '1',
+    max_channel_asset_amount: '1',
+    virtual_channel_mode: 'trusted_no_broadcast',
+    lightning_address_min_sendable_msat: '3000000',
+    lightning_address_max_sendable_msat: '20000000',
+    ...overrides
+  }
+}
+
 // Build a Response-like object. `text` defaults to a JSON serialization of
 // `json` so callers can pass either.
 function makeRes ({ ok = true, status = 200, json, text, headers } = {}) {
@@ -211,9 +234,40 @@ describe('GET endpoint methods', () => {
   })
 
   it('getInfo() issues GET /get_info', async () => {
-    const { client, fetchImpl } = makeClient({ fetch: fetchReturning(makeRes({ json: { pubkey: 'abc' } })) })
-    expect(await client.getInfo()).toEqual({ pubkey: 'abc' })
+    const response = lspInfo({
+      supported_assets: [{
+        asset_id: 'rgb:asset',
+        schema: 'Ifa',
+        ticker: 'UTIF',
+        name: 'UTEXO Test IFA',
+        precision: 8
+      }]
+    })
+    const { client, fetchImpl } = makeClient({ fetch: fetchReturning(makeRes({ json: response })) })
+    expect(await client.getInfo()).toEqual(response)
     expect(fetchImpl.mock.calls[0][0]).toBe('https://lsp.utexo.io/get_info')
+  })
+
+  it('rejects malformed discovery policy instead of exposing an untyped object', async () => {
+    const response = lspInfo({ max_channel_asset_amount: 1 })
+    const { client } = makeClient({ fetch: fetchReturning(makeRes({ json: response })) })
+    await expect(client.getInfo()).rejects.toThrow(/max_channel_asset_amount/)
+  })
+
+  it('rejects duplicate supported asset identities', async () => {
+    const asset = {
+      asset_id: 'rgb:asset',
+      schema: 'Nia',
+      ticker: 'UTST',
+      name: 'UTEXO Signet Test',
+      precision: 0
+    }
+    const { client } = makeClient({
+      fetch: fetchReturning(makeRes({
+        json: lspInfo({ supported_assets: [asset, asset] })
+      }))
+    })
+    await expect(client.getInfo()).rejects.toThrow(/supported assets/)
   })
 
   it('merges defaultHeaders (e.g. a Bearer token) into every request', async () => {
@@ -544,7 +598,7 @@ describe('_req error and edge handling', () => {
 
   it('honours a per-call timeoutMs override (resolves the override, not the constructor default)', async () => {
     // The per-call value takes precedence over the constructor default.
-    const { client, fetchImpl } = makeClient({ fetch: fetchReturning(makeRes({ json: {} })), timeoutMs: 15000 })
+    const { client, fetchImpl } = makeClient({ fetch: fetchReturning(makeRes({ json: lspInfo() })), timeoutMs: 15000 })
     const sigSpy = jest.spyOn(client, '_timeoutSignal')
     await client.getInfo({ timeoutMs: 2000 })
     expect(fetchImpl.mock.calls[0][1].signal).toBeDefined()
@@ -555,7 +609,7 @@ describe('_req error and edge handling', () => {
   })
 
   it('falls back to the constructor timeout when no per-call override is given', async () => {
-    const { client } = makeClient({ fetch: fetchReturning(makeRes({ json: {} })), timeoutMs: 5000 })
+    const { client } = makeClient({ fetch: fetchReturning(makeRes({ json: lspInfo() })), timeoutMs: 5000 })
     const sigSpy = jest.spyOn(client, '_timeoutSignal')
     await client.getInfo()
     expect(sigSpy).toHaveBeenCalledWith(5000)

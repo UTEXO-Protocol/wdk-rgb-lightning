@@ -65,3 +65,36 @@ describe('vssBackup', () => {
     await expect(account.vssBackup()).resolves.toEqual({ version: 9 })
   })
 })
+
+describe('vssDeleteAll', () => {
+  it('fails before native access when VSS is not configured', async () => {
+    const vssDeleteAll = jest.fn()
+    const account = makeAccount({
+      vssStatus: () => ({ configured: false }),
+      vssDeleteAll
+    })
+
+    await expect(account.vssDeleteAll('pw')).rejects.toBeInstanceOf(VssNotConfiguredError)
+    expect(vssDeleteAll).not.toHaveBeenCalled()
+  })
+
+  it('returns the native verified deletion count', async () => {
+    const vssDeleteAll = jest.fn(() => ({ deleted_keys: 9 }))
+    const account = makeAccount({
+      vssStatus: () => ({ configured: true }),
+      vssDeleteAll
+    })
+
+    await expect(account.vssDeleteAll('pw')).resolves.toEqual({ deleted_keys: 9 })
+    expect(vssDeleteAll).toHaveBeenCalledWith('pw')
+  })
+
+  it('wraps native deletion failures as VssError', async () => {
+    const account = makeAccount({
+      vssStatus: () => ({ configured: true }),
+      vssDeleteAll: () => { throw new Error('remote delete failed') }
+    })
+
+    await expect(account.vssDeleteAll('pw')).rejects.toBeInstanceOf(VssError)
+  })
+})
