@@ -13,14 +13,25 @@
 // shapes this module owns (config, results, errors, LSP DTOs) are
 // typed precisely.
 
+import WalletManager, { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
+
 // ───────────────────────────────────────────────────────────────────
 // Shared primitives
 // ───────────────────────────────────────────────────────────────────
 
 export type Network = 'mainnet' | 'testnet' | 'regtest' | 'signet'
 
-/** Placeholder address returned by `getAddress()` before `unlock()`. */
-export const PENDING_ADDRESS: string
+export interface Transaction {
+  to: string
+  value: number | bigint
+  feeRate?: number | bigint
+  confirmationTarget?: number
+}
+
+export interface TransactionResult {
+  hash: string
+  fee: bigint
+}
 
 export interface FeeRates {
   /** Economy rate (sat/vB), targets ~1 hour confirmation. */
@@ -45,6 +56,7 @@ export interface TransferOptions {
   token?: string
   /** sat/vB override for on-chain flows. */
   feeRate?: number
+  confirmationTarget?: number
 }
 
 export interface TransferResult {
@@ -128,6 +140,52 @@ export interface OpenChannelRequest {
 }
 
 // ───────────────────────────────────────────────────────────────────
+// RGB / payment vocabulary (mirrors rgb-lightning-node's C-FFI enums)
+// ───────────────────────────────────────────────────────────────────
+
+/**
+ * RLN payment-type discriminant for {@link WalletAccountRgbLightning.getPayment}.
+ * The C-FFI deserialises this into its `Outbound | InboundAutoClaim |
+ * InboundHodl` enum and errors on any other value (the pre-1.0 HTTP API's
+ * `sent`/`received` are gone).
+ */
+export type RgbPaymentType = 'Outbound' | 'InboundAutoClaim' | 'InboundHodl'
+
+/** RGB assignment discriminant accepted by RLN's `parse_assignment_kind`. */
+export type RgbAssignmentKind = 'Fungible' | 'NonFungible' | 'InflationRight' | 'ReplaceRight' | 'Any'
+
+export interface RgbSendRecipient {
+  /** Recipient id (blinded UTXO or witness) — from `decodeRgbInvoice`. */
+  recipient_id: string
+  assignment_kind: RgbAssignmentKind
+  assignment_amount?: number
+  /** Consignment transport endpoints — from `decodeRgbInvoice`. */
+  transport_endpoints: string[]
+  witness_data?: { amount_sat: number; blinding?: number }
+}
+
+/** Native `JsonSendRgbRequest` shape forwarded to RLN by `sendRgbAsset`. */
+export interface SendRgbAssetRequest {
+  donation: boolean
+  /** sat/vB. */
+  fee_rate: number
+  min_confirmations: number
+  recipient_groups: Array<{ asset_id: string; recipients: RgbSendRecipient[] }>
+}
+
+/** Native `JsonRgbInvoiceRequest` shape for `createRgbInvoice`. */
+export interface CreateRgbInvoiceRequest {
+  /** REQUIRED — RLN rejects the request on deserialise if omitted. */
+  min_confirmations: number
+  /** REQUIRED — true = witness (on-chain) receive, false = blinded. */
+  witness: boolean
+  asset_id?: string
+  assignment_kind?: RgbAssignmentKind
+  assignment_amount?: number
+  duration_seconds?: number
+}
+
+// ───────────────────────────────────────────────────────────────────
 // Config
 // ───────────────────────────────────────────────────────────────────
 
@@ -162,6 +220,11 @@ export interface RgbLightningBindingConfig {
 }
 
 export interface RgbLightningWalletConfig extends RgbLightningBindingConfig {
+  /**
+   * `auto` uses the corrected WDK seed derivation for new nodes and retries
+   * the legacy beta derivation only for an existing signer-identity mismatch.
+   */
+  nodeSeedDerivation?: 'auto' | 'wdk-seed-v2' | 'legacy-v1'
   bitcoindRpcUsername?: string
   bitcoindRpcPassword?: string
   bitcoindRpcHost?: string
@@ -178,9 +241,8 @@ export interface RgbLightningWalletConfig extends RgbLightningBindingConfig {
 
 export interface IRgbLightningBinding {
   ensureNode(): unknown
-  attachExternalSigner(seedHex: string): void
+  attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
   unlock(unlockRequest: object): void
-  readonly node: unknown
   bootstrap(): object
   clearVssFence(password: string): void
   vssBackup(): { version: number }
@@ -192,39 +254,168 @@ export interface IRgbLightningBinding {
 export class NodeRgbLightningBinding implements IRgbLightningBinding {
   constructor(config: RgbLightningBindingConfig)
   ensureNode(): unknown
-  attachExternalSigner(seedHex: string): void
+  attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
   unlock(unlockRequest: object): void
-  readonly node: unknown
   bootstrap(): object
   clearVssFence(password: string): void
   vssBackup(): { version: number }
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
   shutdown(): void
-  static healthcheck(): unknown
+  static healthcheck(): string
   static isInitialized(): boolean
+  static initialize(request: object): void
+  static shutdownGlobal(): void
 }
 
 export class BareRgbLightningBinding implements IRgbLightningBinding {
   constructor(config: RgbLightningBindingConfig)
   ensureNode(): unknown
-  attachExternalSigner(seedHex: string): void
+  attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
   unlock(unlockRequest: object): void
-  readonly node: unknown
   bootstrap(): object
   clearVssFence(password: string): void
   vssBackup(): { version: number }
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
   shutdown(): void
+  static healthcheck(): string
+  static isInitialized(): boolean
+  static initialize(request: object): void
+  static shutdownGlobal(): void
 }
 
 // ───────────────────────────────────────────────────────────────────
 // Account
 // ───────────────────────────────────────────────────────────────────
 
-export class WalletAccountRgbLightning {
+export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
+  /**
+   * Creates a read-only RGB Lightning account backed by a query-only adapter.
+   *
+   * @param reader - The adapter that supplies the account's read operations.
+   * @throws {TypeError} If the adapter is missing or omits a required WDK read method.
+   */
+  protected constructor(reader: object)
+
+  /** Returns the account's public signer bootstrap metadata. */
+  getBootstrap(): Promise<object>
+
+  /** Returns the local VSS configuration and backup status without contacting the server. */
+  vssStatus(): Promise<VssStatus>
+
+  /** Returns identity and runtime information for the Lightning node. */
+  getNodeInfo(): Promise<object>
+
+  /** Returns the node's current Bitcoin network and chain information. */
+  getNetworkInfo(): Promise<object>
+
+  /**
+   * Returns the account's stable current Bitcoin receive address.
+   *
+   * @throws {AccountLockedError} If the RGB Lightning node is locked.
+   */
+  getAddress(): Promise<string>
+
+  /** Returns the current address or a non-throwing locked state. */
+  getAddressState(): Promise<{ status: 'ready'; address: string } | { status: 'locked'; address: null }>
+
+  /** Returns all Lightning channels known to the node. */
+  listChannels(): Promise<object>
+
+  /** Resolves a temporary channel ID to its permanent channel ID. */
+  getChannelId(temporaryChannelIdHex: string): Promise<object>
+
+  /** Returns all Lightning peers known to the node. */
+  listPeers(): Promise<object>
+
+  /** Decodes a BOLT11 Lightning invoice without paying it. */
+  decodeInvoice(invoice: string): Promise<object>
+
+  /** Returns the node's current status for a Lightning invoice. */
+  getInvoiceStatus(invoice: string): Promise<object>
+
+  /** Returns the node's Lightning payment history. */
+  listPayments(): Promise<object>
+
+  /** Returns one Lightning payment by hash and payment type. */
+  getPayment(paymentHashHex: string, paymentType: RgbPaymentType): Promise<object>
+
+  /** Returns RGB assets, optionally filtered by asset schema. */
+  listAssets(filterAssetSchemas?: string[]): Promise<object>
+
+  /** Returns the settled and spendable balances for an RGB asset. */
+  getAssetBalance(assetId: string): Promise<object>
+
+  /** Returns metadata for an RGB asset. */
+  getAssetMetadata(assetId: string): Promise<object>
+
+  /**
+   * Returns transfers associated with one RGB asset.
+   *
+   * @throws {TypeError} If the asset ID is empty.
+   */
+  listTransfers(assetId: string): Promise<object>
+
+  /** Returns RGB transfers associated with an on-chain transaction ID. */
+  listTransfersByTxid(txid: string): Promise<object>
+
+  /** Decodes an RGB invoice without creating a transfer. */
+  decodeRgbInvoice(invoice: string): Promise<object>
+
+  /** Returns RGB asset media identified by its content digest. */
+  getAssetMedia(digest: string): Promise<object>
+
+  /** Returns the spendable vanilla Bitcoin balance in satoshis. */
+  getBalance(skipSync?: boolean): Promise<bigint>
+
+  /** Returns the complete native Bitcoin balance breakdown. */
+  getBalanceDetails(skipSync?: boolean): Promise<object>
+
+  /** Returns the spendable balance for an RGB asset in its base unit. */
+  getTokenBalance(assetId: string): Promise<bigint>
+
+  /** Returns the account's on-chain Bitcoin transaction history. */
+  getTransactions(skipSync?: boolean): Promise<object>
+
+  /** Returns on-chain Bitcoin transactions matching a transaction ID. */
+  getTransactionsByTxid(txid: string, skipSync?: boolean): Promise<object>
+
+  /** Returns the account's unspent Bitcoin outputs. */
+  listUnspents(skipSync?: boolean): Promise<object>
+
+  /** Estimates the Bitcoin fee rate for a confirmation target. */
+  estimateFee(blocks: number): Promise<object>
+
+  /**
+   * Verifies a Lightning message signature for this account.
+   *
+   * @throws {AccountLockedError} If the RGB Lightning node is locked.
+   */
+  verify(message: string, signature: string): Promise<boolean>
+
+  /** Checks whether an indexer URL is reachable and compatible with the node. */
+  checkIndexerUrl(indexerUrl: string): Promise<object>
+
+  /** Checks whether an RGB proxy endpoint is reachable. */
+  checkProxyEndpoint(proxyEndpoint: string): Promise<object>
+
+  /** Quotes the fee for a generic Lightning, Bitcoin, or RGB transfer. */
+  quoteTransfer(options: TransferOptions): Promise<QuoteResult>
+
+  /** Quotes an approximate fee for a standard on-chain Bitcoin transaction. */
+  quoteSendTransaction(tx: Transaction): Promise<QuoteResult>
+
+  /** Returns a terminal Bitcoin, RGB, or Lightning receipt, or null if pending or unknown. */
+  getTransactionReceipt(hash: string): Promise<unknown | null>
+}
+
+export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning {
   constructor(bindings: { binding: IRgbLightningBinding })
+
+  readonly index: 0
+  readonly path: 'm'
+  readonly keyPair: KeyPair
 
   // Lifecycle
   unlock(unlockRequest: object): Promise<{ ok: true }>
@@ -260,25 +451,19 @@ export class WalletAccountRgbLightning {
   getNodeInfo(): Promise<object>
   getNetworkInfo(): Promise<object>
   sync(): Promise<{ ok: true }>
-  getAddress(): string
 
   // Channels
   openChannel(request: OpenChannelRequest | object): Promise<object>
   closeChannel(request: object): Promise<{ ok: true }>
-  listChannels(): Promise<object>
-  getChannelId(temporaryChannelIdHex: string): Promise<object>
 
   // Peers
   connectPeer(peerPubkeyAndAddr: string): Promise<{ ok: true }>
   disconnectPeer(request: object): Promise<{ ok: true }>
-  listPeers(): Promise<object>
 
   // BOLT11 invoices
   createInvoice(request: object): Promise<object>
   /** Cross-SDK alias for createInvoice; accepts native snake_case or camelCase. */
   createLightningInvoice(request: CreateLightningInvoiceRequest | object): Promise<object>
-  decodeInvoice(invoice: string): Promise<object>
-  getInvoiceStatus(invoice: string): Promise<object>
   /** Create a HODL invoice bound to a caller-supplied payment hash. */
   createHodlInvoice(params: CreateHodlInvoiceParams): Promise<{ bolt11: string; paymentHash: string }>
   cancelHodlInvoice(request: object): Promise<{ ok: true }>
@@ -287,51 +472,28 @@ export class WalletAccountRgbLightning {
   // Payments
   sendPayment(request: object): Promise<object>
   keysend(request: object): Promise<object>
-  listPayments(): Promise<object>
-  getPayment(paymentHashHex: string, paymentType: 'sent' | 'received'): Promise<object>
 
   // RGB assets
-  issueAssetNia(request: object): Promise<object>
-  issueAssetUda(request: object): Promise<object>
-  issueAssetCfa(request: object): Promise<object>
-  issueAssetIfa(request: object): Promise<object>
-  listAssets(filterAssetSchemas?: string[]): Promise<object>
-  getAssetBalance(assetId: string): Promise<object>
-  getAssetMetadata(assetId: string): Promise<object>
-  listTransfers(assetId?: string): Promise<object>
   refreshTransfers(request: object): Promise<{ ok: true }>
   failTransfers(request: object): Promise<object>
-  createRgbInvoice(request: object): Promise<object>
-  decodeRgbInvoice(invoice: string): Promise<object>
-  sendRgbAsset(request: object): Promise<object>
-  inflate(request: object): Promise<object>
-  getAssetMedia(digest: string): Promise<object>
+  createRgbInvoice(request: CreateRgbInvoiceRequest | object): Promise<object>
+  sendRgbAsset(request: SendRgbAssetRequest | object): Promise<object>
   postAssetMedia(request: object): Promise<object>
 
   // BTC on-chain
-  getBalance(skipSync?: boolean): Promise<string>
-  getBalanceDetails(skipSync?: boolean): Promise<object>
-  sendTransaction(request: object): Promise<object>
-  getTransactions(skipSync?: boolean): Promise<object>
-  listUnspents(skipSync?: boolean): Promise<object>
+  sendBtc(request: object): Promise<object>
+  sendTransaction(tx: Transaction | object): Promise<TransactionResult>
+  rotateAddress(): Promise<string>
   createUtxos(request: object): Promise<{ ok: true }>
-  estimateFee(blocks: number): Promise<object>
 
   // Onion / signing / diagnostics
   sendOnionMessage(request: object): Promise<{ ok: true }>
-  sign(message: string): Promise<{ signature: string }>
-  checkIndexerUrl(indexerUrl: string): Promise<object>
-  checkProxyEndpoint(proxyEndpoint: string): Promise<{ ok: true }>
+  sign(message: string): Promise<string>
 
   // Generic IWalletAccount surface
   transfer(options: TransferOptions): Promise<TransferResult>
-  quoteTransfer(options: TransferOptions): Promise<QuoteResult>
-  quoteSendTransaction(tx: object): Promise<QuoteResult>
-  getTransactionReceipt(hash: string): Promise<unknown | null>
   getKeyPair(): KeyPair
-  toReadOnlyAccount(): Promise<IWalletAccountReadOnlyRgbLightning>
-  /** @throws {NotImplementedError} — upstream c-ffi lacks verify_message. */
-  verify(message: string, signature: string): Promise<boolean>
+  toReadOnlyAccount(): Promise<WalletAccountReadOnlyRgbLightning>
   /** @throws {NotImplementedError} — use sendTransaction/sendPayment/sendRgbAsset. */
   signTransaction(tx: object): Promise<never>
 
@@ -343,24 +505,17 @@ export class WalletAccountRgbLightning {
   dispose(): void
 }
 
-export interface IWalletAccountReadOnlyRgbLightning {
-  getAddress(): Promise<string>
-  verify(message: string, signature: string): Promise<boolean>
-  getBalance(): Promise<bigint>
-  getTokenBalance(assetId: string): Promise<bigint>
-  quoteSendTransaction(tx: object): Promise<QuoteResult>
-  quoteTransfer(options: TransferOptions): Promise<QuoteResult>
-  getTransactionReceipt(hash: string): Promise<unknown | null>
-}
+export type IWalletAccountReadOnlyRgbLightning = WalletAccountReadOnlyRgbLightning
 
 // ───────────────────────────────────────────────────────────────────
 // Manager (default export)
 // ───────────────────────────────────────────────────────────────────
 
-export default class WalletManagerRgbLightning {
+export default class WalletManagerRgbLightning extends WalletManager {
   constructor(seed: string | Uint8Array, config: RgbLightningWalletConfig)
-  getAccount(index?: number): Promise<WalletAccountRgbLightning>
-  getAccountByPath(path: string): Promise<never>
+  getAccount(index?: number, options?: { signerName?: string }): Promise<WalletAccountRgbLightning>
+  getAccount(signerName: string): Promise<WalletAccountRgbLightning>
+  getAccountByPath(path: string, options?: { signerName?: string }): Promise<WalletAccountRgbLightning>
   getFeeRates(): Promise<FeeRates>
   dispose(): void
   static readonly Binding: new (config: RgbLightningBindingConfig) => IRgbLightningBinding
@@ -377,6 +532,7 @@ export class RgbLightningError extends Error {
   toJSON(): { name: string; code: string; message: string; cause: unknown }
 }
 export class UnlockError extends RgbLightningError {}
+export class AccountLockedError extends RgbLightningError {}
 export class VssError extends RgbLightningError {}
 export class VssNotConfiguredError extends VssError {}
 export class ApayError extends RgbLightningError {}
@@ -407,64 +563,100 @@ export interface LnurlPayDiscovery {
 export interface LspBridgeResult {
   lnInvoice: string
   rgbInvoice: string
-  mappingId: string
+  /**
+   * The LSP's bridge mapping id. The raw `LspClient` / helper paths return
+   * it as the LSP sends it (a number); the composed `UtexoLsp` flows coerce
+   * it to a string. Typed as the union to reflect both call paths.
+   */
+  mappingId: string | number
 }
 
 export class LspClient {
   constructor(opts: LspClientOptions)
-  health(opts?: { timeoutMs?: number }): Promise<object>
-  getInfo(opts?: { timeoutMs?: number }): Promise<object>
+  health(opts?: { timeoutMs?: number }): Promise<object | null>
+  getInfo(opts?: { timeoutMs?: number }): Promise<object | null>
   lnurlDiscovery(username: string, opts?: { timeoutMs?: number }): Promise<LnurlPayDiscovery>
-  lnurlCallback(username: string, amountMsat: bigint | number, opts?: { assetId?: string; assetAmount?: number; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[] }>
+  lnurlCallback(username: string, amountMsat: bigint | number | string, opts?: { assetId?: string; assetAmount?: bigint | number | string; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[] }>
   /** Full LUD-06 resolution routed through this LSP's baseUrl (discovery + callback). */
-  resolveAddress(username: string, amountMsat: bigint | number, opts?: { assetId?: string; assetAmount?: bigint | number; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[]; status?: string; reason?: string }>
+  resolveAddress(username: string, amountMsat: bigint | number | string, opts?: { assetId?: string; assetAmount?: bigint | number | string; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[]; status?: string; reason?: string }>
   /** Resolve the auto-assigned Lightning Address for a node pubkey (post-apayNew). */
   getLightningAddressByPubkey(peerPubkey: string, opts?: { timeoutMs?: number }): Promise<{ username: string; domain: string }>
   onchainSend(params: {
     rgbInvoice: string
-    ln: { amtMsat: bigint | number; expirySec: number; assetId?: string; assetAmount?: number; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
+    ln: { amtMsat: bigint | number | string; expirySec: number; assetId?: string; assetAmount?: bigint | number | string; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
     timeoutMs?: number
   }): Promise<LspBridgeResult>
   lightningReceive(params: {
     lnInvoice: string
-    rgb: { assetId: string; assignment?: unknown; durationSeconds?: number; minConfirmations?: number; witness?: boolean }
+    rgb: { assetId: string; assignment?: string; durationSeconds?: number; minConfirmations?: number; witness?: boolean }
     timeoutMs?: number
   }): Promise<LspBridgeResult>
 }
 
 export class LspError extends Error {
+  constructor(endpoint: string, status: number, body: string, cause?: unknown)
   endpoint: string
   status: number
   body: string
   errorBody: object | null
   errorCode: number | string | null
   errorTag: string | null
+  cause?: unknown
 }
 
 // ───────────────────────────────────────────────────────────────────
 // LNURL-pay (LUD-06 / LUD-16)
 // ───────────────────────────────────────────────────────────────────
 
-export function parseLightningAddress(addr: string, opts?: { allowHttp?: boolean }): { username: string; host: string; discoveryUrl: string }
-export function fetchDiscovery(addr: string, opts?: { fetch?: typeof fetch; timeoutMs?: number; allowHttp?: boolean }): Promise<LnurlPayDiscovery>
-export function resolveAddressToInvoice(addr: string, amountMsat: bigint | number, opts?: { fetch?: typeof fetch; timeoutMs?: number; allowHttp?: boolean; comment?: string }): Promise<{ pr: string; routes?: unknown[]; discovery: LnurlPayDiscovery; callbackUrl: string }>
+export const UMA_PREFIX: '$'
+export const UMA_MAX_USERNAME_LENGTH: 64
+
+export interface ParsedLightningAddress {
+  /** Local part with any UMA prefix removed. */
+  username: string
+  /** Address host, including a port when supplied. */
+  host: string
+  /** Alias for `host`, matching WDK's address vocabulary. */
+  domain: string
+  /** Canonical `username@domain` form without an UMA prefix. */
+  address: string
+  /** Whether the input used UMA's leading `$` form. */
+  isUma: boolean
+  /** LUD-16 discovery endpoint for the canonical address. */
+  discoveryUrl: string
+}
+
+export function isUmaAddress(address: unknown): boolean
+export function normalizeLightningAddress(address: string): string
+export function parseLightningAddress(addr: string, opts?: { allowHttp?: boolean }): ParsedLightningAddress
+export interface LnurlPayOptions {
+  fetch?: typeof fetch
+  timeoutMs?: number
+  allowHttp?: boolean
+  /** Opt in to following a callback on a different host than discovery. */
+  allowCrossHostCallback?: boolean
+  comment?: string
+  assetId?: string
+  assetAmount?: bigint | number | string
+}
+
+export function fetchDiscovery(addr: string, opts?: Pick<LnurlPayOptions, 'fetch' | 'timeoutMs' | 'allowHttp'>): Promise<LnurlPayDiscovery>
+export function resolveAddressToInvoice(addr: string, amountMsat: bigint | number | string, opts?: LnurlPayOptions): Promise<{ pr: string; routes?: unknown[]; discovery: LnurlPayDiscovery; callbackUrl: string }>
 
 export class LnurlPayError extends Error {
+  constructor(message: string, opts?: { status?: number; body?: string; cause?: unknown })
   status?: number
   body?: string
+  cause?: unknown
 }
 
 // ───────────────────────────────────────────────────────────────────
 // LSP helpers (account + LSP combined flows)
 // ───────────────────────────────────────────────────────────────────
 
-export interface PayLightningAddressOptions {
-  fetch?: typeof fetch
-  timeoutMs?: number
-  allowHttp?: boolean
-  comment?: string
+export interface PayLightningAddressOptions extends LnurlPayOptions {
   skipAmount?: boolean
-  beforePay?: (invoice: string, ctx: { discovery: LnurlPayDiscovery; callbackUrl: string }) => void | Promise<void>
+  beforePay?: (invoice: string, discovery: LnurlPayDiscovery) => void | Promise<void>
 }
 
 export interface PayLightningAddressResult {
@@ -487,7 +679,7 @@ export type LspRgbDepositResult = LspBridgeResult
 export interface PayRgbViaLspArgs {
   lsp: string | LspClient
   rgbInvoice: string
-  ln: { amtMsat: bigint | number; expirySec: number; assetId?: string; assetAmount?: number; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
+  ln: { amtMsat: bigint | number | string; expirySec: number; assetId?: string; assetAmount?: bigint | number | string; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
   lspOpts?: { timeoutMs?: number }
 }
 
@@ -495,7 +687,7 @@ export interface PayRgbViaLspResult extends LspBridgeResult {
   sendResult: object
 }
 
-export function payLightningAddress(account: WalletAccountRgbLightning, addr: string, amountMsat: bigint | number, opts?: PayLightningAddressOptions): Promise<PayLightningAddressResult>
+export function payLightningAddress(account: WalletAccountRgbLightning, addr: string, amountMsat: bigint | number | string, opts?: PayLightningAddressOptions): Promise<PayLightningAddressResult>
 export function requestLspRgbDeposit(account: WalletAccountRgbLightning, args: RequestLspRgbDepositArgs): Promise<LspRgbDepositResult>
 export function payRgbViaLsp(account: WalletAccountRgbLightning, args: PayRgbViaLspArgs): Promise<PayRgbViaLspResult>
 
@@ -550,7 +742,7 @@ export interface ReceiveAssetResult {
 
 export interface SendAssetOptions {
   rgbInvoice: string
-  ln?: { amtMsat?: bigint | number; expirySec?: number; assetId?: string; assetAmount?: bigint | number; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
+  ln?: { amtMsat?: bigint | number | string; expirySec?: number; assetId?: string; assetAmount?: bigint | number | string; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
 }
 
 export interface SendAssetResult extends LspBridgeResult {
@@ -558,9 +750,12 @@ export interface SendAssetResult extends LspBridgeResult {
 }
 
 export interface PayAddressOptions {
+  /** Lightning Address or UMA address in `$user@host` form. */
   address: string
-  amtMsat: bigint | number
-  asset?: { assetId: string; assetAmount: number }
+  amtMsat: bigint | number | string
+  asset?: { assetId: string; assetAmount: bigint | number | string }
+  /** Opt in to following a delegated LNURL callback on a different host. */
+  allowCrossHostCallback?: boolean
 }
 
 export interface LightningAddressInfo {
@@ -595,11 +790,21 @@ export function peerUri(peer: LspPeer): string
 export function normalizeReceiveStatus(raw: string | { status?: string } | null | undefined): ReceiveStatus
 
 export class LspChannelTimeoutError extends Error {
+  constructor(assetId: string, elapsedMs: number)
   assetId: string
   elapsedMs: number
 }
 
+export class LspLiquidityTimeoutError extends Error {
+  constructor(minMsat: number, elapsedMs: number, peerPubkey: string)
+  minMsat: number
+  elapsedMs: number
+  peerPubkey: string
+}
+
 export class LspSettlementError extends Error {
+  constructor(step: 'ln_invoice', status: 'Failed' | 'Expired')
   step: 'ln_invoice'
-  status: ReceiveStatus
+  /** Only the terminal-failure states ever reach this error. */
+  status: 'Failed' | 'Expired'
 }

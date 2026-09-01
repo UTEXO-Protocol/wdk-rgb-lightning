@@ -15,19 +15,23 @@
 // verbatim (so any existing substring checks keep working) and the
 // underlying error as `cause`.
 //
-// Mirrors the shape of `LspError` (see lsp-client.js): a base class
-// with `name`/`code`/`cause` + `toJSON()` for structured logging, and
-// purpose-specific subclasses for the boundaries we wrap.
+// This hierarchy is independent from the HTTP-specific `LspError` in
+// lsp-client.js. It adds a stable SDK `code` and structured `toJSON()`
+// contract for RLN-backed account operations.
 
 /**
- * Base class for all errors raised by this SDK. Carries a stable
- * machine-readable `code`, the optional originating `cause`, and a
- * `toJSON()` for structured logging.
+ * Base class for typed RLN account-operation errors. HTTP/LNURL errors use
+ * their protocol-specific `LspError` and `LnurlPayError` classes instead.
+ * Carries a stable machine-readable `code`, the optional originating
+ * `cause`, and a `toJSON()` for structured logging.
  */
 export class RgbLightningError extends Error {
   /**
-   * @param {string} message
-   * @param {{ code?: string, cause?: unknown }} [opts]
+   * Create an error for an RLN-backed account operation.
+   *
+   * @param {string} message - Human-readable failure description.
+   * @param {{ code?: string, cause?: unknown }} [opts] - Optional stable error
+   *   code and originating failure.
    */
   constructor (message, opts = {}) {
     super(message)
@@ -58,6 +62,14 @@ export class UnlockError extends RgbLightningError {
   constructor (message, opts = {}) {
     super(message, { code: opts.code ?? 'UNLOCK_FAILED', cause: opts.cause })
     this.name = 'UnlockError'
+  }
+}
+
+/** Raised when a query requires the RLN wallet to be unlocked first. */
+export class AccountLockedError extends RgbLightningError {
+  constructor (message = 'The RGB Lightning account is locked.', opts = {}) {
+    super(message, { code: 'ACCOUNT_LOCKED', cause: opts.cause })
+    this.name = 'AccountLockedError'
   }
 }
 
@@ -102,8 +114,8 @@ export class ApayError extends RgbLightningError {
 
 /**
  * Raised by surface that is intentionally not implemented in this
- * module (e.g. `verify`, `signTransaction`) because the underlying
- * C-FFI doesn't expose it or the operation is out of scope. The
+ * module (currently `signTransaction`) because the underlying C-FFI
+ * doesn't expose it or the operation is out of scope. The
  * message documents the supported alternative.
  */
 export class NotImplementedError extends RgbLightningError {
@@ -123,10 +135,11 @@ export class NotImplementedError extends RgbLightningError {
  * unchanged, so wrapping is idempotent across nested call sites.
  *
  * @template {RgbLightningError} T
- * @param {unknown} err              The caught value.
- * @param {new (msg: string, opts?: object) => T} ErrorClass  Target class.
- * @param {{ code?: string }} [opts]
- * @returns {T}
+ * @param {unknown} err - The caught value.
+ * @param {new (msg: string, opts?: object) => T} ErrorClass - Target error
+ *   class.
+ * @param {{ code?: string }} [opts] - Optional stable error-code override.
+ * @returns {T} - The original target error or a newly wrapped instance.
  */
 export function wrapError (err, ErrorClass, opts = {}) {
   if (err instanceof ErrorClass) return err

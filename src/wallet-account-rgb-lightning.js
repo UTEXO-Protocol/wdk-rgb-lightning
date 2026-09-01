@@ -19,6 +19,10 @@ import {
 } from './lsp-helpers.js'
 import { LspClient } from './lsp-client.js'
 import { UtexoLsp } from './utexo-lsp.js'
+import WalletAccountReadOnlyRgbLightning, {
+  createReadOnlyRgbLightningAdapter,
+  PENDING_ADDRESS
+} from './wallet-account-read-only-rgb-lightning.js'
 import {
   UnlockError,
   VssError,
@@ -28,52 +32,19 @@ import {
   wrapError
 } from './errors.js'
 
-/**
- * Sentinel placeholder address returned by `getAddress()` before the
- * node is unlocked. Format-valid testnet bech32 (passes
- * `wdk-react-native-core`'s `isBitcoinAddress` regex) but visibly
- * synthetic so consumers can detect it and mask the display.
- */
-export const PENDING_ADDRESS = 'tb1qpendingunlock00000000000000000000000000'
+export { PENDING_ADDRESS }
 
 /**
- * Approximate vbyte count for a typical 1-input 2-output P2WPKH spend.
- * Used by `quoteTransfer` / `quoteSendTransaction` since RLN doesn't
- * expose a tx-shape-aware fee estimator. Calibrate against actual
- * sendTransaction telemetry if accuracy ever becomes load-bearing.
- */
-const APPROX_BTC_TX_VBYTES = 141
-
-/**
- * Basis points used to approximate LN routing fees in `quoteTransfer`
- * when no probe path is available. ~50 bps (0.5%) is a conservative
- * over-estimate vs typical mainnet routing fees (~0.1-0.3%); favours
- * not under-quoting.
- */
-const LN_FEE_BPS = 50
-
-/**
- * Fallback sat/vB rate when `estimateFee` fails (regtest or network
- * hiccup). Picks a moderate value — better to over-quote than to fail.
- */
-const DEFAULT_FEE_RATE_SAT_PER_VB = 5
-
-/**
- * Watch-only via RLN's `NativeExternalSigner`: the WDK secret manager
+ * Seed-isolated via RLN's `NativeExternalSigner`: the WDK secret manager
  * owns the BIP-39 mnemonic; the manager derives a 32-byte VLS node
  * entropy from it and attaches a `NativeExternalSigner` to RLN. RLN's
  * on-disk state contains identifying public data only (xpubs, node id,
  * master fingerprint); the seed itself never reaches RLN's persistence
  * layer.
  *
- * Method coverage tracker:
- *
- *   ✅ wired (forwards to SdkNode)
- *   🚧 stub (throws NotImplemented — needs design)
- *
  * @implements {IWalletAccount}
  */
-export default class WalletAccountRgbLightning {
+export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning {
   /**
    * @param {{ binding: BareRgbLightningBinding }} bindings
    */
@@ -81,13 +52,15 @@ export default class WalletAccountRgbLightning {
     if (!bindings || !bindings.binding) {
       throw new Error('WalletAccountRgbLightning requires a BareRgbLightningBinding')
     }
+    super(createReadOnlyRgbLightningAdapter(bindings.binding))
     /** @private */ this._binding = bindings.binding
-    /** @private */ this._index = 0
+    /** @private @type {WalletAccountReadOnlyRgbLightning | null} */
+    this._readOnlyAccount = null
   }
 
   /** @private */
   get _node () {
-    return this._binding.node
+    return this._binding.ensureNode()
   }
 
   // ==========================================================================
@@ -95,7 +68,7 @@ export default class WalletAccountRgbLightning {
   // ==========================================================================
 
   /**
-   * ✅ Bring the node online with an attached external signer. Accepts
+   * Bring the node online with an attached external signer. Accepts
    * `JsonSdkExternalUnlockRequest` (bitcoind RPC creds, indexer URL,
    * proxy, announce — no `password`). The signer was attached by
    * the manager at account-construction time.
@@ -117,16 +90,7 @@ export default class WalletAccountRgbLightning {
     return { ok: true }
   }
 
-  /**
-   * ✅ Return the external-signer bootstrap dictionary (node id, account
-   * xpubs, master fingerprint). Useful for displaying the on-chain
-   * receive identity before unlock has completed, and for diagnostics.
-   */
-  async getBootstrap () {
-    return this._binding.bootstrap()
-  }
-
-  /** ✅ Idempotent shutdown. */
+  /** Idempotent shutdown. */
   async shutdown () {
     this._binding.shutdown()
     return { ok: true }
@@ -137,7 +101,7 @@ export default class WalletAccountRgbLightning {
    * node died holding it. Authenticates with the wallet password.
    * Throws if VSS isn't configured (no `vssUrl` at construction).
    *
-   * Recovery flow only — DO NOT call while another live node may still
+   * Recovery flow only. Do not call while another live node may still
    * hold the fence. Doing so corrupts the shared VSS state. See the VSS
    * docs section "Single-writer ownership" for the contract.
    *
@@ -164,24 +128,6 @@ export default class WalletAccountRgbLightning {
     if (!status || !status.configured) {
       throw new VssNotConfiguredError()
     }
-  }
-
-  /**
-   * Local-view VSS status — does not hit the server. Reports whether
-   * VSS was configured at construction (`vssUrl`), the configured URL +
-   * allow-http flag, and `lastBackupVersion`: the snapshot version from
-   * the most recent `vssBackup()` call this session (`null` if none).
-   *
-   * RLN's C-FFI exposes no read-only server-side backup-info query
-   * (unlike rgb-lib's `vssBackupInfo`), so a live server version is only
-   * available by calling `vssBackup()` (which flushes and returns the
-   * fresh `{ version }`). Use this method for cheap "is VSS on / what
-   * was my last checkpoint" reads without a network round-trip.
-   *
-   * @returns {Promise<{ configured: boolean, url: string|null, allowHttp: boolean, lastBackupVersion: number|null }>}
-   */
-  async vssStatus () {
-    return this._binding.vssStatus()
   }
 
   /**
@@ -225,8 +171,8 @@ export default class WalletAccountRgbLightning {
    * while this wallet is offline. The LSP later forwards the funds when
    * the wallet comes back online, redeeming the pre-allocated hash.
    *
-   * Backed by upstream rgb-lightning-node PR #51 (`apay_new` UniFFI
-   * method). Requires bare ≥ v0.1.0-beta.11 / nodejs ≥ v0.1.0-beta.7.
+   * Delegates to the native binding's `apayNew` method. Compatible native
+   * binding versions are enforced by this package's peer dependencies.
    *
    * @param {string} hostNodeId  - LSP's node_id (hex, 33-byte compressed secp256k1).
    * @returns {Promise<object>}  AsyncOrderNewResponse:
@@ -243,20 +189,16 @@ export default class WalletAccountRgbLightning {
   }
 
   /**
-   * One-shot LSP bootstrap. Renat's dev plan (May 27, items 3 + 4)
-   * called for `/connectpeer` and `apay/new` to fire automatically as
-   * part of SDK init. Rather than coupling them to `unlock()` — where
-   * an LSP-handshake hiccup would block the rest of the wallet from
-   * coming up — we expose them as one explicit opt-in method the
-   * consumer calls after `unlock()` returns.
+   * One-shot LSP bootstrap for consumers that want to connect the LSP peer
+   * and optionally register for APay after unlock. Keeping this separate
+   * from `unlock()` prevents a transient LSP failure from blocking wallet
+   * startup.
    *
    * Flow:
    *   1. `connectPeer(peerPubkeyAndAddr)` to dial the LSP's RLN node.
    *   2. Poll `listPeers` until the peer shows up (max `waitForPeerMs`).
-   *      Necessary because RLN's `connectPeer` returns once the TCP
-   *      handshake completes, but the noise handshake + the LDK peer
-   *      table update lag ~5–30 s on real networks (this is the same
-   *      race t22 in the E2E suite documents).
+   *      `connectPeer` can return before the encrypted handshake and LDK
+   *      peer-table update are visible to `listPeers`.
    *   3. Optionally `apayNew(hostNodeId)` to register as an async-pay
    *      recipient with the LSP. Skipped if `hostNodeId` is undefined.
    *
@@ -307,11 +249,8 @@ export default class WalletAccountRgbLightning {
     // apayNew before the peer is "ready" reliably triggers
     // Rln(Conflict): /apay/new timed out waiting for host response.
     //
-    // Defensive shape handling: listPeers historically returned a
-    // raw Vec<Peer> JSON array, but post-dev-merge the bare/nodejs
-    // bindings wrap it as `{ peers: [...] }` to match RLN's HTTP
-    // response shape (t22 in the E2E suite reads `.peers`). Accept
-    // either.
+    // Compatible native bindings may return either a raw peer array or an
+    // object with a `peers` array.
     const deadline = Date.now() + Math.max(0, Number(waitForPeerMs) || 0)
     const pollMs = Math.max(100, Number(pollIntervalMs) || 1000)
     let peerVisible = false
@@ -402,14 +341,8 @@ export default class WalletAccountRgbLightning {
   }
 
   // ==========================================================================
-  // Node info / network / sync — ✅ wired
+  // Node lifecycle — read methods are inherited from the read-only account
   // ==========================================================================
-
-  /** @returns {Object} node info (pubkey, num peers, num channels, etc.) */
-  async getNodeInfo () { return this._node.nodeInfo() }
-
-  /** @returns {Object} network info (block height, network) */
-  async getNetworkInfo () { return this._node.networkInfo() }
 
   /** Force a sync of the on-chain wallet. */
   async sync () {
@@ -417,37 +350,8 @@ export default class WalletAccountRgbLightning {
     return { ok: true }
   }
 
-  /**
-   * ✅ Returns a fresh on-chain receive address.
-   *
-   * `useAccount({ network: 'rgb-lightning' })` on the RN side calls this
-   * eagerly on mount, *before* the user has entered bitcoind/indexer
-   * credentials and called `unlock()`. RLN throws `Rln(NotInitialized)`
-   * until unlock — but the RN side's `useAddressLoader` will retry on
-   * error every render, blowing the React update-depth limit.
-   *
-   * To break the loop without breaking the contract:
-   *   • If `unlock()` has run, return the real address (string).
-   *   • Otherwise return a clearly-fake but format-valid placeholder so
-   *     the loader caches it and stops retrying. The LN screen detects
-   *     the placeholder and renders "(unlock to view)" instead.
-   *
-   * Wallet-store schema requires bitcoin format `^(1|3|bc1|m|n|2|tb1)…`,
-   * so we use a `tb1q` prefix.
-   */
-  getAddress () {
-    try {
-      const addr = this._node.address()
-      if (addr && typeof addr === 'object' && addr.address) return addr.address
-      if (typeof addr === 'string' && addr.length > 0) return addr
-    } catch (_e) {
-      // fall through
-    }
-    return PENDING_ADDRESS
-  }
-
   // ==========================================================================
-  // Channels — ✅ all wired
+  // Channels
   // ==========================================================================
 
   /**
@@ -474,15 +378,8 @@ export default class WalletAccountRgbLightning {
     return { ok: true }
   }
 
-  async listChannels () { return this._node.listChannels() }
-
-  /** @param {string} temporaryChannelIdHex */
-  async getChannelId (temporaryChannelIdHex) {
-    return this._node.getChannelId(temporaryChannelIdHex)
-  }
-
   // ==========================================================================
-  // Peers — ✅ all wired
+  // Peers
   // ==========================================================================
 
   /** @param {string} peerPubkeyAndAddr - "<pubkey>@<host>:<port>" */
@@ -510,10 +407,8 @@ export default class WalletAccountRgbLightning {
     return { ok: true }
   }
 
-  async listPeers () { return this._node.listPeers() }
-
   // ==========================================================================
-  // BOLT11 invoices — ✅ wired
+  // BOLT11 invoices
   // ==========================================================================
 
   /**
@@ -582,12 +477,6 @@ export default class WalletAccountRgbLightning {
     return out
   }
 
-  /** @param {string} invoice */
-  async decodeInvoice (invoice) { return this._node.decodeLnInvoice(invoice) }
-
-  /** @param {string} invoice */
-  async getInvoiceStatus (invoice) { return this._node.invoiceStatus(invoice) }
-
   /**
    * Create a HODL (hold) invoice — a BOLT11 bound to a caller-supplied
    * `paymentHash` whose preimage the receiver releases later via
@@ -622,7 +511,7 @@ export default class WalletAccountRgbLightning {
     }
   }
 
-  // Hodl invoices — 🚧 (request shape is upstream-defined; passthrough kept simple)
+  // HODL invoices
   /** @param {Object} request */
   async cancelHodlInvoice (request) {
     this._node.cancelHodlInvoice(request)
@@ -633,31 +522,20 @@ export default class WalletAccountRgbLightning {
   async claimHodlInvoice (request) { return this._node.claimHodlInvoice(request) }
 
   // ==========================================================================
-  // Payments — ✅ wired
+  // Payments
   // ==========================================================================
 
-  /** @param {Object} request - JsonSendPaymentRequest (invoice, amount_msat, ...) */
+  /** @param {Object} request - JsonSendPaymentRequest (invoice, amt_msat?, asset_id?, ...) */
   async sendPayment (request) { return this._node.sendPayment(request) }
 
-  /** @param {Object} request - JsonKeysendRequest (dest_pubkey, amount_msat, asset_id, ...) */
+  /** @param {Object} request - JsonKeysendRequest (dest_pubkey, amt_msat, asset_id?, ...) */
   async keysend (request) { return this._node.keysend(request) }
 
-  async listPayments () { return this._node.listPayments() }
-
-  /** @param {string} paymentHashHex
-   *  @param {'sent'|'received'} paymentType */
-  async getPayment (paymentHashHex, paymentType) {
-    return this._node.getPayment(paymentHashHex, paymentType)
-  }
-
-  // Atomic-swap surface (`makerInit` / `makerExecute` / `taker` /
-  // `listSwaps` / `getSwap`) is intentionally NOT exposed at the WDK
-  // layer — Renat scoped it out for this module (2026-04-30). The
-  // bare addon still passes through to the C-FFI for any other
-  // consumer that wants it.
+  // Atomic swaps are outside this module's WDK account contract. Lower-level
+  // consumers can access that surface through the native binding.
 
   // ==========================================================================
-  // RGB asset issuance + transfers — ✅ wired
+  // RGB asset issuance and transfers
   // ==========================================================================
 
   /** @param {Object} request */
@@ -665,20 +543,6 @@ export default class WalletAccountRgbLightning {
   async issueAssetUda (request) { return this._node.issueAssetUda(request) }
   async issueAssetCfa (request) { return this._node.issueAssetCfa(request) }
   async issueAssetIfa (request) { return this._node.issueAssetIfa(request) }
-
-  /** @param {string[]} [filterAssetSchemas] */
-  async listAssets (filterAssetSchemas) {
-    return this._node.listAssets(filterAssetSchemas)
-  }
-
-  /** @param {string} assetId */
-  async getAssetBalance (assetId) { return this._node.assetBalance(assetId) }
-
-  /** @param {string} assetId */
-  async getAssetMetadata (assetId) { return this._node.assetMetadata(assetId) }
-
-  /** @param {string} [assetId] */
-  async listTransfers (assetId) { return this._node.listTransfers(assetId) }
 
   /** @param {Object} request */
   async refreshTransfers (request) {
@@ -689,74 +553,100 @@ export default class WalletAccountRgbLightning {
   /** @param {Object} request */
   async failTransfers (request) { return this._node.failTransfers(request) }
 
-  /** @param {Object} request - JsonRgbInvoiceRequest */
+  /**
+   * Create an RGB invoice. Forwarded verbatim to RLN's `rgbInvoice`
+   * (`JsonRgbInvoiceRequest`). REQUIRED fields — RLN rejects the request on
+   * deserialise if either is omitted:
+   *   - `min_confirmations` {number}
+   *   - `witness` {boolean}  true = witness (on-chain) receive, false = blinded
+   * Optional: `asset_id`, `assignment_kind`
+   * (`'Fungible'|'NonFungible'|'InflationRight'|'ReplaceRight'|'Any'`),
+   * `assignment_amount`, `duration_seconds`.
+   * @param {Object} request - JsonRgbInvoiceRequest (see above).
+   */
   async createRgbInvoice (request) { return this._node.rgbInvoice(request) }
 
-  /** @param {string} invoice */
-  async decodeRgbInvoice (invoice) { return this._node.decodeRgbInvoice(invoice) }
-
-  /** @param {Object} request - JsonSendAssetRequest */
+  /**
+   * Send an RGB asset. Forwarded verbatim to RLN's `sendRgb`
+   * (`JsonSendRgbRequest`):
+   *   {
+   *     donation: boolean,
+   *     fee_rate: number,            // sat/vB
+   *     min_confirmations: number,
+   *     recipient_groups: [{
+   *       asset_id: string,
+   *       recipients: [{
+   *         recipient_id: string,           // from decodeRgbInvoice
+   *         assignment_kind: 'Fungible' | 'NonFungible' | 'InflationRight' | 'ReplaceRight' | 'Any',
+   *         assignment_amount?: number,
+   *         transport_endpoints: string[],  // from decodeRgbInvoice
+   *         witness_data?: { amount_sat: number, blinding?: number }
+   *       }]
+   *     }]
+   *   }
+   * RLN rejects the old flat `{ recipient_id, amount, asset_id }` shape on
+   * deserialise. For a simple amount-based fungible send, prefer the generic
+   * `transfer({ recipient: <rgbInvoice>, amount, token })`, which decodes the
+   * invoice and assembles this request for you.
+   * @param {Object} request - JsonSendRgbRequest (see above).
+   */
   async sendRgbAsset (request) { return this._node.sendRgb(request) }
 
   /** @param {Object} request - JsonInflateRequest */
   async inflate (request) { return this._node.inflate(request) }
 
-  /** @param {string} digest */
-  async getAssetMedia (digest) { return this._node.getAssetMedia(digest) }
   /** @param {Object} request */
   async postAssetMedia (request) { return this._node.postAssetMedia(request) }
 
   // ==========================================================================
-  // BTC ops — ✅ wired
+  // Bitcoin operations
   // ==========================================================================
 
+  /** Raw RLN send-btc escape hatch for callers that already own the native request shape. */
+  async sendBtc (request) { return this._node.sendBtc(request) }
+
   /**
-   * IWalletAccount contract: return the on-chain spendable balance as a
-   * numeric satoshi string. `useBalance` (TanStack Query) auto-calls
-   * this on mount and `AccountService.callAccountMethod` validates the
-   * result against `^\d+$` — anything else throws "Invalid balance
-   * format" and retries on a tight loop.
-   *
-   * Pre-unlock the node throws `Rln(NotInitialized)`; we swallow that
-   * into "0" so the schema accepts and the loop stops. Post-unlock the
-   * caller can pull the full breakdown via `getBalanceDetails`.
-   *
-   * @param {boolean} [skipSync]
-   * @returns {Promise<string>}
+   * WDK-standard on-chain send. Accepts `{ to, value, feeRate?,
+   * confirmationTarget? }`; the former RLN `{ address, amount, fee_rate,
+   * skip_sync? }` shape remains accepted during the beta migration.
    */
-  async getBalance (skipSync = false) {
-    try {
-      const r = this._node.btcBalance(!!skipSync)
-      const sats = r?.vanilla?.spendable ?? r?.vanilla?.settled ?? 0
-      return String(sats)
-    } catch (_e) {
-      return '0'
+  async sendTransaction (tx) {
+    if (!tx || typeof tx !== 'object') {
+      throw new TypeError('sendTransaction(tx) requires a transaction object')
     }
+    const to = tx.to ?? tx.address
+    const value = tx.value ?? tx.amount
+    if (typeof to !== 'string' || to.length === 0) {
+      throw new TypeError('sendTransaction(tx) requires a non-empty to address')
+    }
+    const amount = Number(value)
+    if (!Number.isSafeInteger(amount) || amount < 0) {
+      throw new TypeError('sendTransaction(tx) value must be a non-negative safe integer in satoshis')
+    }
+
+    const confirmationTarget = tx.confirmationTarget ?? 6
+    const feeRate = tx.feeRate ?? tx.fee_rate ?? await this._defaultFeeRate(confirmationTarget)
+    const quote = await this.quoteSendTransaction({ to, value, feeRate, confirmationTarget })
+    const response = await this.sendBtc({
+      address: to,
+      amount,
+      fee_rate: Number(feeRate),
+      skip_sync: Boolean(tx.skipSync ?? tx.skip_sync ?? false)
+    })
+    return { hash: response?.txid ?? response?.hash ?? '', fee: quote.fee }
   }
 
-  /**
-   * Full on-chain balance breakdown — `{ vanilla: { settled, future,
-   * spendable }, colored: {...} }`. Used by the LN screen for the
-   * detailed view; not part of the standard IWalletAccount contract.
-   * @param {boolean} [skipSync]
-   */
-  async getBalanceDetails (skipSync = false) {
-    return this._node.btcBalance(!!skipSync)
-  }
-
-  /** ✅ External signer signs the on-chain spend in-process via VLS;
-   *  RLN never sees the seed.
-   *  @param {Object} request - JsonSendBtcRequest */
-  async sendTransaction (request) { return this._node.sendBtc(request) }
-
-  /** @param {boolean} [skipSync] */
-  async getTransactions (skipSync = false) {
-    return this._node.listTransactions(skipSync)
-  }
-
-  /** @param {boolean} [skipSync] */
-  async listUnspents (skipSync = false) {
-    return this._node.listUnspents(skipSync)
+  /** Rotate to a new receive address. Read-only accounts expose only the stable current address. */
+  async rotateAddress () {
+    if (typeof this._node.rotateAddress !== 'function') {
+      throw new Error('The installed RGB Lightning native binding does not expose rotateAddress()')
+    }
+    const response = await this._node.rotateAddress()
+    const address = typeof response === 'string' ? response : response?.address
+    if (typeof address !== 'string' || address.length === 0) {
+      throw new Error('RGB Lightning node returned an invalid rotated address')
+    }
+    return address
   }
 
   /** @param {Object} request - JsonCreateUtxosRequest */
@@ -765,13 +655,8 @@ export default class WalletAccountRgbLightning {
     return { ok: true }
   }
 
-  /** @param {number} blocks - target confirmation in blocks (1..=65535) */
-  async estimateFee (blocks) {
-    return this._node.estimateFee(blocks)
-  }
-
   // ==========================================================================
-  // Onion messages / signing / diagnostics — ✅ wired
+  // Onion messages, signing, and diagnostics
   // ==========================================================================
 
   /** @param {Object} request - JsonSendOnionMessageRequest */
@@ -780,73 +665,19 @@ export default class WalletAccountRgbLightning {
     return { ok: true }
   }
 
-  /** @param {string} message
-   *  @returns {Promise<{ signature: string }>} */
-  async sign (message) { return this._node.signMessage(message) }
-
-  /** @param {string} indexerUrl */
-  async checkIndexerUrl (indexerUrl) { return this._node.checkIndexerUrl(indexerUrl) }
-
-  /** @param {string} proxyEndpoint */
-  async checkProxyEndpoint (proxyEndpoint) {
-    this._node.checkProxyEndpoint(proxyEndpoint)
-    return { ok: true }
+  /** @returns {Promise<string>} Lightning zbase32 message signature. */
+  async sign (message) {
+    const response = await this._node.signMessage(message)
+    const signature = response?.signed_message ?? response?.signature ?? response
+    if (typeof signature !== 'string' || signature.length === 0) {
+      throw new Error('RGB Lightning node returned an invalid message signature')
+    }
+    return signature
   }
 
   // ==========================================================================
   // IWalletAccount surface — generic operations routed onto RLN
   // ==========================================================================
-
-  /**
-   * Identifies the recipient form so `transfer()` / `quoteTransfer()`
-   * can dispatch to the right backing RLN method.
-   * @private
-   * @param {string} recipient
-   * @returns {'bolt11'|'rgb-invoice'|'ln-pubkey'|'btc-address'}
-   */
-  static _classifyRecipient (recipient) {
-    if (typeof recipient !== 'string' || recipient.length === 0) {
-      throw new Error('transfer: recipient must be a non-empty string')
-    }
-    const r = recipient.trim()
-    // BOLT11 — bech32-encoded; case is normalised to lowercase here. The
-    // human-readable prefix is `lnbc`/`lntb`/`lnbcrt`/`lnsb` (mainnet /
-    // testnet / regtest / signet) followed by an amount + payload.
-    if (/^ln(bc|tb|bcrt|sb)/i.test(r)) return 'bolt11'
-    // RGB invoice — defined by the rgb-rs invoice URI scheme.
-    if (r.toLowerCase().startsWith('rgb:') || r.toLowerCase().startsWith('utxob:')) return 'rgb-invoice'
-    // 33-byte compressed secp256k1 pubkey in hex (LN node id form).
-    if (/^[0-9a-fA-F]{66}$/.test(r)) return 'ln-pubkey'
-    // Default: assume bitcoin address; let RLN's address parser reject
-    // malformed values rather than re-implementing the bech32/base58
-    // bitcoin-address grammar here.
-    return 'btc-address'
-  }
-
-  /**
-   * Verify a message signature.
-   *
-   * RLN's `sign_message` produces a recoverable LN-style signature
-   * (zbase32-encoded over `"Lightning Signed Message:" + msg`).
-   * The c-ffi does NOT currently expose a matching `verify_message`,
-   * so we cannot round-trip the signature without either:
-   *   a) wiring `lightning::util::message_signing::verify` into c-ffi
-   *      (upstream change), or
-   *   b) reimplementing the zbase32 + ecdsa-recover path in JS.
-   *
-   * Both are out of scope for this iteration; verify stays a documented
-   * gap. Track upstream + bump when c-ffi exposes verify_message.
-   *
-   * @param {string} _message
-   * @param {string} _signature
-   * @returns {Promise<boolean>}
-   */
-  async verify (_message, _signature) {
-    throw new NotImplementedError(
-      'verify() requires upstream c-ffi support for rln_verify_message — ' +
-      'pending: expose lightning::util::message_signing::verify in rgb-lightning-node/bindings/c-ffi.'
-    )
-  }
 
   /**
    * Sign an arbitrary tx. RLN's external signer signs the LN+RGB tx
@@ -870,7 +701,7 @@ export default class WalletAccountRgbLightning {
    * Generic transfer router. Inspects the recipient form and dispatches:
    *   - BOLT11 invoice → `sendPayment({ invoice, amt_msat?, asset_id? })`
    *   - LN node pubkey  → `keysend({ dest_pubkey, amt_msat, asset_id? })`
-   *   - BTC address     → `sendTransaction({ address, amount, fee_rate, skip_sync })`
+   *   - BTC address     → `sendTransaction({ to, value, feeRate })`
    *   - RGB invoice     → `sendRgbAsset` (asset_id picked from invoice)
    *
    * `options.token` is interpreted as an RGB asset_id when present.
@@ -913,99 +744,66 @@ export default class WalletAccountRgbLightning {
           throw new Error('transfer(on-chain): amount (sats) is required')
         }
         const feeRate = options.feeRate ?? await this._defaultFeeRate(6)
-        const req = {
-          address: recipient,
-          amount: Number(amount),
-          fee_rate: Number(feeRate),
-          skip_sync: false
-        }
-        const r = await this.sendTransaction(req)
-        const fee = BigInt(Math.round(Number(feeRate) * APPROX_BTC_TX_VBYTES))
-        return { hash: r?.txid ?? '', fee }
+        return this.sendTransaction({
+          to: recipient,
+          value: amount,
+          feeRate,
+          confirmationTarget: 6
+        })
       }
       case 'rgb-invoice': {
-        // RGB on-chain transfer: recipient IS the rgb invoice. Asset id
-        // is encoded in it; RLN parses it server-side.
-        const req = { recipient_id: recipient }
-        if (amount !== undefined && amount !== null) req.amount = Number(amount)
-        if (assetId) req.asset_id = assetId
+        // RGB send. The recipient IS the rgb invoice, which encodes the
+        // recipient_id, the asset, and — crucially — the receiver's
+        // consignment transport endpoints. RLN's `sendRgb` does not
+        // re-derive any of these: it requires a nested `recipient_groups`
+        // request with explicit `transport_endpoints` (the flat
+        // `{ recipient_id, amount, asset_id }` shape this used to build is
+        // rejected on deserialise). So decode the invoice and assemble the
+        // request from it, mirroring the working rgb-sdk-rn / wdk-wallet-rgb
+        // sends. transfer() assumes a Fungible assignment (the natural case
+        // for an amount-based transfer); non-fungible or multi-recipient
+        // sends should call sendRgbAsset() with a full SendRgbAssetRequest.
+        if (amount === undefined || amount === null) {
+          throw new Error('transfer(rgb): amount (asset units) is required')
+        }
+        const decoded = await this.decodeRgbInvoice(recipient)
+        const recipientId = decoded?.recipient_id
+        if (!recipientId) {
+          throw new Error('transfer(rgb): could not decode a recipient_id from the RGB invoice')
+        }
+        const contractId = assetId ?? decoded?.asset_id
+        if (!contractId) {
+          throw new Error('transfer(rgb): asset_id missing — pass options.token or use an invoice that encodes the asset')
+        }
+        const endpoints = (Array.isArray(decoded?.transport_endpoints) && decoded.transport_endpoints.length > 0)
+          ? decoded.transport_endpoints
+          : this._defaultTransportEndpoints()
+        if (endpoints.length === 0) {
+          throw new Error('transfer(rgb): the RGB invoice carries no transport endpoints and the wallet has no proxyEndpoint configured')
+        }
+        const feeRate = options.feeRate ?? await this._defaultFeeRate(6)
+        const req = {
+          donation: false,
+          fee_rate: Number(feeRate),
+          min_confirmations: 1,
+          recipient_groups: [{
+            asset_id: contractId,
+            recipients: [{
+              recipient_id: recipientId,
+              assignment_kind: 'Fungible',
+              assignment_amount: Number(amount),
+              transport_endpoints: endpoints
+            }]
+          }]
+        }
         const r = await this.sendRgbAsset(req)
+        // RLN's send response carries the txid; the on-chain fee for an RGB
+        // transfer isn't surfaced separately, so report 0 (unchanged).
         return { hash: r?.txid ?? '', fee: BigInt(0) }
       }
       default:
         throw new Error(`transfer: unhandled recipient kind "${kind}"`)
     }
-  }
-
-  /**
-   * Approximate quote for a transfer without actually sending. Per
-   * Renat: accept the approximation while RLN does not expose a probe
-   * endpoint.
-   *
-   *   - on-chain → `estimateFee(blocks) × APPROX_BTC_TX_VBYTES`
-   *   - LN       → flat percentage of amount (`LN_FEE_BPS` basis points)
-   *   - RGB invoice → on-chain quote (RGB transfers settle on-chain)
-   *
-   * Returns `{ fee }` (no `hash`), matching `Omit<TransferResult, 'hash'>`.
-   *
-   * @param {TransferOptions} options
-   * @returns {Promise<Omit<TransferResult, 'hash'>>}
-   */
-  async quoteTransfer (options) {
-    if (!options || typeof options !== 'object') {
-      throw new Error('quoteTransfer: options must be { recipient, amount, token? }')
-    }
-    const kind = WalletAccountRgbLightning._classifyRecipient(options.recipient)
-    if (kind === 'bolt11' || kind === 'ln-pubkey') {
-      const amt = Number(options.amount ?? 0)
-      const fee = BigInt(Math.max(1, Math.ceil(amt * LN_FEE_BPS / 10000)))
-      return { fee }
-    }
-    // on-chain (BTC or RGB)
-    const rate = await this._defaultFeeRate(6)
-    return { fee: BigInt(Math.round(Number(rate) * APPROX_BTC_TX_VBYTES)) }
-  }
-
-  /**
-   * Approximate quote for a single on-chain spend. Sizes the tx as a
-   * typical 1-input 2-output P2WPKH spend (~141 vbytes) and multiplies
-   * by the current sat/vB rate.
-   *
-   * @param {Transaction} _tx
-   * @returns {Promise<Omit<TransactionResult, 'hash'>>}
-   */
-  async quoteSendTransaction (_tx) {
-    const rate = await this._defaultFeeRate(6)
-    return { fee: BigInt(Math.round(Number(rate) * APPROX_BTC_TX_VBYTES)) }
-  }
-
-  /**
-   * Look up a transaction by hash by filtering `listTransactions` (BTC)
-   * then falling back to `listPayments` (LN). Returns the raw entry, or
-   * `null` if not found.
-   *
-   * @param {string} hash
-   * @returns {Promise<unknown | null>}
-   */
-  async getTransactionReceipt (hash) {
-    if (typeof hash !== 'string' || hash.length === 0) {
-      throw new Error('getTransactionReceipt: hash is required')
-    }
-    try {
-      const txs = await this.getTransactions(false)
-      const onchain = Array.isArray(txs?.transactions) ? txs.transactions : (Array.isArray(txs) ? txs : [])
-      const hit = onchain.find((t) => t?.txid === hash)
-      if (hit) return hit
-    } catch (_e) { /* fall through to LN lookup */ }
-    try {
-      const sent = await this.getPayment(hash, 'sent')
-      if (sent && sent.payment_hash) return sent
-    } catch (_e) { /* not a sent payment */ }
-    try {
-      const recv = await this.getPayment(hash, 'received')
-      if (recv && recv.payment_hash) return recv
-    } catch (_e) { /* not a received payment either */ }
-    return null
   }
 
   /**
@@ -1020,43 +818,48 @@ export default class WalletAccountRgbLightning {
    *
    * @returns {KeyPair}
    */
-  getKeyPair () {
+  get index () { return 0 }
+
+  /** VLS derives the node identity directly from root entropy, not a BIP-44 child. */
+  get path () { return 'm' }
+
+  get keyPair () {
     const b = this._binding.bootstrap()
     if (!b || typeof b.node_id !== 'string') {
-      throw new Error('getKeyPair: bootstrap did not return a node_id')
+      throw new Error('keyPair: bootstrap did not return a node_id')
     }
-    const publicKey = Buffer.from(b.node_id, 'hex')
+    const publicKey = Uint8Array.from(Buffer.from(b.node_id, 'hex'))
     return { publicKey, privateKey: null }
   }
 
+  /** @deprecated Use the WDK-standard `keyPair` getter. */
+  getKeyPair () { return this.keyPair }
+
   /**
-   * Read-only façade — exposes the safe (non-mutating) IWalletAccount
-   * methods and throws on anything that would broadcast.
-   *
-   * The underlying account is already watch-only at the signer level
-   * (VLS holds keys, RLN never sees seed); this just enforces the
-   * `IWalletAccountReadOnly` *type* contract.
+   * Return the cached WDK read-only account backed by the immutable query
+   * adapter created during construction.
    *
    * @returns {Promise<IWalletAccountReadOnly>}
    */
   async toReadOnlyAccount () {
-    return new ReadOnlyRgbLightningAccount(this)
+    if (!this._readOnlyAccount) {
+      this._readOnlyAccount = new WalletAccountReadOnlyRgbLightning(this._reader)
+    }
+    return this._readOnlyAccount
   }
 
   /**
+   * Wallet's configured RGB consignment proxy as a single-element
+   * `transport_endpoints` list — the fallback `transfer()` uses for an RGB
+   * send when the decoded invoice carries no endpoints of its own (a
+   * well-formed invoice always does, so this is defensive). Returns `[]`
+   * when no `proxyEndpoint` was set at construction.
    * @private
-   * @param {number} blocks
-   * @returns {Promise<number>}
+   * @returns {string[]}
    */
-  async _defaultFeeRate (blocks) {
-    try {
-      const r = await this.estimateFee(blocks)
-      const rate = r?.fee_rate ?? r?.feerate ?? r
-      const n = Number(rate)
-      return Number.isFinite(n) && n > 0 ? n : DEFAULT_FEE_RATE_SAT_PER_VB
-    } catch (_e) {
-      return DEFAULT_FEE_RATE_SAT_PER_VB
-    }
+  _defaultTransportEndpoints () {
+    const cfg = (this._binding && this._binding._config) || {}
+    return cfg.proxyEndpoint ? [cfg.proxyEndpoint] : []
   }
 
   // ==========================================================================
@@ -1069,8 +872,8 @@ export default class WalletAccountRgbLightning {
   // composition over instance methods (e.g. for read-only accounts).
 
   /**
-   * Pay a Lightning Address (LUD-06). Works against any LNURL-pay
-   * server, including but not limited to utexo-lsp.
+   * Pay a Lightning Address (LUD-06), including UMA's `$user@host` form.
+   * Works against any LNURL-pay server, including but not limited to utexo-lsp.
    * @see ./lsp-helpers.js#payLightningAddress
    */
   payLightningAddress (addr, amountMsat, opts) {
@@ -1099,51 +902,4 @@ export default class WalletAccountRgbLightning {
     // shut down by the manager's dispose(); the account itself holds
     // no sensitive state.
   }
-}
-
-/**
- * Read-only façade returned by `WalletAccountRgbLightning.toReadOnlyAccount`.
- * Implements the `IWalletAccountReadOnly` shape over the same underlying
- * account but rejects any mutating call. We don't subclass
- * `WalletAccountReadOnly` from `@tetherto/wdk-wallet` because the abstract
- * surface there assumes ERC-20 semantics (token addresses, native
- * balances as bigints) that don't translate to LN; we provide the same
- * method names and let duck-typing handle the contract.
- */
-class ReadOnlyRgbLightningAccount {
-  /** @param {WalletAccountRgbLightning} account */
-  constructor (account) {
-    this._account = account
-  }
-
-  /** @returns {Promise<string>} */
-  async getAddress () {
-    const a = this._account.getAddress()
-    return a instanceof Promise ? a : Promise.resolve(a)
-  }
-
-  /** @param {string} message @param {string} signature @returns {Promise<boolean>} */
-  async verify (message, signature) { return this._account.verify(message, signature) }
-
-  /** @returns {Promise<bigint>} balance in sats */
-  async getBalance () {
-    const s = await this._account.getBalance(false)
-    return BigInt(s ?? 0)
-  }
-
-  /** Per-asset balance — `tokenAddress` is interpreted as an RGB asset id. */
-  async getTokenBalance (tokenAddress) {
-    const r = await this._account.getAssetBalance(tokenAddress)
-    const settled = r?.settled ?? r?.spendable ?? 0
-    return BigInt(settled)
-  }
-
-  /** @param {Transaction} tx */
-  async quoteSendTransaction (tx) { return this._account.quoteSendTransaction(tx) }
-
-  /** @param {TransferOptions} options */
-  async quoteTransfer (options) { return this._account.quoteTransfer(options) }
-
-  /** @param {string} hash */
-  async getTransactionReceipt (hash) { return this._account.getTransactionReceipt(hash) }
 }

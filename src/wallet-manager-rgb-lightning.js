@@ -23,13 +23,14 @@ const MEMPOOL_SPACE_URL = 'https://mempool.space'
  *   indexerUrl?: string,
  *   proxyEndpoint?: string,
  *   announceAddresses?: string[],
- *   announceAlias?: string
+ *   announceAlias?: string,
+ *   nodeSeedDerivation?: 'auto'|'wdk-seed-v2'|'legacy-v1'
  * }} RgbLightningWalletConfig
  */
 
 /**
- * Derive the 32-byte node entropy that gets handed to
- * `NativeExternalSigner` from a BIP-39 mnemonic.
+ * Derive the 32-byte node entropy from the 64-byte BIP-39 seed already
+ * normalized by WDK's WalletManager constructor.
  *
  * Approach: take the first 32 bytes of the BIP-39 PBKDF2 seed
  * (no passphrase). This is deterministic, stable across launches,
@@ -39,17 +40,23 @@ const MEMPOOL_SPACE_URL = 'https://mempool.space'
  * derives all subkeys it needs from this entropy via its own KDF
  * (`KeyDerivationStyle::Ldk`).
  *
- * @param {string} mnemonic - BIP-39 mnemonic phrase
+ * @param {Uint8Array} seed - WDK BIP-39 seed bytes
  * @returns {string} 64-char hex string (the 32 entropy bytes)
  */
-function mnemonicToNodeSeedHex (mnemonic) {
-  if (typeof mnemonic !== 'string' || mnemonic.trim().length === 0) {
-    throw new Error('RGB Lightning wallet requires a BIP-39 mnemonic seed phrase')
+export function wdkSeedToNodeSeedHex (seed) {
+  if (!(seed instanceof Uint8Array) || seed.byteLength < 32) {
+    throw new Error('RGB Lightning wallet requires at least 32 bytes of WDK seed material')
   }
-  const seed = mnemonicToSeedSync(mnemonic, '')
-  // Web-style Buffer (bare-node-runtime polyfill) supports .subarray + .toString.
-  const first32 = seed.subarray(0, 32)
-  return Buffer.from(first32).toString('hex')
+  return Buffer.from(seed.subarray(0, 32)).toString('hex')
+}
+
+/**
+ * Reproduces the beta.14-and-earlier accidental double-PBKDF derivation.
+ * Used only as an automatic fallback for an existing persisted node identity.
+ */
+export function legacyWdkSeedToNodeSeedHex (seed) {
+  const corruptedMnemonic = Buffer.from(seed).toString('utf8')
+  return Buffer.from(mnemonicToSeedSync(corruptedMnemonic, '').subarray(0, 32)).toString('hex')
 }
 
 /**
@@ -109,10 +116,22 @@ export default class WalletManagerRgbLightning extends WalletManager {
   /**
    * Returns the (only) account. RGB Lightning is single-account.
    *
-   * @param {number} [index]
+   * RGB Lightning's VLS node identity must be derived from the manager seed, so
+   * the generic WDK named-signer overload is accepted for API compatibility but
+   * rejected explicitly.
+   *
+   * @param {number|string} [indexOrSignerName]
+   * @param {{ signerName?: string }} [options]
    * @returns {Promise<WalletAccountRgbLightning>}
    */
-  async getAccount (index = 0) {
+  async getAccount (indexOrSignerName = 0, options = {}) {
+    if (typeof indexOrSignerName === 'string' || options.signerName !== undefined) {
+      throw new Error(
+        'RGB Lightning accounts require the manager seed; registered WDK signers are not supported.'
+      )
+    }
+
+    const index = indexOrSignerName
     if (index !== 0) {
       throw new Error('RGB Lightning wallets only support account index 0.')
     }
@@ -140,11 +159,20 @@ export default class WalletManagerRgbLightning extends WalletManager {
       // RN-side `unlock()` call then brings LDK + bitcoind online
       // using the bootstrap that's already on disk (or writes it if
       // this is a fresh dataDir).
-      const mnemonic = typeof this.seed === 'string'
-        ? this.seed
-        : Buffer.from(this.seed).toString('utf8')
-      const seedHex = mnemonicToNodeSeedHex(mnemonic)
-      binding.attachExternalSigner(seedHex)
+      const currentSeedHex = wdkSeedToNodeSeedHex(this.seed)
+      const legacySeedHex = legacyWdkSeedToNodeSeedHex(this.seed)
+      const derivation = this._config.nodeSeedDerivation ?? 'auto'
+      if (!['auto', 'wdk-seed-v2', 'legacy-v1'].includes(derivation)) {
+        throw new Error("nodeSeedDerivation must be 'auto', 'wdk-seed-v2', or 'legacy-v1'")
+      }
+      if (derivation === 'legacy-v1') {
+        binding.attachExternalSigner(legacySeedHex)
+      } else {
+        binding.attachExternalSigner(
+          currentSeedHex,
+          derivation === 'auto' && legacySeedHex !== currentSeedHex ? legacySeedHex : undefined
+        )
+      }
 
       this._accounts[index] = new WalletAccountRgbLightning({ binding })
     }
@@ -152,11 +180,21 @@ export default class WalletManagerRgbLightning extends WalletManager {
   }
 
   /**
-   * @param {string} _path
-   * @returns {Promise<never>}
+   * Return the single VLS root account by its non-BIP-44 path.
+   *
+   * @param {string} path
+   * @param {{ signerName?: string }} [options]
    */
-  async getAccountByPath (_path) {
-    throw new Error('Method not supported on RGB Lightning')
+  async getAccountByPath (path, options = {}) {
+    if (options.signerName !== undefined) {
+      throw new Error(
+        'RGB Lightning accounts require the manager seed; registered WDK signers are not supported.'
+      )
+    }
+    if (path !== 'm') {
+      throw new Error("RGB Lightning wallets only support the VLS root path 'm'.")
+    }
+    return this.getAccount(0)
   }
 
   /**

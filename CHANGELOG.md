@@ -9,83 +9,174 @@ while pre-`1.0`.
 ## [Unreleased]
 
 ### Added
-- **`UtexoLsp` composed-flow class** (`src/utexo-lsp.js`) — brings the
-  LSP surface to parity with `@utexo/rgb-sdk-rn`'s `UtexoLsp`. A
-  stateful orchestration object over an account + `LspClient` covering
-  the full lifecycle: `connect`, `waitForChannel`, `receiveAsset`,
-  `awaitReceiveSettlement`, `waitForOutboundLiquidity`, `sendAsset`,
-  `payAddress`, `enableLightningAddress`, and `claimPendingPayments`.
-  All poll loops accept `WaitOptions` (`timeoutMs`, `pollIntervalMs`,
-  `signal`, `onProgress`, `onEachPoll`). Construct via
-  `account.createLsp(peer?)` — the no-arg form auto-discovers the peer
-  from the wallet's `lspBaseUrl`. Also exports `LspChannelTimeoutError`,
-  `LspSettlementError`, `peerUri()`, and `normalizeReceiveStatus()`.
-- **`LspClient.resolveAddress(username, amtMsat, opts)`** — full LUD-06
-  resolution (discovery + callback) routed through the LSP's `baseUrl`,
-  with the callback URL rewritten onto the base origin so the second hop
-  inherits the client's retry/timeout rails and survives an LSP that
-  advertises an internal/emulator host (e.g. `10.0.2.2`). Mirrors
-  `rgb-sdk-rn`'s `UtexoLSPClient.resolveAddress`.
-- **`LspClient.getLightningAddressByPubkey(pubkey, opts)`** — reads back
-  the auto-assigned `{ username, domain }` the LSP minted for a node
-  pubkey (post-`apayNew`). The one raw-client endpoint we were missing.
-- **`account.createLsp(peer?, peerPort?)`** + **`account.getLspConfig()`**
-  — factory for `UtexoLsp` and a read of the `lspBaseUrl`/
-  `lspBearerToken` the node was constructed with.
-- **`account.createHodlInvoice(params)`** — named convenience over
-  `createInvoice({ payment_hash })`, returning `{ bolt11, paymentHash }`.
-  Parity with `rgb-sdk-rn`'s `createHodlInvoice`.
-- TS declarations extended for all of the above (`UtexoLsp`, `LspPeer`,
-  `WaitOptions`, `ReceiveStatus`, `ChannelReadyInfo`,
-  `CreateHodlInvoiceParams`, the two new error classes, etc.).
-- **`virtualPeerPubkeys` config** — plumbed through manager → binding →
-  init request (`virtual_peer_pubkeys`). Required (together with
-  `enableVirtualChannelsV0`) for async-payments against a production
-  LSP: every mobile client must list the LSP's node_id so RLN's
-  `allows_peer` accepts the `trusted_no_broadcast` virtual channel.
-  Per Yurii's Signet LSP setup. The native layer already accepted the
-  field via the init JSON, so no native rebuild; forwarded only when a
-  non-empty array. Also documents `virtual_open_mode:
-  'trusted_no_broadcast'` on `openChannel` and the 3_000_000-msat RGB
-  HTLC minimum (`MIN_AMT_MSAT`).
-- **TypeScript declarations.** Ship a hand-authored `index.d.ts`
-  covering the full public surface (manager, account, bindings,
-  errors, `LspClient`, LNURL + LSP helpers) and wire it via the
-  `types` field + the `types` condition in the `exports` map. The
-  package previously shipped no types; consumers now get IntelliSense
-  + type-checking. Verified with `tsc --strict` (internal + consumer
-  resolution under `nodenext`).
-- **Typed error hierarchy** (`src/errors.js`): `RgbLightningError`
-  (base, with `code` + `cause` + `toJSON()`) and `UnlockError`,
-  `VssError`, `VssNotConfiguredError`, `ApayError`,
-  `NotImplementedError`. `unlock`, `clearVssFence`, `vssBackup`,
-  `apayNew`, `bootstrapLsp`, `verify`, and `signTransaction` now throw
-  these instead of bare `Error`, so callers branch on `err.name` /
-  `err.code` rather than substring-matching `Rln(...)` strings. The
-  original RLN message is preserved verbatim and attached as `cause`,
-  so existing substring checks keep working.
-- `account.vssStatus()` — local-view VSS status
-  (`{ configured, url, allowHttp, lastBackupVersion }`) with no server
-  round-trip. (RLN's C-FFI has no read-only server-side backup-info
-  query; call `vssBackup()` for a live version.)
-- `account.createLightningInvoice(request)` — cross-SDK alias for
-  `createInvoice` (matches `@utexo/rgb-sdk-rn`'s naming), accepting
-  either the native snake_case request or a camelCase convenience
-  shape.
+- UMA address-format compatibility across Lightning Address payment flows.
+  `$recipient@example.com` is normalized to `recipient@example.com` before
+  LNURL discovery. New root exports include `isUmaAddress`,
+  `normalizeLightningAddress`, `UMA_PREFIX`, and `UMA_MAX_USERNAME_LENGTH`;
+  `parseLightningAddress` now also returns the canonical address, domain, and
+  whether the input used UMA form.
+
+## [0.1.0-beta.15] — 2026-07-23
+
+### Added
+- **First-class read-only account:** exported
+  `WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly`, with
+  all seven mandatory WDK reads plus node, channel, peer, invoice, payment,
+  RGB asset/transfer, BTC history, fee, media, and endpoint queries.
+  `toReadOnlyAccount()` caches it and supplies an immutable query-only
+  adapter with no full-account backreference or mutating capabilities.
+- Native-backed Lightning message verification and explicit receive-address
+  rotation. `verify(message, signature)` is now implemented; `rotateAddress()`
+  remains available only on the full account.
+- `AccountLockedError` (`ACCOUNT_LOCKED`) and `getAddressState()` for UI code
+  that needs a non-throwing locked/ready address state.
+- Txid-filtered `getTransactionsByTxid()` and `listTransfersByTxid()` reads,
+  used by `getTransactionReceipt()` to distinguish confirmed, pending, and
+  absent operations.
+- Correct, versioned signer entropy derivation. New nodes use the first 32
+  bytes of WDK's normalized BIP-39 seed. `nodeSeedDerivation: 'auto'` retries
+  the exact legacy beta derivation only after RLN reports a persisted signer
+  identity mismatch, preserving existing node identities.
 
 ### Fixed
-- Removed a duplicate `apayNew` method definition in both
-  `node-binding.js` and `bare-binding.js` (the shadowed first copy
-  used `this.node`, which throws pre-unlock).
+- WDK conformance for `index`, `path`, `keyPair`, `sign()`, `getBalance()`,
+  `getTokenBalance()`, `sendTransaction()`, quotes, and confirmed receipt
+  semantics. Balance failures are no longer silently converted to zero unless
+  the node is actually locked.
+- Removed the synthetic pre-unlock Bitcoin address. `getAddress()` now either
+  returns RLN's stable current address or raises `AccountLockedError`.
+- WDK bindings now force RLN's pinned-address mode, so inherited read-only
+  `getAddress()` calls do not allocate a fresh address each time; explicit
+  rotation remains a full-account command.
+- Consolidated LSP wire-shape and uint conversion helpers. Fractional,
+  unsafe, negative, and overflowing uint values now fail predictably;
+  `lightningReceive()` sends the documented default RGB assignment `Any`.
+- Hardened Lightning Address resolution: generic flows reuse the shared
+  LNURL implementation, constrain callbacks to the discovery host by
+  default, and never resolve an external domain as a same-named LSP user.
+- Removed the binding `node` getter in favor of consistent `ensureNode()`
+  access. Bare and Node bindings now retain signer seeds in zeroizable
+  buffers, wipe fallback material when it is superseded or no longer needed,
+  wipe replaced primary material after fallback recovery, and wipe all retained
+  material during shutdown even when native cleanup fails.
+- `waitForOutboundLiquidity()` now throws `LspLiquidityTimeoutError` when
+  its deadline expires instead of resolving without the requested capacity.
 
 ### Changed
-- README: tightened the *"Why a separate module from `wdk-wallet-rgb`?"*
-  section. Added a *"Use `wdk-wallet-rgb` for asset issuance +
-  inflation"* subsection pointing at the on-chain module for the five
-  ops not exposed here (`issueAssetNia/Ifa/Cfa/Uda`, `inflate`). Both
-  modules target the same `rgb-lib` SQLite `dataDir`, so assets
-  issued via `wdk-wallet-rgb` are available here for channels and
-  invoices. No code changes.
+- Aligned the manager, writable account, read-only account, and declarations
+  with `@tetherto/wdk-wallet@1.0.0-beta.14`, including structural type checks
+  in build and release CI.
+- Updated native peer requirements to
+  `@utexo/rgb-lightning-node-bare >=0.1.0-beta.14 <0.2.0` and
+  `@utexo/rgb-lightning-node-nodejs >=0.1.0-beta.10 <0.2.0`.
+- Aligned `bare-node-runtime` with WDK Core at `^1.5.0`, producing one
+  deduplicated runtime tree for consumers.
+- Restricted the npm tarball to the public runtime, types, license, changelog,
+  and README, with clean-install and native-binding smoke validation.
+- Replaced the direct-push release job with a reviewed, tag-driven pipeline
+  that validates native peers, package integrity, npm provenance, registry
+  installation, and the immutable GitHub release artifact.
+- Scoped the blocking release audit to production dependencies while retaining
+  lint, type, coverage, package-content, and native smoke validation for the
+  dev toolchain used to build the release.
+- Documented the account's forwarded node-level issuance and inflation calls
+  while identifying `@utexo/wdk-wallet-rgb` as the supported path for
+  issuance-focused flows and clarifying that the two modules own separate
+  wallet state and `dataDir` values.
+
+## [0.1.0-beta.14] — 2026-06-19
+
+### Added
+- TypeScript vocabulary for native payment discriminants, RGB invoice and send
+  requests, binding lifecycle methods, LSP bridge responses, and terminal
+  settlement errors.
+
+### Fixed
+- Generic RGB `transfer()` now decodes the invoice and constructs RLN's nested
+  `recipient_groups` request with the required assignment and transport
+  endpoints instead of sending the rejected legacy flat shape.
+- Corrected public declarations and request documentation for RLN payment,
+  keysend, RGB invoice, and RGB send wire formats.
+
+## [0.1.0-beta.13] — 2026-06-19
+
+### Fixed
+- `getTransactionReceipt()` now queries RLN's `Outbound`,
+  `InboundAutoClaim`, and `InboundHodl` payment discriminants instead of the
+  obsolete `sent` and `received` values.
+
+### Changed
+- Expanded the unit suite across the wallet account, bindings, LSP client,
+  LNURL, transfer routing, and composed LSP flows.
+
+## [0.1.0-beta.12] — 2026-06-18
+
+### Removed
+- Removed unsupported RGB issuance and inflation methods from the public
+  declarations and documentation. Asset creation belongs to
+  `@utexo/wdk-wallet-rgb`.
+
+### Changed
+- Release automation now marks the newly published package as the latest
+  GitHub release.
+
+## [0.1.0-beta.11] — 2026-06-18
+
+### Changed
+- Updated WDK Core to `@tetherto/wdk-wallet@1.0.0-beta.10`.
+- Added the Jest unit suite and coverage execution to build and release CI.
+- Reworked the README around the supported runtime, security, configuration,
+  account, LSP, and troubleshooting contracts.
+
+## [0.1.0-beta.10] — 2026-06-16
+
+### Added
+- `UtexoLsp`, a composed account and `LspClient` orchestration surface for
+  connecting, channel readiness, RGB receive/send, Lightning Address payment,
+  outbound liquidity, APay registration, and pending-payment claims.
+- `LspClient.resolveAddress()` and
+  `LspClient.getLightningAddressByPubkey()`.
+- `account.createLsp()`, `account.getLspConfig()`, and
+  `account.createHodlInvoice()`.
+- `virtualPeerPubkeys` configuration for trusted virtual-channel peers.
+- Full TypeScript declarations for the public package surface.
+- The `RgbLightningError` hierarchy, local `account.vssStatus()`, and the
+  `account.createLightningInvoice()` cross-SDK alias.
+
+### Fixed
+- Removed duplicate `apayNew` implementations from both runtime bindings.
+
+### Changed
+- Updated native peers to `@utexo/rgb-lightning-node-bare@^0.1.0-beta.13`
+  and `@utexo/rgb-lightning-node-nodejs@^0.1.0-beta.9`.
+- Added build and provenance-enabled release workflows.
+
+## [0.1.0-beta.9] — 2026-06-15
+
+### Changed
+- Updated both native binding peer requirements to `^0.6.0-beta.1`.
+
+## [0.1.0-beta.8] — 2026-06-10
+
+### Added
+- Forwarded `lspBaseUrl` and `lspBearerToken` through the wallet manager and
+  both bindings for RLN's internal APay client.
+
+### Changed
+- Updated both native binding peer requirements to `^0.5.2-beta.1`.
+
+## [0.1.0-beta.7] — 2026-06-04
+
+### Changed
+- Rebased both native binding peer requirements to the
+  `^0.1.0-beta.3` package line.
+- Clarified the RGB Lightning and on-chain RGB module boundary and directed
+  asset issuance and inflation to `@utexo/wdk-wallet-rgb`.
+- Added the first automated release workflow for native release dispatches.
+
+`0.1.0-beta.1` and `0.1.0-beta.2` were repository-tagged releases. npm
+publishing for this package began at `0.1.0-beta.7`; versions
+`0.1.0-beta.3` through `0.1.0-beta.6` were not released.
 
 ## [0.1.0-beta.2] — 2026-06-01
 
@@ -104,8 +195,8 @@ production hardening from the Unreleased section.
   waitForPeerMs, pollIntervalMs })` — opt-in one-shot LSP
   bootstrap. Connects the peer, polls `listPeers` until the noise
   handshake settles, then calls `apayNew`. Replaces the manual
-  three-call sequence and addresses Renat's May 27 dev-plan items 3
-  + 4 (connectPeer + apay/new during SDK init).
+  three-call sequence for peer connection, readiness polling, and
+  optional APay registration.
 - `account.vssBackup()` — force an immediate VSS backup flush.
   Returns `{ version }` of the snapshot just persisted. For app-
   controlled checkpoints (e.g. fsync-before-suspend). Backed by
@@ -146,7 +237,7 @@ CHANGELOG brought to beta quality.
 - `clearVssFence(password)` and VSS init options (`vssUrl`,
   `vssAllowHttp`, `vssAllowEmptyRestore`) on the wallet manager.
 - `apayNew(hostNodeId)` for receiver-side async-payments (APay)
-  registration against an LSP (upstream RLN PR #51).
+  registration through the native RLN binding.
 - `min_final_cltv_expiry_delta` documented on `createInvoice`.
 - Apache-2.0 `LICENSE` file.
 - This `CHANGELOG.md` (Keep a Changelog format).
@@ -164,7 +255,7 @@ CHANGELOG brought to beta quality.
 
 ### Added
 - Extended `IWalletAccount` surface to cover the full RLN method set
-  (PR #5).
+  exposed by the native binding.
 
 ## [0.1.0-alpha.1] — 2026-05-20
 

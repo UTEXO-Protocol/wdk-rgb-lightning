@@ -4,6 +4,13 @@
 // you may not use this file except in compliance with the License.
 'use strict'
 
+import {
+  camelCaseLspResponse,
+  snakeCaseLnParams,
+  snakeCaseRgbParams,
+  toUint64String
+} from './lsp-utils.js'
+
 // Thin typed wrapper around utexo-lsp's HTTP API. Side-effect free:
 // methods build URLs, send JSON, validate response status, and return
 // parsed JSON DTOs. Anything that combines an LSP call with a local
@@ -29,11 +36,22 @@
  * structured fields rather than substring-match the message.
  */
 export class LspError extends Error {
+  /**
+   * Create an error for an LSP transport, HTTP, or response failure.
+   *
+   * @param {string} endpoint - LSP endpoint path.
+   * @param {number} status - HTTP status, or `0` for a transport failure.
+   * @param {string} body - Raw response body when available.
+   * @param {unknown} [cause] - Originating transport or parsing failure.
+   */
   constructor (endpoint, status, body, cause) {
     const head = `LSP ${endpoint}`
+    const causeMessage = cause && typeof cause === 'object' && 'message' in cause
+      ? String(cause.message)
+      : 'request failed'
     const msg = status
       ? `${head} → HTTP ${status}: ${body}`
-      : `${head} → ${cause?.message ?? 'request failed'}`
+      : `${head} → ${causeMessage}`
     super(msg)
     this.name = 'LspError'
     this.endpoint = endpoint
@@ -61,7 +79,7 @@ export class LspError extends Error {
 /** Default request timeout if the caller doesn't override. */
 const DEFAULT_TIMEOUT_MS = 15_000
 
-/** Max response body we'll buffer (1 MiB). Mirrors the LSP's own cap. */
+/** Maximum UTF-8 response body accepted from the LSP (1 MiB). */
 const MAX_RESPONSE_BYTES = 1 << 20
 
 /**
@@ -79,32 +97,34 @@ const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE'])
 const DEFAULT_RETRIES = 3
 const RETRY_BASE_MS = 250
 
-/** Hostnames that are always allowed over plain HTTP (mirrors RLN VSS allow-http loopback rule). */
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '10.0.2.2' /* Android emu */])
+/**
+ * Hostnames that are always allowed over plain HTTP (mirrors RLN VSS
+ * allow-http loopback rule). `10.0.2.2` is the Android emulator's
+ * host-loopback alias.
+ */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '10.0.2.2'])
 
 export class LspClient {
   /**
-   * @param {object} opts
-   * @param {string} opts.baseUrl       Origin of the LSP API, e.g. `https://lsp.utexo.io`.
-   *                                    Trailing slash optional; we normalise.
-   * @param {number} [opts.timeoutMs]   Per-request timeout. Default 15 s. Can be
-   *                                    overridden per call by passing `timeoutMs` to
-   *                                    the individual method (e.g. `health({ timeoutMs: 2000 })`).
-   * @param {typeof fetch} [opts.fetch] Override the global `fetch` (testing / proxies).
-   * @param {Record<string,string>} [opts.defaultHeaders]
-   *                                    Headers merged into every request. Useful for
-   *                                    operator-provided API keys once the LSP grows them.
-   * @param {boolean} [opts.allowHttp=false]
-   *                                    Permit plain `http://` for non-loopback hosts.
-   *                                    Off by default — production deployments should
-   *                                    use https only. Loopback hosts (localhost,
-   *                                    127.0.0.1, ::1, 10.0.2.2) are always allowed.
-   *                                    Mirrors RLN's `vssAllowHttp` knob.
-   * @param {number} [opts.maxRetries=3] How many 5xx/429 retries before throwing. Set
-   *                                    to 0 to disable retries. Only idempotent methods
-   *                                    (GET/HEAD/OPTIONS/PUT/DELETE) are retried —
-   *                                    POST calls fail-fast since the LSP doesn't yet
-   *                                    accept idempotency keys.
+   * Create an HTTP client bound to one LSP API origin.
+   *
+   * @param {object} opts - Client configuration.
+   * @param {string} opts.baseUrl - LSP API origin, for example
+   *   `https://lsp.utexo.io`. A trailing slash is optional.
+   * @param {number} [opts.timeoutMs] - Default per-request timeout in
+   *   milliseconds. Defaults to 15 seconds and can be overridden per call.
+   * @param {typeof fetch} [opts.fetch] - Fetch implementation. Defaults to the
+   *   runtime's global `fetch`.
+   * @param {Record<string,string>} [opts.defaultHeaders] - Headers merged into
+   *   every request.
+   * @param {boolean} [opts.allowHttp] - Whether non-loopback hosts may use
+   *   plain HTTP. Defaults to `false`; loopback hosts are always allowed.
+   * @param {number} [opts.maxRetries] - Number of retries for idempotent
+   *   requests that fail with a transport error, HTTP 429, or a retryable 5xx
+   *   response. Defaults to `3`; set to `0` to disable retries.
+   * @throws {TypeError} - If the base URL or fetch implementation is invalid.
+   * @throws {Error} - If plain HTTP is requested for a non-loopback host
+   *   without explicit opt-in.
    */
   constructor ({ baseUrl, timeoutMs = DEFAULT_TIMEOUT_MS, fetch: fetchImpl, defaultHeaders, allowHttp = false, maxRetries = DEFAULT_RETRIES } = {}) {
     if (typeof baseUrl !== 'string' || baseUrl.length === 0) {
@@ -121,16 +141,19 @@ export class LspClient {
     // Address payment requests are too sensitive to send over plaintext
     // by accident.
     let parsedUrl
-    try { parsedUrl = new URL(normalized) }
-    catch { throw new TypeError(`LspClient: baseUrl is not a valid URL: ${baseUrl}`) }
+    try {
+      parsedUrl = new URL(normalized)
+    } catch {
+      throw new TypeError(`LspClient: baseUrl is not a valid URL: ${baseUrl}`)
+    }
     if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
       throw new TypeError(`LspClient: baseUrl must use http: or https:, got ${parsedUrl.protocol}`)
     }
     if (parsedUrl.protocol === 'http:' && !allowHttp && !LOOPBACK_HOSTS.has(parsedUrl.hostname)) {
       throw new Error(
-        `LspClient: plain http:// is only allowed for loopback hosts; ` +
+        'LspClient: plain http:// is only allowed for loopback hosts; ' +
         `got '${parsedUrl.hostname}'. Pass allowHttp:true to opt in for ` +
-        `non-loopback hosts (regtest staging, etc.).`
+        'non-loopback hosts (regtest staging, etc.).'
       )
     }
     this._base = normalized
@@ -144,23 +167,36 @@ export class LspClient {
 
   /**
    * Liveness probe. Cheap; safe to call every few seconds.
-   * @param {object} [opts]
-   * @param {number} [opts.timeoutMs] Override the constructor-default timeout.
+   *
+   * @param {object} [opts] - Per-call request options.
+   * @param {number} [opts.timeoutMs] - Override the constructor's timeout in
+   *   milliseconds.
+   * @returns {Promise<object|null>} - Parsed liveness response.
+   * @throws {LspError} - If transport, HTTP, size, or JSON validation fails.
    */
   health (opts = {}) { return this._req('GET', '/health', undefined, opts) }
 
   /**
    * Returns the LSP's view of its upstream RLN node (pubkey, channel summary, etc).
-   * @param {object} [opts]
-   * @param {number} [opts.timeoutMs]
+   *
+   * @param {object} [opts] - Per-call request options.
+   * @param {number} [opts.timeoutMs] - Override the constructor's timeout in
+   *   milliseconds.
+   * @returns {Promise<object|null>} - Parsed LSP node information.
+   * @throws {LspError} - If transport, HTTP, size, or JSON validation fails.
    */
   getInfo (opts = {}) { return this._req('GET', '/get_info', undefined, opts) }
 
   /**
    * LUD-06 discovery for a Lightning Address hosted by this LSP.
-   * @param {string} username The local-part of `user@host` (no '@', no host).
-   * @param {object} [opts]
-   * @param {number} [opts.timeoutMs]
+   *
+   * @param {string} username - Local part of `user@host`, without `@` or host.
+   * @param {object} [opts] - Per-call request options.
+   * @param {number} [opts.timeoutMs] - Override the constructor's timeout in
+   *   milliseconds.
+   * @returns {Promise<object>} - LUD-06 discovery document.
+   * @throws {TypeError} - If `username` is empty or not a string.
+   * @throws {LspError} - If transport, HTTP, size, or JSON validation fails.
    */
   lnurlDiscovery (username, opts = {}) {
     if (!isNonEmptyString(username)) throw new TypeError('LspClient.lnurlDiscovery: username required')
@@ -170,19 +206,27 @@ export class LspClient {
   /**
    * LUD-06 callback. Returns `{ pr, routes }`. The wallet pays `pr`
    * through its own RLN node.
-   * @param {string} username
-   * @param {bigint|number|string} amountMsat
-   * @param {object} [opts]
-   * @param {string} [opts.assetId]     Optional RGB asset filter the LSP may honour.
-   * @param {bigint|number|string} [opts.assetAmount] Optional RGB amount.
-   * @param {number} [opts.timeoutMs]
+   *
+   * @param {string} username - Local part of `user@host`, without `@` or host.
+   * @param {bigint|number|string} amountMsat - Invoice amount in
+   *   millisatoshis.
+   * @param {object} [opts] - Callback request options.
+   * @param {string} [opts.assetId] - Optional RGB asset filter.
+   * @param {bigint|number|string} [opts.assetAmount] - Optional RGB asset
+   *   amount.
+   * @param {number} [opts.timeoutMs] - Override the constructor's timeout in
+   *   milliseconds.
+   * @returns {Promise<{pr:string, routes?:unknown[]}>} - LSP-issued BOLT11
+   *   invoice and optional route hints.
+   * @throws {TypeError} - If the username or uint64 amount fields are invalid.
+   * @throws {LspError} - If transport, HTTP, size, or JSON validation fails.
    */
   lnurlCallback (username, amountMsat, opts = {}) {
     if (!isNonEmptyString(username)) throw new TypeError('LspClient.lnurlCallback: username required')
     const params = new URLSearchParams()
-    params.set('amount', toIntString(amountMsat, 'amountMsat'))
+    params.set('amount', toUint64String(amountMsat, 'amountMsat'))
     if (opts.assetId !== undefined) params.set('asset_id', String(opts.assetId))
-    if (opts.assetAmount !== undefined) params.set('asset_amount', toIntString(opts.assetAmount, 'assetAmount'))
+    if (opts.assetAmount !== undefined) params.set('asset_amount', toUint64String(opts.assetAmount, 'assetAmount'))
     return this._req('GET', `/pay/callback/${encodeURIComponent(username)}?${params.toString()}`, undefined, opts)
   }
 
@@ -199,13 +243,20 @@ export class LspClient {
    *
    * Mirrors `@utexo/rgb-sdk-rn`'s `UtexoLSPClient.resolveAddress`.
    *
-   * @param {string} username                       Local-part of `user@host`.
-   * @param {bigint|number|string} amountMsat
-   * @param {object} [opts]
-   * @param {string} [opts.assetId]
-   * @param {bigint|number|string} [opts.assetAmount]
-   * @param {number} [opts.timeoutMs]
-   * @returns {Promise<{ pr:string, routes:unknown[], status?:string, reason?:string }>}
+   * @param {string} username - Local part of `user@host`, without `@` or host.
+   * @param {bigint|number|string} amountMsat - Invoice amount in
+   *   millisatoshis.
+   * @param {object} [opts] - Resolution request options.
+   * @param {string} [opts.assetId] - Optional RGB asset filter.
+   * @param {bigint|number|string} [opts.assetAmount] - Optional RGB asset
+   *   amount.
+   * @param {number} [opts.timeoutMs] - Override the constructor's timeout in
+   *   milliseconds.
+   * @returns {Promise<{ pr:string, routes:unknown[], status?:string, reason?:string }>} - LSP-issued
+   *   invoice response.
+   * @throws {TypeError} - If the username or uint64 amount fields are invalid.
+   * @throws {LspError} - If discovery lacks a callback or either request
+   *   fails.
    */
   async resolveAddress (username, amountMsat, opts = {}) {
     if (!isNonEmptyString(username)) throw new TypeError('LspClient.resolveAddress: username required')
@@ -215,9 +266,9 @@ export class LspClient {
     }
     const cbPath = this._rewriteCallbackToPath(meta.callback)
     const params = new URLSearchParams()
-    params.set('amount', toIntString(amountMsat, 'amountMsat'))
+    params.set('amount', toUint64String(amountMsat, 'amountMsat'))
     if (opts.assetId !== undefined) params.set('asset_id', String(opts.assetId))
-    if (opts.assetAmount !== undefined) params.set('asset_amount', toIntString(opts.assetAmount, 'assetAmount'))
+    if (opts.assetAmount !== undefined) params.set('asset_amount', toUint64String(opts.assetAmount, 'assetAmount'))
     const sep = cbPath.includes('?') ? '&' : '?'
     return this._req('GET', `${cbPath}${sep}${params.toString()}`, undefined, opts)
   }
@@ -231,10 +282,15 @@ export class LspClient {
    * Mirrors `@utexo/rgb-sdk-rn`'s
    * `UtexoLSPClient.getLightningAddressByPubkey`.
    *
-   * @param {string} peerPubkey  33-byte compressed node pubkey (hex).
-   * @param {object} [opts]
-   * @param {number} [opts.timeoutMs]
-   * @returns {Promise<{ username:string, domain:string }>}
+   * @param {string} peerPubkey - Hex-encoded, 33-byte compressed node public
+   *   key.
+   * @param {object} [opts] - Per-call request options.
+   * @param {number} [opts.timeoutMs] - Override the constructor's timeout in
+   *   milliseconds.
+   * @returns {Promise<{ username:string, domain:string }>} - Auto-assigned
+   *   Lightning Address components.
+   * @throws {TypeError} - If `peerPubkey` is empty or not a string.
+   * @throws {LspError} - If transport, HTTP, size, or JSON validation fails.
    */
   getLightningAddressByPubkey (peerPubkey, opts = {}) {
     const pk = typeof peerPubkey === 'string' ? peerPubkey.trim() : ''
@@ -264,22 +320,32 @@ export class LspClient {
    * the LSP returns a BOLT11 invoice for the caller to pay. Once paid,
    * the LSP runs `sendrgb` to the recipient embedded in the RGB
    * invoice. Caller monitors completion via its own RLN node.
+   * Response keys are normalized to camelCase so this method matches
+   * `lightningReceive()` and the helpers in `lsp-helpers.js`.
    *
-   * @param {object} params
-   * @param {string} params.rgbInvoice
-   * @param {object} params.ln
-   * @param {bigint|number} params.ln.amtMsat
-   * @param {number} params.ln.expirySec
-   * @param {string} [params.ln.assetId]
-   * @param {bigint|number} [params.ln.assetAmount]
-   * @param {string} [params.ln.descriptionHash]
-   * @param {string} [params.ln.paymentHash]
-   * @param {number} [params.ln.minFinalCltvExpiryDelta]
-   * @returns {Promise<{rgbInvoice:string, lnInvoice:string, mappingId:number}>}
-   *   Note: response is normalized to camelCase to match
-   *   `lightningReceive()` and the helpers in `lsp-helpers.js`. The LSP
-   *   itself returns snake_case JSON; we remap at this layer so the
-   *   public surface of LspClient is uniformly camelCase.
+   * @param {object} params - RGB-to-Lightning bridge request.
+   * @param {string} params.rgbInvoice - Recipient's on-chain RGB invoice.
+   * @param {object} params.ln - Lightning invoice parameters.
+   * @param {bigint|number|string} params.ln.amtMsat - Lightning amount in
+   *   millisatoshis.
+   * @param {number} params.ln.expirySec - Lightning invoice lifetime in
+   *   seconds.
+   * @param {string} [params.ln.assetId] - Optional RGB asset ID for an
+   *   asset-bound Lightning invoice.
+   * @param {bigint|number|string} [params.ln.assetAmount] - Optional RGB asset
+   *   amount.
+   * @param {string} [params.ln.descriptionHash] - Optional BOLT11 description
+   *   hash.
+   * @param {string} [params.ln.paymentHash] - Optional caller-supplied payment
+   *   hash.
+   * @param {number} [params.ln.minFinalCltvExpiryDelta] - Optional minimum
+   *   final CLTV expiry delta.
+   * @param {number} [params.timeoutMs] - Override the constructor's timeout in
+   *   milliseconds.
+   * @returns {Promise<{rgbInvoice:string, lnInvoice:string, mappingId:number}>} - Normalized
+   *   bridge response.
+   * @throws {TypeError} - If required inputs or integer fields are invalid.
+   * @throws {LspError} - If the bridge request fails.
    */
   async onchainSend ({ rgbInvoice, ln, timeoutMs } = {}) {
     if (!isNonEmptyString(rgbInvoice)) throw new TypeError('LspClient.onchainSend: rgbInvoice required')
@@ -298,18 +364,26 @@ export class LspClient {
    * RGB invoice with their sender; once the RGB transfer settles, the
    * LSP pays the BOLT11 invoice. Caller monitors completion via its
    * own RLN node's invoice status.
+   * Response keys are normalized to camelCase across the public client.
    *
-   * @param {object} params
-   * @param {string} params.lnInvoice
-   * @param {object} params.rgb
-   * @param {string} params.rgb.assetId
-   * @param {string} [params.rgb.assignment]   default 'Any'
-   * @param {number} [params.rgb.durationSeconds]
-   * @param {number} [params.rgb.minConfirmations] Backend-controlled; LSP may ignore.
-   * @param {boolean} [params.rgb.witness]     default false
-   * @returns {Promise<{lnInvoice:string, rgbInvoice:string, mappingId:number}>}
-   *   Normalized to camelCase. The LSP returns snake_case JSON; we
-   *   remap here so the public surface of LspClient is uniform.
+   * @param {object} params - Lightning-to-RGB bridge request.
+   * @param {string} params.lnInvoice - BOLT11 invoice paid by the LSP.
+   * @param {object} params.rgb - RGB invoice parameters.
+   * @param {string} params.rgb.assetId - RGB asset ID.
+   * @param {string} [params.rgb.assignment] - RGB assignment kind. Defaults to
+   *   `Any`.
+   * @param {number} [params.rgb.durationSeconds] - RGB invoice lifetime in
+   *   seconds.
+   * @param {number} [params.rgb.minConfirmations] - Requested confirmation
+   *   floor. The LSP may apply its own policy.
+   * @param {boolean} [params.rgb.witness] - Whether to request a witness
+   *   invoice. Defaults to `false`.
+   * @param {number} [params.timeoutMs] - Override the constructor's timeout in
+   *   milliseconds.
+   * @returns {Promise<{lnInvoice:string, rgbInvoice:string, mappingId:number}>} - Normalized
+   *   bridge response.
+   * @throws {TypeError} - If required inputs or integer fields are invalid.
+   * @throws {LspError} - If the bridge request fails.
    */
   async lightningReceive ({ lnInvoice, rgb, timeoutMs } = {}) {
     if (!isNonEmptyString(lnInvoice)) throw new TypeError('LspClient.lightningReceive: lnInvoice required')
@@ -362,14 +436,7 @@ export class LspClient {
         throw new LspError(path, 0, '', cause)
       }
 
-      // Read at most MAX_RESPONSE_BYTES. WHATWG Response doesn't expose
-      // a hard byte cap, so we accept the body in full but reject
-      // anything suspiciously large. Avoids OOM on a misconfigured LSP
-      // that returns megabytes of HTML.
-      const text = await res.text()
-      if (text.length > MAX_RESPONSE_BYTES) {
-        throw new LspError(path, res.status, `response too large (${text.length} bytes)`)
-      }
+      const text = await readResponseText(res, path)
 
       if (!res.ok) {
         if (canRetry && RETRY_STATUSES.has(res.status) && attempt < this._maxRetries) {
@@ -393,7 +460,9 @@ export class LspClient {
    * older runtimes — keeps the package portable without bumping the
    * `engines.node` floor.
    *
-   * @param {number} timeoutMs  Per-call timeout override.
+   * @param {number} timeoutMs - Per-call timeout override in milliseconds.
+   * @returns {AbortSignal|undefined} - Timeout signal when supported by the
+   *   runtime.
    */
   _timeoutSignal (timeoutMs) {
     const ms = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : this._timeoutMs
@@ -412,85 +481,58 @@ export class LspClient {
 function wait (ms) { return new Promise((resolve) => setTimeout(resolve, ms)) }
 function backoffMs (attempt) { return RETRY_BASE_MS * Math.pow(2, attempt) }
 
-// ---------------------------------------------------------------------------
-// Shape adapters
-// ---------------------------------------------------------------------------
+async function readResponseText (res, path) {
+  const body = res && res.body
+  if (!body || typeof body.getReader !== 'function') {
+    const text = await res.text()
+    assertResponseSize(path, res.status, new TextEncoder().encode(text).byteLength)
+    return text
+  }
 
-/**
- * The LSP returns snake_case JSON (`{rgb_invoice, ln_invoice,
- * mapping_id}`). Map it to camelCase to match this module's public
- * API style + the helpers in lsp-helpers.js. Other keys pass through
- * unchanged for forward compatibility.
- */
-function camelCaseLspResponse (raw) {
-  if (!raw || typeof raw !== 'object') return raw
-  const out = { ...raw }
-  if ('rgb_invoice' in raw) out.rgbInvoice = raw.rgb_invoice
-  if ('ln_invoice' in raw) out.lnInvoice = raw.ln_invoice
-  if ('mapping_id' in raw) out.mappingId = raw.mapping_id
-  return out
+  const reader = body.getReader()
+  const chunks = []
+  let byteLength = 0
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      const chunk = value instanceof Uint8Array
+        ? value
+        : new Uint8Array(value.buffer ?? value, value.byteOffset ?? 0, value.byteLength)
+      byteLength += chunk.byteLength
+      if (byteLength > MAX_RESPONSE_BYTES) {
+        try {
+          await reader.cancel()
+        } catch {}
+        assertResponseSize(path, res.status, byteLength)
+      }
+      chunks.push(chunk)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  const bytes = new Uint8Array(byteLength)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(bytes)
 }
 
-function snakeCaseLnParams (ln) {
-  const out = {}
-  if (ln.amtMsat !== undefined) out.amt_msat = toUint64Json(ln.amtMsat, 'ln.amtMsat')
-  if (ln.expirySec !== undefined) out.expiry_sec = toUint32(ln.expirySec, 'ln.expirySec')
-  if (ln.assetId !== undefined) out.asset_id = String(ln.assetId)
-  if (ln.assetAmount !== undefined) out.asset_amount = toUint64Json(ln.assetAmount, 'ln.assetAmount')
-  if (ln.descriptionHash !== undefined) out.description_hash = String(ln.descriptionHash)
-  if (ln.paymentHash !== undefined) out.payment_hash = String(ln.paymentHash)
-  if (ln.minFinalCltvExpiryDelta !== undefined) {
-    out.min_final_cltv_expiry_delta = toUint32(ln.minFinalCltvExpiryDelta, 'ln.minFinalCltvExpiryDelta')
+function assertResponseSize (path, status, byteLength) {
+  if (byteLength > MAX_RESPONSE_BYTES) {
+    throw new LspError(
+      path,
+      status,
+      `response too large (${byteLength} bytes; maximum ${MAX_RESPONSE_BYTES})`
+    )
   }
-  return out
-}
-
-function snakeCaseRgbParams (rgb) {
-  const out = {
-    asset_id: rgb.assetId,
-    min_confirmations: rgb.minConfirmations !== undefined ? toUint32(rgb.minConfirmations, 'rgb.minConfirmations') : 1,
-    witness: !!rgb.witness
-  }
-  if (rgb.assignment !== undefined) out.assignment = String(rgb.assignment)
-  if (rgb.durationSeconds !== undefined) out.duration_seconds = toUint32(rgb.durationSeconds, 'rgb.durationSeconds')
-  return out
 }
 
 function isNonEmptyString (v) {
   return typeof v === 'string' && v.length > 0
-}
-
-function toIntString (v, field) {
-  if (typeof v === 'bigint' && v >= 0n) return v.toString()
-  if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return Math.trunc(v).toString()
-  if (typeof v === 'string' && /^\d+$/.test(v)) return v
-  throw new TypeError(`${field} must be a non-negative integer`)
-}
-
-/**
- * The Go side uses uint64 fields. JS numbers lose precision above 2^53.
- * Emit bigint values as numeric JSON (rgb-lightning-node accepts both
- * 1234 and "1234" but we prefer numeric for amt_msat to match the
- * canonical shape). For values above 2^53 we drop to strings — RLN
- * tolerates this on amt_msat (see daemon JsonLnInvoiceRequest).
- */
-function toUint64Json (v, field) {
-  if (typeof v === 'number') {
-    if (!Number.isFinite(v) || v < 0) throw new TypeError(`${field} must be ≥ 0`)
-    return Math.trunc(v)
-  }
-  if (typeof v === 'bigint') {
-    if (v < 0n) throw new TypeError(`${field} must be ≥ 0`)
-    return v <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(v) : v.toString()
-  }
-  if (typeof v === 'string' && /^\d+$/.test(v)) return v
-  throw new TypeError(`${field} must be a non-negative integer`)
-}
-
-function toUint32 (v, field) {
-  const n = typeof v === 'bigint' ? Number(v) : Number(v)
-  if (!Number.isFinite(n) || n < 0 || n > 0xffffffff || !Number.isInteger(n)) {
-    throw new TypeError(`${field} must fit in uint32`)
-  }
-  return n
 }
