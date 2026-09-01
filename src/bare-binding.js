@@ -340,6 +340,27 @@ export class BareRgbLightningBinding {
   }
 
   /**
+   * Register an APay hash batch with a signed Lightning Address attestation.
+   *
+   * @param {string} hostNodeId - LSP node ID.
+   * @param {string} username - LSP-provisioned Lightning Address username.
+   * @param {string} domain - LSP-provisioned Lightning Address domain.
+   * @returns {object} - Native `AsyncOrderNewResponse`.
+   * @throws {Error} - If the installed native wrapper predates this generated
+   *   method or native APay registration fails.
+   */
+  apayNewWithAddress (hostNodeId, username, domain) {
+    const node = this.ensureNode()
+    if (typeof node.apayNewWithAddress !== 'function') {
+      throw new Error(
+        'Address-attested APay requires @utexo/rgb-lightning-node-bare ' +
+        'with apayNewWithAddress support'
+      )
+    }
+    return node.apayNewWithAddress(hostNodeId, username, domain)
+  }
+
+  /**
    * Stop the node and destroy the signer. The operation is idempotent.
    *
    * @throws {Error} - If native node shutdown or signer destruction fails.

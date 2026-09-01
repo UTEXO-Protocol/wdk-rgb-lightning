@@ -185,7 +185,7 @@ are async and forward to the active binding.
 | WDK-standard | `index`, `path`, `keyPair`, `sign(message)`, `verify(message, signature)`, `transfer(options)`, `quoteTransfer(options)`, `quoteSendTransaction(tx)`, `getTransactionReceipt(hash)`, `toReadOnlyAccount()` |
 | Diagnostics | `sendOnionMessage(request)`, `checkIndexerUrl(url)`, `checkProxyEndpoint(endpoint)` |
 | VSS | `vssStatus()`, `vssBackup()`, `clearVssFence(password)` |
-| APay / LSP | `apayNew(hostNodeId)`, `bootstrapLsp({ peerPubkeyAndAddr, hostNodeId? })`, `getLspConfig()`, `createLsp(peer?)` |
+| APay / LSP | `apayNewWithAddress(hostNodeId, username, domain)`, `apayNew(hostNodeId)` (legacy), `bootstrapLsp({ peerPubkeyAndAddr, hostNodeId? })`, `getLspConfig()`, `createLsp(peer?)` |
 
 Notes:
 
@@ -412,14 +412,22 @@ the wallet's behalf. Against a production LSP this requires
 `enableVirtualChannelsV0: true` and the LSP's node_id in
 `virtualPeerPubkeys`.
 
-- `account.apayNew(hostNodeId)` — register with the LSP as an APay recipient
-  (`hostNodeId` is the LSP node_id, hex). Requires `lspBaseUrl`
-  (and `lspBearerToken` if the LSP enforces auth).
+- `account.apayNewWithAddress(hostNodeId, username, domain)` — register one APay
+  hash batch carrying the wallet node's signed Lightning Address attestation.
+  `lsp.enableLightningAddress()` resolves the LSP-provisioned address first and
+  uses this method by default.
+- `account.apayNew(hostNodeId)` — legacy unattested registration. It remains
+  available for compatibility, but `enableLightningAddress()` uses it only
+  when explicitly called with `{ requireAddressAttestation: false }`.
 - `account.bootstrapLsp({ peerPubkeyAndAddr, hostNodeId? })` — connect to the
   LSP peer, wait until it appears in `listPeers`, then (if `hostNodeId` is
   given) call `apayNew`. Refuses to register before the peer is visible to
   avoid RLN's host-response timeout (throws `ApayError` with code
   `APAY_PEER_NOT_VISIBLE`).
+
+Do not call `apayNew` immediately before `enableLightningAddress`. The native
+batch size can fill the LSP hash-pool cap in one request, so a second registration
+may be rejected as `invalid_hash_batch`.
 
 ## Security model
 

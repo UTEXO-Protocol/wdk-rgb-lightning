@@ -40,6 +40,7 @@ function makeAccount (overrides = {}) {
     sendPayment: jest.fn(async () => ({ payment_hash: 'ph' })),
     getNodeInfo: jest.fn(async () => ({ pubkey: 'mynodepubkey' })),
     apayNew: jest.fn(async () => ({ ok: true })),
+    apayNewWithAddress: jest.fn(async () => ({ ok: true })),
     listPayments: jest.fn(async () => []),
     claimHodlInvoice: jest.fn(async () => ({ ok: true })),
     ...overrides
@@ -718,13 +719,20 @@ describe('payAddress', () => {
 // ── enableLightningAddress ─────────────────────────────────────────────────
 
 describe('enableLightningAddress', () => {
-  it('registers the apay pool and reads back the assigned Lightning Address', async () => {
+  it('resolves the assigned address before registering one attested APay batch', async () => {
     const account = makeAccount({ getNodeInfo: jest.fn(async () => ({ pubkey: 'wallet-pk' })) })
     const lsp = makeLsp(account)
     const out = await lsp.enableLightningAddress()
     expect(lsp.http.getInfo).toHaveBeenCalled()
-    expect(account.apayNew).toHaveBeenCalledWith('lsppubkey')
     expect(lsp.http.getLightningAddressByPubkey).toHaveBeenCalledWith('wallet-pk')
+    expect(account.apayNewWithAddress).toHaveBeenCalledWith(
+      'lsppubkey',
+      'alice',
+      'lsp.example.io'
+    )
+    expect(account.apayNew).not.toHaveBeenCalled()
+    expect(lsp.http.getLightningAddressByPubkey.mock.invocationCallOrder[0])
+      .toBeLessThan(account.apayNewWithAddress.mock.invocationCallOrder[0])
     expect(out).toEqual({ username: 'alice', domain: 'lsp.example.io', address: 'alice@lsp.example.io' })
   })
 
@@ -732,7 +740,7 @@ describe('enableLightningAddress', () => {
     const account = makeAccount({ getNodeInfo: jest.fn(async () => ({})) })
     const lsp = makeLsp(account)
     await expect(lsp.enableLightningAddress()).rejects.toThrow('wallet not unlocked')
-    expect(account.apayNew).not.toHaveBeenCalled()
+    expect(account.apayNewWithAddress).not.toHaveBeenCalled()
   })
 
   it('throws when the LSP /get_info returns no pubkey', async () => {
@@ -740,6 +748,69 @@ describe('enableLightningAddress', () => {
     const lsp = makeLsp(account)
     lsp.http.getInfo = jest.fn(async () => ({}))
     await expect(lsp.enableLightningAddress()).rejects.toThrow('returned no pubkey')
+    expect(account.apayNewWithAddress).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when address attestation is unavailable', async () => {
+    const account = makeAccount({
+      getNodeInfo: jest.fn(async () => ({ pubkey: 'wallet-pk' })),
+      apayNewWithAddress: undefined
+    })
+    const lsp = makeLsp(account)
+
+    await expect(lsp.enableLightningAddress()).rejects.toThrow('address-attested APay is unavailable')
+    expect(account.apayNew).not.toHaveBeenCalled()
+  })
+
+  it('uses legacy registration only after an explicit policy downgrade', async () => {
+    const account = makeAccount({
+      getNodeInfo: jest.fn(async () => ({ pubkey: 'wallet-pk' })),
+      apayNewWithAddress: undefined
+    })
+    const lsp = makeLsp(account)
+
+    await expect(lsp.enableLightningAddress({ requireAddressAttestation: false }))
+      .resolves.toEqual({
+        username: 'alice',
+        domain: 'lsp.example.io',
+        address: 'alice@lsp.example.io'
+      })
+    expect(account.apayNew).toHaveBeenCalledWith('lsppubkey')
+  })
+
+  it('retries while the LSP is still provisioning the address account', async () => {
+    const account = makeAccount({ getNodeInfo: jest.fn(async () => ({ pubkey: 'wallet-pk' })) })
+    const lsp = makeLsp(account)
+    lsp._sleep = jest.fn(async () => {})
+    lsp.http.getLightningAddressByPubkey
+      .mockRejectedValueOnce(new Error('not found'))
+      .mockResolvedValueOnce({ username: '', domain: '' })
+      .mockResolvedValueOnce({ username: 'alice', domain: 'lsp.example.io' })
+
+    await expect(lsp.enableLightningAddress()).resolves.toEqual({
+      username: 'alice',
+      domain: 'lsp.example.io',
+      address: 'alice@lsp.example.io'
+    })
+    expect(lsp.http.getLightningAddressByPubkey).toHaveBeenCalledTimes(3)
+    expect(lsp._sleep).toHaveBeenCalledTimes(2)
+    expect(account.apayNewWithAddress).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not register a batch when address provisioning never completes', async () => {
+    const account = makeAccount({ getNodeInfo: jest.fn(async () => ({ pubkey: 'wallet-pk' })) })
+    const lsp = makeLsp(account)
+    lsp._sleep = jest.fn(async () => {})
+    lsp.http.getLightningAddressByPubkey = jest.fn(async () => {
+      throw new Error('not found')
+    })
+
+    await expect(lsp.enableLightningAddress()).rejects.toThrow(
+      'LSP did not provision a Lightning Address for wallet-pk'
+    )
+    expect(lsp.http.getLightningAddressByPubkey).toHaveBeenCalledTimes(8)
+    expect(lsp._sleep).toHaveBeenCalledTimes(7)
+    expect(account.apayNewWithAddress).not.toHaveBeenCalled()
     expect(account.apayNew).not.toHaveBeenCalled()
   })
 })

@@ -378,6 +378,23 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   }
 
   /**
+   * Register an APay hash batch and bind it to an LSP-provisioned Lightning
+   * Address using the wallet node's native signature.
+   *
+   * @param {string} hostNodeId - LSP node ID.
+   * @param {string} username - Lightning Address username assigned by the LSP.
+   * @param {string} domain - Lightning Address domain assigned by the LSP.
+   * @returns {Promise<object>} Native `AsyncOrderNewResponse`.
+   */
+  async apayNewWithAddress (hostNodeId, username, domain) {
+    try {
+      return this._binding.apayNewWithAddress(hostNodeId, username, domain)
+    } catch (e) {
+      throw wrapError(e, ApayError)
+    }
+  }
+
+  /**
    * One-shot LSP bootstrap for consumers that want to connect the LSP peer
    * and optionally register for APay after unlock. Keeping this separate
    * from `unlock()` prevents a transient LSP failure from blocking wallet

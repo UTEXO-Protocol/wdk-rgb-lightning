@@ -28,6 +28,11 @@ while pre-`1.0`.
 ## [Unreleased]
 
 ### Added
+- Address-attested APay across the Bare and Node bindings, account surface, and
+  composed LSP flow. `enableLightningAddress()` now resolves the
+  LSP-provisioned address before submitting exactly one signed hash batch and
+  fails closed when the generated native method is unavailable. Legacy
+  unattested registration requires explicit `requireAddressAttestation: false`.
 - Validated standalone RGB contract and transfer-consignment import boundaries.
   Requests are exact and bounded, transaction IDs are canonicalized, native
   responses are schema-checked, and an import fails closed if the returned
@@ -62,6 +67,11 @@ while pre-`1.0`.
   whether the input used UMA form.
 
 ### Changed
+- Raised native peer floors to `@utexo/rgb-lightning-node-bare
+  >=0.1.0-beta.20 <0.2.0` and `@utexo/rgb-lightning-node-nodejs
+  >=0.1.0-beta.16 <0.2.0`, the first published wrappers exposing
+  address-attested APay through their generated native APIs. The Node package
+  smoke now consumes the minimum registry peer and verifies that capability.
 - Raised native peer floors to `@utexo/rgb-lightning-node-bare
   >=0.1.0-beta.18 <0.2.0` and `@utexo/rgb-lightning-node-nodejs
   >=0.1.0-beta.14 <0.2.0`. These releases preserve duplicate-channel

@@ -109,6 +109,12 @@
  *   accepts payments addressed to those hashes on the wallet's behalf
  *   while the wallet is offline. Argument is the LSP's node_id (hex).
  *   Returns the native AsyncOrderNewResponse unchanged.
+ * @property {(hostNodeId: string, username: string, domain: string) => object} apayNewWithAddress -
+ *   Register an APay hash batch carrying the wallet node's signed Lightning
+ *   Address attestation. Production Lightning Address registration uses this
+ *   method so the LSP can bind the batch to `username@domain` without trusting
+ *   caller-supplied identity data. Returns the native AsyncOrderNewResponse
+ *   unchanged.
  * @property {() => void} shutdown - Idempotently release the node handle and
  *   destroy the signer.
  */

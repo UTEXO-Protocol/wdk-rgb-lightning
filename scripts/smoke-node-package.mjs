@@ -84,10 +84,8 @@ try {
     packageJson.peerDependencies[nativePackage],
     nativePackage
   )
-  const nativePackageSpec = registryPackage
-    ? `${nativePackage}@${nativeVersion}`
-    : process.env.WDK_RGB_LIGHTNING_NODE_SPEC ??
-      'github:UTEXO-Protocol/rgb-lightning-node-nodejs#941568fb94410f43c5f59d2e5c4daf1843c9b245'
+  const nativePackageSpec = process.env.WDK_RGB_LIGHTNING_NODE_SPEC ??
+    `${nativePackage}@${nativeVersion}`
 
   writeFileSync(
     path.join(temporaryRoot, 'package.json'),
@@ -155,6 +153,7 @@ try {
       NodeRgbLightningBinding,
       WalletAccountReadOnlyRgbLightning
     } from '${packageJson.name}'
+    import { SdkNode as NativeSdkNode } from '${nativePackage}'
 
     const metadata = (
       await import('${packageJson.name}/package', {
@@ -176,6 +175,9 @@ try {
     }
     if (typeof NodeRgbLightningBinding.healthcheck !== 'function') {
       throw new Error('The native healthcheck surface is missing')
+    }
+    if (typeof NativeSdkNode.prototype.apayNewWithAddress !== 'function') {
+      throw new Error('The native address-attested APay method is missing')
     }
 
     NodeRgbLightningBinding.healthcheck()

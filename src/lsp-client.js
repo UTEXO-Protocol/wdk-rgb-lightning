@@ -278,9 +278,10 @@ export class LspClient {
 
   /**
    * Resolve the auto-assigned Lightning Address (`{ username, domain }`)
-   * the LSP minted for a node pubkey — i.e. the offline-receive address
-   * created as a side effect of `apayNew` / `async_order/new`. Give the
-   * resulting `username@domain` to senders.
+   * the LSP provisioned for a node pubkey. Provisioning can complete shortly
+   * after peer connection, before the wallet submits its address-attested
+   * APay batch, so callers should tolerate a temporary not-found response.
+   * Give the resulting `username@domain` to senders.
    *
    * Mirrors `@utexo/rgb-sdk-rn`'s
    * `UtexoLSPClient.getLightningAddressByPubkey`.

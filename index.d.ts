@@ -730,6 +730,7 @@ export interface IRgbLightningBinding {
   vssDeleteAll(password: string): { deleted_keys: number }
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
+  apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   shutdown(): void
 }
 
@@ -747,6 +748,7 @@ export class NodeRgbLightningBinding implements IRgbLightningBinding {
   vssDeleteAll(password: string): { deleted_keys: number }
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
+  apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   shutdown(): void
   static healthcheck(): string
   static isInitialized(): boolean
@@ -768,6 +770,7 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
   vssDeleteAll(password: string): { deleted_keys: number }
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
+  apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   shutdown(): void
   static healthcheck(): string
   static isInitialized(): boolean
@@ -930,6 +933,8 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   // APay / LSP bootstrap
   /** @throws {ApayError} on LSP failure. */
   apayNew(hostNodeId: string): Promise<object>
+  /** Register a hash batch carrying a native signature for `username@domain`. */
+  apayNewWithAddress(hostNodeId: string, username: string, domain: string): Promise<object>
   bootstrapLsp(opts: {
     peerPubkeyAndAddr: string
     hostNodeId?: string
@@ -1097,7 +1102,7 @@ export class LspClient {
   lnurlCallback(username: string, amountMsat: bigint | number | string, opts?: { assetId?: string; assetAmount?: bigint | number | string; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[] }>
   /** Full LUD-06 resolution routed through this LSP's baseUrl (discovery + callback). */
   resolveAddress(username: string, amountMsat: bigint | number | string, opts?: { assetId?: string; assetAmount?: bigint | number | string; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[]; status?: string; reason?: string }>
-  /** Resolve the auto-assigned Lightning Address for a node pubkey (post-apayNew). */
+  /** Resolve the LSP-provisioned Lightning Address for a node pubkey before attested APay registration. */
   getLightningAddressByPubkey(peerPubkey: string, opts?: { timeoutMs?: number }): Promise<{ username: string; domain: string }>
   onchainSend(params: {
     rgbInvoice: string
@@ -1283,6 +1288,14 @@ export interface LightningAddressInfo {
   address: string
 }
 
+export interface EnableLightningAddressOptions {
+  /**
+   * Require native signed address attestation. Defaults to true. Set false
+   * only for an explicit compatibility downgrade to legacy `apayNew`.
+   */
+  requireAddressAttestation?: boolean
+}
+
 export interface ClaimResult {
   paymentHash: string
   claimed: boolean
@@ -1300,7 +1313,7 @@ export class UtexoLsp {
   waitForOutboundLiquidity(minMsat: number, opts?: WaitOptions): Promise<void>
   sendAsset(opts: SendAssetOptions): Promise<SendAssetResult>
   payAddress(opts: PayAddressOptions): Promise<{ invoice: string; sendResult: object }>
-  enableLightningAddress(): Promise<LightningAddressInfo>
+  enableLightningAddress(opts?: EnableLightningAddressOptions): Promise<LightningAddressInfo>
   claimPendingPayments(): Promise<ClaimResult[]>
 }
 

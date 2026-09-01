@@ -441,6 +441,29 @@ describe('apayNew', () => {
     expect(err).toBeInstanceOf(ApayError)
     expect(err.message).toBe('lsp unreachable')
   })
+
+  it('forwards signed Lightning Address registration without downgrading', async () => {
+    const response = { order_id: 'order-attested' }
+    const apayNew = jest.fn()
+    const apayNewWithAddress = jest.fn(() => response)
+    const account = makeAccount({ apayNew, apayNewWithAddress })
+
+    await expect(account.apayNewWithAddress('host', 'alice', 'lsp.example')).resolves.toBe(response)
+    expect(apayNewWithAddress).toHaveBeenCalledWith('host', 'alice', 'lsp.example')
+    expect(apayNew).not.toHaveBeenCalled()
+  })
+
+  it('wraps address-attestation failures in ApayError', async () => {
+    const account = makeAccount({
+      apayNewWithAddress: () => { throw new Error('attestation rejected') }
+    })
+    const error = await account
+      .apayNewWithAddress('host', 'alice', 'lsp.example')
+      .catch((cause) => cause)
+
+    expect(error).toBeInstanceOf(ApayError)
+    expect(error.message).toBe('attestation rejected')
+  })
 })
 
 describe('node info / network / sync', () => {

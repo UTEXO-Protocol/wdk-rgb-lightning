@@ -54,6 +54,7 @@ function fakeNode () {
     vssBackup: jest.fn(() => ({ version: 7 })),
     vssDeleteAll: jest.fn(() => ({ deleted_keys: 12 })),
     apayNew: jest.fn(() => realAsyncOrderNewResponse()),
+    apayNewWithAddress: jest.fn(() => realAsyncOrderNewResponse()),
     detachExternalSigner: jest.fn(),
     shutdown: jest.fn()
   }
@@ -550,6 +551,31 @@ describe('apayNew', () => {
     b.apayNew('02hostid')
     expect(ensureSpy).toHaveBeenCalledTimes(1)
     expect(node.apayNew).toHaveBeenCalledWith('02hostid')
+  })
+})
+
+describe('apayNewWithAddress', () => {
+  it('forwards all attestation fields and preserves the native response', () => {
+    const binding = makeBinding()
+    const node = fakeNode()
+    const response = realAsyncOrderNewResponse()
+    node.apayNewWithAddress.mockReturnValue(response)
+    binding._node = node
+
+    expect(binding.apayNewWithAddress('02hostid', 'alice', 'lsp.example')).toBe(response)
+    expect(node.apayNewWithAddress).toHaveBeenCalledWith('02hostid', 'alice', 'lsp.example')
+    expect(node.apayNew).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when the installed Node wrapper lacks address attestation', () => {
+    const binding = makeBinding()
+    const node = fakeNode()
+    delete node.apayNewWithAddress
+    binding._node = node
+
+    expect(() => binding.apayNewWithAddress('02hostid', 'alice', 'lsp.example'))
+      .toThrow('Address-attested APay requires @utexo/rgb-lightning-node-nodejs')
+    expect(node.apayNew).not.toHaveBeenCalled()
   })
 })
 
