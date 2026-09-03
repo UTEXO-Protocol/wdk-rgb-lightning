@@ -8,6 +8,8 @@
 // HTTP client and composed flows avoids a lsp-client <-> lsp-helpers cycle.
 
 const UINT64_MAX = (1n << 64n) - 1n
+const HASH_HEX = /^[0-9a-f]{64}$/i
+const MAX_INVOICE_LENGTH = 128 * 1024
 
 /**
  * Convert a JS integer to the JSON representation accepted by uint64 fields.
@@ -98,15 +100,33 @@ export function camelCaseLspResponse (raw) {
  * @throws {TypeError} - If an integer field is outside its uint range.
  */
 export function snakeCaseLnParams (ln) {
+  if (ln === null || typeof ln !== 'object' || Array.isArray(ln)) {
+    throw new TypeError('ln must be an object')
+  }
+
   const out = {}
-  if (ln.amtMsat !== undefined) out.amt_msat = toUint64(ln.amtMsat, 'ln.amtMsat')
+  if (ln.amtMsat !== undefined) {
+    out.amt_msat = toUint64(ln.amtMsat, 'ln.amtMsat')
+    if (BigInt(out.amt_msat) === 0n) throw new TypeError('ln.amtMsat must be positive')
+  }
   if (ln.expirySec !== undefined) out.expiry_sec = toUint32(ln.expirySec, 'ln.expirySec')
-  if (ln.assetId !== undefined) out.asset_id = String(ln.assetId)
-  if (ln.assetAmount !== undefined) out.asset_amount = toUint64(ln.assetAmount, 'ln.assetAmount')
-  if (ln.descriptionHash !== undefined) out.description_hash = String(ln.descriptionHash)
-  if (ln.paymentHash !== undefined) out.payment_hash = String(ln.paymentHash)
+  if (ln.assetId !== undefined) {
+    out.asset_id = canonicalAssetId(ln.assetId, 'ln.assetId')
+  }
+  if (ln.assetAmount !== undefined) {
+    out.asset_amount = toUint64(ln.assetAmount, 'ln.assetAmount')
+    if (BigInt(out.asset_amount) === 0n) throw new TypeError('ln.assetAmount must be positive')
+  }
+  if (ln.descriptionHash !== undefined) {
+    out.description_hash = requiredHash(ln.descriptionHash, 'ln.descriptionHash')
+  }
+  if (ln.paymentHash !== undefined) {
+    out.payment_hash = requiredHash(ln.paymentHash, 'ln.paymentHash')
+  }
   if (ln.minFinalCltvExpiryDelta !== undefined) {
-    out.min_final_cltv_expiry_delta = toUint32(ln.minFinalCltvExpiryDelta, 'ln.minFinalCltvExpiryDelta')
+    const delta = toUint32(ln.minFinalCltvExpiryDelta, 'ln.minFinalCltvExpiryDelta')
+    if (delta > 0xffff) throw new TypeError('ln.minFinalCltvExpiryDelta must fit in uint16')
+    out.min_final_cltv_expiry_delta = delta
   }
   return out
 }
@@ -119,14 +139,85 @@ export function snakeCaseLnParams (ln) {
  * @throws {TypeError} - If an integer field is outside uint32.
  */
 export function snakeCaseRgbParams (rgb) {
-  const out = {
-    asset_id: rgb.assetId,
-    assignment: String(rgb.assignment ?? 'Any'),
-    min_confirmations: rgb.minConfirmations !== undefined ? toUint32(rgb.minConfirmations, 'rgb.minConfirmations') : 1,
-    witness: !!rgb.witness
+  if (rgb === null || typeof rgb !== 'object' || Array.isArray(rgb)) {
+    throw new TypeError('rgb must be an object')
   }
+  const rawAssignment = rgb.assignment ?? 'Any'
+  if (typeof rawAssignment !== 'string') {
+    throw new TypeError('rgb.assignment must be "Any" or "Value"')
+  }
+  const normalizedAssignment = rawAssignment.trim().toLowerCase()
+  const assignment = normalizedAssignment === '' || normalizedAssignment === 'any'
+    ? 'Any'
+    : normalizedAssignment === 'value'
+      ? 'Value'
+      : undefined
+  if (assignment === undefined) {
+    throw new TypeError('rgb.assignment must be "Any" or "Value"')
+  }
+  if (rgb.witness !== undefined && typeof rgb.witness !== 'boolean') {
+    throw new TypeError('rgb.witness must be a boolean')
+  }
+  const minConfirmations = rgb.minConfirmations === undefined
+    ? 1
+    : toUint32(rgb.minConfirmations, 'rgb.minConfirmations')
+  if (minConfirmations > 0xff) throw new TypeError('rgb.minConfirmations must fit in uint8')
+
+  const out = {
+    assignment,
+    min_confirmations: minConfirmations,
+    witness: rgb.witness ?? false
+  }
+  if (rgb.assetId !== undefined) out.asset_id = canonicalAssetId(rgb.assetId, 'rgb.assetId')
   if (rgb.durationSeconds !== undefined) out.duration_seconds = toUint32(rgb.durationSeconds, 'rgb.durationSeconds')
   return out
+}
+
+/**
+ * Require an exact, transport-safe RGB asset identifier.
+ *
+ * @param {unknown} value - Candidate asset identifier.
+ * @param {string} [field] - Field name included in validation errors.
+ * @returns {string} - The unchanged canonical identifier.
+ */
+export function canonicalAssetId (value, field = 'assetId') {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > 512 ||
+    value !== value.trim() ||
+    /\s/.test(value)
+  ) {
+    throw new TypeError(`${field} must be a non-empty whitespace-free string`)
+  }
+  return value
+}
+
+/**
+ * Require an exact invoice string without silently changing signed input.
+ *
+ * @param {unknown} value - Candidate BOLT11 or RGB invoice.
+ * @param {string} [field] - Field name included in validation errors.
+ * @returns {string} - The unchanged canonical invoice.
+ */
+export function canonicalInvoice (value, field = 'invoice') {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > MAX_INVOICE_LENGTH ||
+    value !== value.trim() ||
+    /\s/.test(value)
+  ) {
+    throw new TypeError(`${field} required`)
+  }
+  return value
+}
+
+function requiredHash (value, field) {
+  if (typeof value !== 'string' || !HASH_HEX.test(value)) {
+    throw new TypeError(`${field} must be 32-byte hexadecimal`)
+  }
+  return value.toLowerCase()
 }
 
 function uint64TypeError (field) {

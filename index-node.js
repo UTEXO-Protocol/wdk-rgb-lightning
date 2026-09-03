@@ -38,6 +38,12 @@ export {
 // LSP client surface — see ./src/lsp-client.js, lnurl-pay.js, lsp-helpers.js.
 // Pure-fetch implementations; identical module under Bare (./index-bare.js).
 export { LspClient, LspError } from './src/lsp-client.js'
+export { LspProtocolError } from './src/lsp-response-contracts.js'
+export {
+  verifyApayAddressAttestation,
+  verifyApayInvoiceProof,
+  verifyLightningMessageSignature
+} from './src/lsp-linked-assets.js'
 export { parseLspInfo } from './src/lsp-info.js'
 export {
   LnurlPayError,
@@ -59,9 +65,14 @@ export {
 // with @utexo/rgb-sdk-rn's UtexoLsp. See ./src/utexo-lsp.js.
 export {
   UtexoLsp,
+  LspAmbiguousPayableAssetError,
   LspChannelTimeoutError,
+  LspInsufficientAssetLiquidityError,
   LspLiquidityTimeoutError,
+  LspNoPayableAssetError,
+  LspQuoteMismatchError,
   LspSettlementError,
+  LspUnknownPayableAssetError,
   peerUri,
   normalizeReceiveStatus
 } from './src/utexo-lsp.js'

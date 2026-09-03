@@ -338,6 +338,8 @@ export interface DecodedLightningInvoice {
   payment_hash: string
   payment_secret: string
   payee_pubkey: string | null
+  /** BOLT11 `h` tag. Older native wrappers may omit this projection. */
+  description_hash?: string | null
   min_final_cltv_expiry_delta: number
   network: string
 }
@@ -1074,13 +1076,86 @@ export interface LspClientOptions {
   maxRetries?: number
 }
 
+export interface LspRequestOptions {
+  timeoutMs?: number
+  signal?: AbortSignal
+}
+
+/** Normalized RGB asset metadata returned by strict LSP/LNURL methods. */
+export interface LspAssetMetadata {
+  assetId: string
+  schema: LspAssetSchema
+  ticker?: string
+  name: string
+  precision: number
+}
+
+/** Raw LSP discovery asset metadata. */
+export interface LspAssetMetadataWire {
+  asset_id: string
+  schema: LspAssetSchema
+  ticker?: string
+  name: string
+  precision: number
+}
+
+export interface ApayMerkleProofElement {
+  sibling: string
+  side: 'left' | 'right'
+}
+
+/** Parsed APay evidence returned by a strict LSP/LNURL method. */
+export interface ApayInvoiceProof {
+  version: number
+  recipientPubkey: string
+  hostPubkey: string
+  batchId: string
+  hashIndex: number
+  paymentHash: string
+  batchRoot: string
+  batchSize: number
+  merkleProof: readonly ApayMerkleProofElement[]
+  batchSig: string
+  createdAt: number
+  expiresAt: number
+}
+
 export interface LnurlPayDiscovery {
   tag: 'payRequest'
   callback: string
   minSendable: number | string
   maxSendable: number | string
   metadata: string
+  commentAllowed?: number
+  recipientPubkey?: string
+  addressSig?: string
+  payoutAsset?: LspAssetMetadata
+  acceptedAssets?: readonly LspAssetMetadata[]
+}
+
+export interface LnurlPayDiscoveryWire {
+  tag: 'payRequest'
+  callback: string
+  minSendable: number | string
+  maxSendable: number | string
+  metadata: string
   commentAllowed?: number | string
+  recipient_pubkey?: string
+  address_sig?: string
+  payout_asset?: LspAssetMetadataWire
+  accepted_assets?: readonly LspAssetMetadataWire[]
+}
+
+export interface LnurlPayCallback {
+  pr: string
+  routes: readonly unknown[]
+  status?: string
+  reason?: string
+  proof?: ApayInvoiceProof
+}
+
+export interface LnurlPayResolution extends LnurlPayCallback {
+  discovery: LnurlPayDiscovery
 }
 
 export interface LspBridgeResult {
@@ -1094,26 +1169,93 @@ export interface LspBridgeResult {
   mappingId: string | number
 }
 
+export interface LspLightningReceiveResult extends LspBridgeResult {
+  rgbAssetId?: string
+  converted: boolean
+}
+
+export interface LspLightningSendLeg {
+  assetId?: string
+  assetAmount?: number
+  amtMsat: number
+  payeePubkey?: string
+}
+
+export type LspLightningSendStatus =
+  | 'quoted'
+  | 'claimable'
+  | 'outbound_pending'
+  | 'outbound_paid'
+  | 'outbound_claimed'
+  | 'settled'
+  | 'cancelled'
+  | 'failed'
+
+export interface LspLightningSendQuote {
+  lnInvoice: string
+  paymentHash: string
+  inbound: LspLightningSendLeg
+  outbound: LspLightningSendLeg
+  converted: boolean
+  feeMsat: number
+  expiresAt: number
+}
+
+export interface LspLightningSendStatusResult {
+  paymentHash: string
+  status: LspLightningSendStatus
+  reason?: string
+}
+
+export interface LspInvoiceParams {
+  amtMsat?: bigint | number | string
+  expirySec?: number | string
+  assetId?: string
+  assetAmount?: bigint | number | string
+  descriptionHash?: string
+  paymentHash?: string
+  minFinalCltvExpiryDelta?: number
+}
+
+export interface LspRgbInvoiceParams {
+  assetId?: string
+  assignment?: 'Any' | 'Value'
+  durationSeconds?: number
+  minConfirmations?: number
+  witness?: boolean
+}
+
 export class LspClient {
   constructor(opts: LspClientOptions)
-  health(opts?: { timeoutMs?: number }): Promise<object | null>
-  getInfo(opts?: { timeoutMs?: number }): Promise<LspInfo>
-  lnurlDiscovery(username: string, opts?: { timeoutMs?: number }): Promise<LnurlPayDiscovery>
-  lnurlCallback(username: string, amountMsat: bigint | number | string, opts?: { assetId?: string; assetAmount?: bigint | number | string; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[] }>
+  readonly baseUrl: string
+  health(opts?: LspRequestOptions): Promise<object | null>
+  getInfo(opts?: LspRequestOptions): Promise<LspInfo>
+  /** Compatibility transport method; returns the server's raw discovery keys. */
+  lnurlDiscovery(username: string, opts?: LspRequestOptions): Promise<LnurlPayDiscoveryWire>
+  discoverAddress(username: string, opts?: LspRequestOptions): Promise<LnurlPayDiscovery>
+  lnurlCallback(username: string, amountMsat: bigint | number | string, opts?: LspRequestOptions & { assetId?: string; assetAmount?: bigint | number | string }): Promise<{ pr: string; routes?: unknown[]; proof?: unknown }>
   /** Full LUD-06 resolution routed through this LSP's baseUrl (discovery + callback). */
-  resolveAddress(username: string, amountMsat: bigint | number | string, opts?: { assetId?: string; assetAmount?: bigint | number | string; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[]; status?: string; reason?: string }>
+  resolveAddress(username: string, amountMsat: bigint | number | string, opts?: LspRequestOptions & { assetId?: string; assetAmount?: bigint | number | string }): Promise<{ pr: string; routes?: unknown[]; status?: string; reason?: string; proof?: unknown }>
+  resolveAddressVerified(username: string, amountMsat: bigint | number | string, opts?: LspRequestOptions & { assetId?: string; assetAmount?: bigint | number | string }): Promise<LnurlPayResolution>
   /** Resolve the LSP-provisioned Lightning Address for a node pubkey before attested APay registration. */
-  getLightningAddressByPubkey(peerPubkey: string, opts?: { timeoutMs?: number }): Promise<{ username: string; domain: string }>
+  getLightningAddressByPubkey(peerPubkey: string, opts?: LspRequestOptions): Promise<{ username: string; domain: string; recipient_pubkey?: string; address_sig?: string }>
+  getLightningAddressByPubkeyVerified(peerPubkey: string, opts?: LspRequestOptions): Promise<{ username: string; domain: string; recipientPubkey?: string; addressSig?: string }>
   onchainSend(params: {
     rgbInvoice: string
-    ln: { amtMsat: bigint | number | string; expirySec: number; assetId?: string; assetAmount?: bigint | number | string; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
+    ln?: LspInvoiceParams
     timeoutMs?: number
+    signal?: AbortSignal
   }): Promise<LspBridgeResult>
+  onchainSendVerified(params: { rgbInvoice: string; ln?: LspInvoiceParams; timeoutMs?: number; signal?: AbortSignal }): Promise<LspBridgeResult>
   lightningReceive(params: {
     lnInvoice: string
-    rgb: { assetId: string; assignment?: string; durationSeconds?: number; minConfirmations?: number; witness?: boolean }
+    rgb: LspRgbInvoiceParams
     timeoutMs?: number
+    signal?: AbortSignal
   }): Promise<LspBridgeResult>
+  lightningReceiveVerified(params: { lnInvoice: string; rgb: LspRgbInvoiceParams; timeoutMs?: number; signal?: AbortSignal }): Promise<LspLightningReceiveResult>
+  lightningSend(params: { invoice: string; payWithAssetId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<LspLightningSendQuote>
+  lightningSendStatus(paymentHash: string, opts?: LspRequestOptions): Promise<LspLightningSendStatusResult>
 }
 
 export class LspError extends Error {
@@ -1125,6 +1267,12 @@ export class LspError extends Error {
   errorCode: number | string | null
   errorTag: string | null
   cause?: unknown
+}
+
+export class LspProtocolError extends Error {
+  constructor(endpoint: string, field: string, expectation?: string)
+  endpoint: string
+  field: string
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -1155,6 +1303,7 @@ export function parseLightningAddress(addr: string, opts?: { allowHttp?: boolean
 export interface LnurlPayOptions {
   fetch?: typeof fetch
   timeoutMs?: number
+  signal?: AbortSignal
   allowHttp?: boolean
   /** Opt in to following a callback on a different host than discovery. */
   allowCrossHostCallback?: boolean
@@ -1163,7 +1312,7 @@ export interface LnurlPayOptions {
   assetAmount?: bigint | number | string
 }
 
-export function fetchDiscovery(addr: string, opts?: Pick<LnurlPayOptions, 'fetch' | 'timeoutMs' | 'allowHttp'>): Promise<LnurlPayDiscovery>
+export function fetchDiscovery(addr: string, opts?: Pick<LnurlPayOptions, 'fetch' | 'timeoutMs' | 'signal' | 'allowHttp'>): Promise<LnurlPayDiscovery>
 export function resolveAddressToInvoice(addr: string, amountMsat: bigint | number | string, opts?: LnurlPayOptions): Promise<{ pr: string; routes?: unknown[]; discovery: LnurlPayDiscovery; callbackUrl: string }>
 
 export class LnurlPayError extends Error {
@@ -1219,7 +1368,7 @@ export function payRgbViaLsp(account: WalletAccountRgbLightning, args: PayRgbVia
 // ───────────────────────────────────────────────────────────────────
 
 /** Canonical receive state (4 terminal-or-pending values). */
-export type ReceiveStatus = 'Pending' | 'Succeeded' | 'Failed' | 'Expired'
+export type ReceiveStatus = 'Pending' | 'Succeeded' | 'Cancelled' | 'Failed' | 'Expired'
 
 /** Single config object describing the LSP peer for composed flows. */
 export interface LspPeer {
@@ -1227,6 +1376,8 @@ export interface LspPeer {
   peerPubkey: string
   peerHost: string
   peerPort: number
+  /** Expected Bitcoin network. Auto-discovered peers always set this. */
+  network?: Network
   bearerToken?: string
   timeoutMs?: number
   allowHttp?: boolean
@@ -1239,7 +1390,7 @@ export interface WaitOptions {
   signal?: AbortSignal
   onProgress?: (msg: string) => void
   /** Run at the start of each poll iteration — e.g. mine a regtest block. */
-  onEachPoll?: () => Promise<void>
+  onEachPoll?: () => void | Promise<void>
 }
 
 export interface ChannelReadyInfo {
@@ -1252,20 +1403,31 @@ export interface ChannelReadyInfo {
 
 export interface ReceiveAssetOptions {
   assetId: string
-  amountSats?: number
-  amountRgb?: number
+  amountSats: number
+  amountRgb: number
   expirySeconds?: number
+  onchainAsset?: 'convertible' | 'payout'
+  /** Defaults to true. False is an explicit legacy compatibility downgrade. */
+  requireInvoiceVerification?: boolean
+  signal?: AbortSignal
 }
 
 export interface ReceiveAssetResult {
   lnInvoice: string
   rgbInvoice: string
   mappingId: string
+  onchainAssetId?: string
+  converted?: boolean
 }
 
 export interface SendAssetOptions {
   rgbInvoice: string
-  ln?: { amtMsat?: bigint | number | string; expirySec?: number; assetId?: string; assetAmount?: bigint | number | string; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
+  ln?: LspInvoiceParams
+  /** Native routing-fee ceiling in msat. Defaults to zero. */
+  maxTotalRoutingFeeMsat?: bigint | number | string
+  signal?: AbortSignal
+  /** Defaults to true. False is an explicit legacy compatibility downgrade. */
+  requireInvoiceVerification?: boolean
 }
 
 export interface SendAssetResult extends LspBridgeResult {
@@ -1276,9 +1438,92 @@ export interface PayAddressOptions {
   /** Lightning Address or UMA address in `$user@host` form. */
   address: string
   amtMsat: bigint | number | string
-  asset?: { assetId: string; assetAmount: bigint | number | string }
+  asset?: { assetId?: string; assetAmount?: bigint | number | string; amount?: bigint | number | string }
   /** Opt in to following a delegated LNURL callback on a different host. */
   allowCrossHostCallback?: boolean
+  /** Native routing-fee ceiling in msat. Defaults to zero. */
+  maxTotalRoutingFeeMsat?: bigint | number | string
+  /** Defaults to true for addresses hosted by the configured LSP. */
+  requireAddressProof?: boolean
+  /** Defaults to true. False is an explicit legacy compatibility downgrade. */
+  requireInvoiceVerification?: boolean
+  signal?: AbortSignal
+}
+
+export interface PayableAssetMenu {
+  payoutAsset?: LspAssetMetadata
+  accepted: readonly LspAssetMetadata[]
+  convertible: readonly LspAssetMetadata[]
+}
+
+export interface AssetSelection {
+  assetId: string
+  asset?: LspAssetMetadata
+  converted: boolean
+  localAssetAmount: number
+  payoutAsset?: LspAssetMetadata
+}
+
+export interface LightningAddressQuote {
+  invoice: string
+  amtMsat: number
+  /** Immutable routing-fee ceiling captured with the reviewed quote. */
+  maxTotalRoutingFeeMsat: number
+  assetId?: string
+  assetAmount?: number
+  assetSelection?: AssetSelection
+  proof?: ApayInvoiceProof
+}
+
+export interface PayAddressResult {
+  invoice: string
+  sendResult: object
+  assetSelection?: AssetSelection
+}
+
+export interface RequestExternalInvoiceOptions {
+  address?: string
+  amtMsat: bigint | number | string
+  assetAmount: bigint | number | string
+  /** Exact contract ID or an unambiguous advertised ticker. */
+  asset?: string
+  prefer?: 'convertible' | 'payout'
+  requireAddressProof?: boolean
+  signal?: AbortSignal
+}
+
+export interface ExternalInvoiceQuote extends LightningAddressQuote {
+  address: string
+  username: string
+  domain: string
+  asset: LspAssetMetadata
+  converted: boolean
+  paymentHash?: string
+}
+
+export interface ExternalPaymentOptions {
+  invoice: string
+  /** Exact funding contract ID or an unambiguous LSP-advertised ticker. */
+  payWith?: string
+  maxFeeMsat?: bigint | number | string
+  maxTotalRoutingFeeMsat?: bigint | number | string
+  channels?: readonly object[]
+  timeoutMs?: number
+  signal?: AbortSignal
+}
+
+export interface ExternalPaymentQuote extends Omit<LspLightningSendQuote, 'lnInvoice'> {
+  targetInvoice: string
+  invoice: string
+  maxFeeMsat: number
+  /** Immutable native routing-fee ceiling authorized with this quote. */
+  maxTotalRoutingFeeMsat: number
+  verified: true
+}
+
+export interface ExternalPaymentResult {
+  quote: ExternalPaymentQuote
+  sendResult: object
 }
 
 export interface LightningAddressInfo {
@@ -1286,6 +1531,9 @@ export interface LightningAddressInfo {
   domain: string
   /** Convenience: `username@domain`. */
   address: string
+  unusedHashes?: number
+  nextIndexExpected?: number
+  refillBatchSize?: number
 }
 
 export interface EnableLightningAddressOptions {
@@ -1312,8 +1560,25 @@ export class UtexoLsp {
   awaitReceiveSettlement(lnInvoice: string, opts?: WaitOptions): Promise<'settled' | 'timed_out'>
   waitForOutboundLiquidity(minMsat: number, opts?: WaitOptions): Promise<void>
   sendAsset(opts: SendAssetOptions): Promise<SendAssetResult>
-  payAddress(opts: PayAddressOptions): Promise<{ invoice: string; sendResult: object }>
+  quoteAddress(opts: PayAddressOptions): Promise<LightningAddressQuote>
+  payAddress(opts: PayAddressOptions): Promise<PayAddressResult>
+  discoverAddress(address: string, opts?: LspRequestOptions): Promise<LnurlPayDiscovery>
+  listPayableAssets(address?: string, opts?: LspRequestOptions): Promise<PayableAssetMenu>
+  selectPaymentAsset(opts: { address: string; assetAmount: bigint | number | string; discovery?: LnurlPayDiscovery; channels?: readonly object[]; signal?: AbortSignal }): Promise<AssetSelection>
+  requestExternalInvoice(opts: RequestExternalInvoiceOptions): Promise<ExternalInvoiceQuote>
+  quoteExternalPayment(opts: ExternalPaymentOptions): Promise<ExternalPaymentQuote>
+  /** Re-verify both signed relay legs without submitting a native payment. */
+  verifyExternalQuote(quote: ExternalPaymentQuote, opts?: Pick<ExternalPaymentOptions, 'signal'>): Promise<ExternalPaymentQuote>
+  payExternalQuote(quote: ExternalPaymentQuote, opts?: Pick<ExternalPaymentOptions, 'maxTotalRoutingFeeMsat' | 'signal'>): Promise<ExternalPaymentResult>
+  payExternalInvoice(opts: ExternalPaymentOptions): Promise<ExternalPaymentResult>
+  /**
+   * Read durable relay status after a quote has been persisted. The current
+   * endpoint does not return the funding invoice and therefore cannot rebuild
+   * a quote whose POST response was lost.
+   */
+  externalPaymentStatus(paymentHash: string, opts?: LspRequestOptions): Promise<LspLightningSendStatusResult>
   enableLightningAddress(opts?: EnableLightningAddressOptions): Promise<LightningAddressInfo>
+  refillHashPool(opts?: LspRequestOptions): Promise<object>
   claimPendingPayments(): Promise<ClaimResult[]>
 }
 
@@ -1334,8 +1599,65 @@ export class LspLiquidityTimeoutError extends Error {
 }
 
 export class LspSettlementError extends Error {
-  constructor(step: 'ln_invoice', status: 'Failed' | 'Expired')
+  constructor(step: 'ln_invoice', status: 'Cancelled' | 'Failed' | 'Expired')
   step: 'ln_invoice'
   /** Only the terminal-failure states ever reach this error. */
-  status: 'Failed' | 'Expired'
+  status: 'Cancelled' | 'Failed' | 'Expired'
 }
+
+export class LspInsufficientAssetLiquidityError extends Error {
+  constructor(required: number, candidates: readonly { assetId: string; localAmount: number }[])
+  readonly required: number
+  readonly candidates: readonly { assetId: string; localAmount: number }[]
+}
+
+export class LspNoPayableAssetError extends Error {
+  constructor(address: string)
+  readonly address: string
+}
+
+export class LspUnknownPayableAssetError extends Error {
+  constructor(requested: string, accepted: readonly LspAssetMetadata[])
+  readonly requested: string
+  readonly accepted: readonly LspAssetMetadata[]
+}
+
+export class LspAmbiguousPayableAssetError extends Error {
+  constructor(candidates: readonly LspAssetMetadata[], preference: string)
+  readonly candidates: readonly LspAssetMetadata[]
+  readonly preference: string
+}
+
+export class LspQuoteMismatchError extends Error {
+  constructor(reason: string)
+}
+
+/**
+ * Verify an APay Merkle inclusion path and the recipient's Lightning-message
+ * signature over its complete batch commitment. Throws on any mismatch.
+ */
+export function verifyApayInvoiceProof(
+  proof: ApayInvoiceProof,
+  expected?: {
+    paymentHash?: string
+    recipientPubkey?: string
+    hostPubkey?: string
+    nowSeconds?: number
+    maxClockSkewSeconds?: number
+  }
+): void
+
+/** Verify the recipient signature binding a node key to a Lightning Address. */
+export function verifyApayAddressAttestation(attestation: {
+  recipientPubkey: string
+  username: string
+  domain: string
+  addressSig: string
+}): void
+
+/** Verify an LDK/lnd-compatible z-base-32 Lightning message signature. */
+export function verifyLightningMessageSignature(
+  message: string | Uint8Array,
+  signature: string,
+  expectedPublicKey: string
+): boolean

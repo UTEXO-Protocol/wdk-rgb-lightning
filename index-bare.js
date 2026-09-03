@@ -38,6 +38,12 @@ export {
 // installed by ./bare.js) and Node ≥18 (native fetch) without per-runtime
 // branches.
 export { LspClient, LspError } from './src/lsp-client.js'
+export { LspProtocolError } from './src/lsp-response-contracts.js'
+export {
+  verifyApayAddressAttestation,
+  verifyApayInvoiceProof,
+  verifyLightningMessageSignature
+} from './src/lsp-linked-assets.js'
 export { parseLspInfo } from './src/lsp-info.js'
 export {
   LnurlPayError,
@@ -59,9 +65,14 @@ export {
 // with @utexo/rgb-sdk-rn's UtexoLsp. See ./src/utexo-lsp.js.
 export {
   UtexoLsp,
+  LspAmbiguousPayableAssetError,
   LspChannelTimeoutError,
+  LspInsufficientAssetLiquidityError,
   LspLiquidityTimeoutError,
+  LspNoPayableAssetError,
+  LspQuoteMismatchError,
   LspSettlementError,
+  LspUnknownPayableAssetError,
   peerUri,
   normalizeReceiveStatus
 } from './src/utexo-lsp.js'

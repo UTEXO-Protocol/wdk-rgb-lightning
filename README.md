@@ -328,9 +328,12 @@ const info = await lsp.getInfo()
 
 Methods include `health()`, `getInfo()`, `lnurlDiscovery(username)`,
 `lnurlCallback(username, amountMsat)`, `resolveAddress(username, amountMsat)`,
-`getLightningAddressByPubkey(pubkey)`, `onchainSend({ rgbInvoice, ln })`, and
-`lightningReceive({ lnInvoice, rgb })`. Failures throw `LspError`
-(carrying `endpoint`, `status`, `body`).
+`getLightningAddressByPubkey(pubkey)`, `onchainSend({ rgbInvoice, ln })`,
+`lightningReceive({ lnInvoice, rgb })`, `lightningSend({ invoice,
+payWithAssetId })`, and `lightningSendStatus(paymentHash)`. The `Verified`
+variants validate the complete response shape before returning it. Failures
+throw `LspError` (carrying `endpoint`, `status`, `body`) or
+`LspProtocolError` for a malformed successful response.
 
 ### `UtexoLsp` (composed flows)
 
@@ -343,17 +346,117 @@ from the wallet's `lspBaseUrl` (`GET /get_info`).
 ```js
 const lsp = await account.createLsp()
 await lsp.connect()
-const { lnInvoice, rgbInvoice } = await lsp.receiveAsset({ assetId, amountRgb: 100 })
+const { lnInvoice, rgbInvoice } = await lsp.receiveAsset({
+  assetId,
+  amountSats: 3_000,
+  amountRgb: 100
+})
 await lsp.awaitReceiveSettlement(lnInvoice)
 ```
 
 Key methods: `connect()`, `waitForChannel(assetId, opts?)`,
 `receiveAsset(opts)`, `awaitReceiveSettlement(lnInvoice, opts?)`,
 `waitForOutboundLiquidity(minMsat, opts?)`, `sendAsset(opts)`,
-`payAddress(opts)`, `enableLightningAddress()`, `claimPendingPayments()`.
+`quoteAddress(opts)`, `payAddress(opts)`, `requestExternalInvoice(opts)`,
+`quoteExternalPayment(opts)`, `verifyExternalQuote(quote, opts?)`,
+`payExternalQuote(quote, opts?)`,
+`externalPaymentStatus(paymentHash)`, `enableLightningAddress()`,
+`refillHashPool()`, and `claimPendingPayments()`.
 Channel and liquidity wait timeouts throw `LspChannelTimeoutError` and
 `LspLiquidityTimeoutError`; terminal settlement failures throw
 `LspSettlementError`.
+
+#### Linked RGB asset flows
+
+The composed API keeps the exact on-chain and Lightning RGB contract IDs in
+every quote. It never infers a conversion relationship from ticker or display
+name.
+
+- `requestExternalInvoice()` asks a hosted Lightning Address for an invoice
+  payable by an explicitly selected contract. The returned quote preserves the
+  address payout contract, selected payer contract, conversion flag, and APay
+  inclusion evidence. Before returning, the SDK verifies both the wallet's
+  signed address attestation and the recipient-signed APay batch and Merkle
+  inclusion path. Hosted quotes are also bound to fresh `/get_info` identity
+  and network discovery before the state-creating callback. For external
+  addresses, an APay proof's host must be the payee encoded in the signed
+  BOLT11.
+- `quoteExternalPayment()` submits a third-party BOLT11 to
+  `POST /lightning_send`, verifies the target and funding invoices have the
+  same payment hash, checks the exact contracts, 1:1 asset amount, LSP payee,
+  network, expiry, and explicit LSP fee bound, and returns without paying.
+- `payExternalQuote()` re-verifies the signed invoices and refreshes the LSP's
+  identity, network, and advertised funding asset immediately before the native
+  payment. `externalPaymentStatus()` reads the LSP's durable relay state by
+  payment hash, which prevents blind duplication and supports terminal-state
+  reconciliation after a quote has been persisted.
+- `receiveAsset({ onchainAsset: 'convertible' })` omits the RGB contract on
+  `POST /lightning_receive`, allowing the LSP to select the configured
+  canonical counterpart of the requested Lightning asset. Use
+  `onchainAsset: 'payout'` to require the same contract on both legs.
+
+`POST /lightning_receive`, `POST /onchain_send`, and Lightning Address callback
+requests create server-side state and are not automatically retried, including
+the callback even though LUD-06 represents it as an HTTP `GET`. At the
+time of writing, the LSP exposes durable status for `/lightning_send` but not
+for `/lightning_receive` or `/onchain_send`. Applications must persist intent
+before invoking any state-creating endpoint and must not automatically repeat
+an ambiguous request. A production receive-conversion flow requires an LSP
+idempotency key or status endpoint.
+
+`GET /lightning_send/{payment_hash}` does not currently return the funding
+HODL invoice. If `POST /lightning_send` succeeds remotely but its response is
+lost, status lookup can detect the existing relay but cannot reconstruct a
+payable quote. Production callers must keep the send-conversion flow disabled
+until the LSP either returns the complete quote from status or accepts an
+idempotency key that deterministically recreates it.
+
+APay evidence is cryptographically verified against the native protocol's
+exact byte commitments. The SDK verifies the node-signed
+`recipient_pubkey <-> username@domain` attestation, reconstructs the invoice's
+Merkle path, and verifies the recipient's z-base-32 Lightning-message signature
+over the complete batch commitment. Any mismatch in recipient, LSP host,
+payment hash, batch root, timestamps, or signature fails closed.
+
+The composed Lightning Address path also requires the signed BOLT11
+`description_hash` to equal SHA-256 of the exact UTF-8 LUD-06 `metadata`
+string. RLN's SDK/HTTP decoder already returns that field, but the currently
+published C-FFI response projection used by the Bare and Node wrappers omits
+it. Until an immutable wrapper release propagates the existing field, verified
+Lightning Address quotes fail closed. This is a release gate, not a reason to
+skip the metadata commitment.
+
+All LNURL callback URLs reject embedded credentials and fragments. Hosted
+callbacks are reduced to the configured LSP origin, reserved amount/asset query
+keys are replaced rather than duplicated, and external callbacks remain
+same-host unless the caller explicitly opts into delegation. Requests ask
+standards-compliant fetch implementations to reject redirects and independently
+reject a response whose final URL or redirect flag differs from the requested
+URL. The current mobile `bare-fetch` transport follows redirects before it
+returns a response, so the SDK can prevent acceptance or payment of a redirected
+quote but cannot prove that a state-creating callback had no server-side effect.
+That case remains ambiguous and must not be retried. Response bodies are capped
+while streaming where the runtime exposes a response reader and are also checked
+against `Content-Length` and after buffering on fallback runtimes.
+
+`sendAsset()` verifies both signed bridge legs and applies
+`maxTotalRoutingFeeMsat` to the native payment. The ceiling defaults to zero;
+callers must opt into any routing fee they are willing to pay.
+`quoteAddress()` and `payAddress()` use the same zero-default fee policy and
+capture the exact ceiling in the immutable reviewed quote.
+
+Before either bridge creates server-side state, the composed API refreshes
+`/get_info` and binds it to the configured peer and Bitcoin network.
+`receiveAsset()` additionally requires the requested Lightning payout contract
+to be advertised before it creates a local invoice; that invoice must preserve
+the requested contract, amount, carrier amount, expiry, and network before it
+is registered. `sendAsset()` rejects a returned asset-bound BOLT11 unless its
+contract is currently advertised by that same LSP.
+
+Composed bridge methods require local decoding and verification by default.
+`requireInvoiceVerification: false` remains only as an explicit compatibility
+downgrade for older native bindings; it must not be used for production linked
+asset flows.
 
 ### LNURL / Lightning Address helpers
 

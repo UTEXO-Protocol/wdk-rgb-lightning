@@ -29,6 +29,7 @@
     "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage"
   },
   "dependencies": {
+    "@noble/secp256k1": "2.3.0",
     "@tetherto/wdk-wallet": "1.0.0-beta.14",
     "bare-node-runtime": "^1.5.0",
     "bip39": "3.1.0",

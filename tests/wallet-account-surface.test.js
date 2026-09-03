@@ -1551,6 +1551,7 @@ describe('createLsp', () => {
         peerPubkey: '02' + 'ab'.repeat(32),
         peerHost: 'peer.lsp.example',
         peerPort: 19735,
+        network: 'signet',
         bearerToken: 'tok'
       })
       expect(getInfoSpy).toHaveBeenCalledTimes(1)

@@ -4,17 +4,32 @@ import type { IWalletAccount, IWalletAccountReadOnly } from '@tetherto/wdk-walle
 import {
   BareRgbLightningBinding,
   isUmaAddress,
+  LspAmbiguousPayableAssetError,
+  LspClient,
+  LspInsufficientAssetLiquidityError,
+  LspNoPayableAssetError,
+  LspProtocolError,
+  LspQuoteMismatchError,
+  LspUnknownPayableAssetError,
   LnurlPayError,
   NodeRgbLightningBinding,
   normalizeLightningAddress,
   parseLightningAddress,
   UMA_MAX_USERNAME_LENGTH,
-  UMA_PREFIX
+  UMA_PREFIX,
+  UtexoLsp,
+  verifyApayAddressAttestation,
+  verifyApayInvoiceProof,
+  verifyLightningMessageSignature
 } from '../index.js'
 
 import type WalletManagerRgbLightning from '../index.js'
 import type {
   IRgbLightningBinding,
+  AssetSelection,
+  ExternalInvoiceQuote,
+  ExternalPaymentQuote,
+  ExternalPaymentResult,
   BtcSendRequest,
   CommitPreparedSendRequest,
   CreateUtxosRequest,
@@ -26,7 +41,12 @@ import type {
   PreparedCreateUtxos,
   PreparedSend,
   LnurlPayOptions,
+  LspLightningSendStatusResult,
+  LspPeer,
+  LspRequestOptions,
+  LspRgbInvoiceParams,
   LspLiquidityTimeoutError,
+  LightningAddressQuote,
   ParsedLightningAddress,
   PayAddressOptions,
   WalletRefreshResult,
@@ -40,6 +60,9 @@ declare const account: WalletAccountRgbLightning
 declare const readOnlyAccount: WalletAccountReadOnlyRgbLightning
 declare const binding: IRgbLightningBinding
 declare const liquidityError: LspLiquidityTimeoutError
+declare const lsp: UtexoLsp
+declare const lspClient: LspClient
+declare const lightningAddressQuote: LightningAddressQuote
 
 const managerContract: WalletManager = manager
 const accountContract: IWalletAccount = account
@@ -56,8 +79,75 @@ const lnurlOptions: LnurlPayOptions = {
 const payAddressOptions: PayAddressOptions = {
   address: 'alice@example.com',
   amtMsat: '1000',
-  allowCrossHostCallback: true
+  asset: { assetAmount: 1n },
+  allowCrossHostCallback: true,
+  requireAddressProof: true,
+  signal: new AbortController().signal
 }
+const requestOptions: LspRequestOptions = { timeoutMs: 5_000, signal: new AbortController().signal }
+const selectedAsset: Promise<AssetSelection> = lsp.selectPaymentAsset({
+  address: 'alice@example.com',
+  assetAmount: 1n
+})
+const externalInvoice: Promise<ExternalInvoiceQuote> = lsp.requestExternalInvoice({
+  amtMsat: 3_000_000,
+  assetAmount: 1,
+  asset: 'USDT'
+})
+const externalQuote: Promise<ExternalPaymentQuote> = lsp.quoteExternalPayment({
+  invoice: 'lnbc1...',
+  payWith: 'LNUSDT',
+  maxFeeMsat: 1_000
+})
+declare const verifiedQuote: ExternalPaymentQuote
+const externalPayment: Promise<ExternalPaymentResult> = lsp.payExternalQuote(verifiedQuote)
+const reverifiedQuote: Promise<ExternalPaymentQuote> = lsp.verifyExternalQuote(
+  verifiedQuote,
+  { signal: new AbortController().signal }
+)
+const addressRoutingFeeCap: number = lightningAddressQuote.maxTotalRoutingFeeMsat
+const lspPeer: LspPeer = {
+  baseUrl: 'https://lsp.example.com',
+  peerPubkey: '02' + '11'.repeat(32),
+  peerHost: 'lsp.example.com',
+  peerPort: 9735,
+  network: 'signet'
+}
+const rgbInvoiceParams: LspRgbInvoiceParams = { assignment: 'Any' }
+lspClient.onchainSend({ rgbInvoice: 'rgb:...' })
+const externalStatus: Promise<LspLightningSendStatusResult> =
+  lspClient.lightningSendStatus('ab'.repeat(32), requestOptions)
+const protocolError = new LspProtocolError('/lightning_send', 'payment_hash')
+const quoteError = new LspQuoteMismatchError('mismatch')
+const liquidityAssetError = new LspInsufficientAssetLiquidityError(1, [])
+const noAssetError = new LspNoPayableAssetError('alice@example.com')
+const unknownAssetError = new LspUnknownPayableAssetError('USDT', [])
+const ambiguousAssetError = new LspAmbiguousPayableAssetError([], 'convertible')
+verifyApayAddressAttestation({
+  recipientPubkey: '02' + '11'.repeat(32),
+  username: 'alice',
+  domain: 'example.com',
+  addressSig: 'y'.repeat(104)
+})
+verifyApayInvoiceProof({
+  version: 1,
+  recipientPubkey: '02' + '11'.repeat(32),
+  hostPubkey: '03' + '22'.repeat(32),
+  batchId: '00'.repeat(16),
+  hashIndex: 0,
+  paymentHash: 'aa'.repeat(32),
+  batchRoot: 'bb'.repeat(32),
+  batchSize: 1,
+  merkleProof: [],
+  batchSig: 'y'.repeat(104),
+  createdAt: 1,
+  expiresAt: 2
+})
+const messageSignatureValid: boolean = verifyLightningMessageSignature(
+  'message',
+  'y'.repeat(104),
+  '02' + '11'.repeat(32)
+)
 const minimumLiquidity: number = liquidityError.minMsat
 const nodeHealth: string = NodeRgbLightningBinding.healthcheck()
 const bareHealth: string = BareRgbLightningBinding.healthcheck()
@@ -145,6 +235,22 @@ void addressReceipts
 void decodedLightningInvoice
 void decodedRgbInvoice
 void payAddressOptions
+void selectedAsset
+void externalInvoice
+void externalQuote
+void externalPayment
+void reverifiedQuote
+void addressRoutingFeeCap
+void lspPeer
+void rgbInvoiceParams
+void externalStatus
+void protocolError
+void quoteError
+void liquidityAssetError
+void noAssetError
+void unknownAssetError
+void ambiguousAssetError
+void messageSignatureValid
 void minimumLiquidity
 void nodeHealth
 void bareHealth

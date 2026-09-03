@@ -19,7 +19,29 @@
 // absorbed here so the public method names + semantics match.
 
 import { LspClient } from './lsp-client.js'
-import { parseLightningAddress, resolveAddressToInvoice } from './lnurl-pay.js'
+import { fetchDiscovery, parseLightningAddress, resolveAddressToInvoice } from './lnurl-pay.js'
+import { canonicalAssetId, canonicalInvoice, snakeCaseLnParams } from './lsp-utils.js'
+import {
+  LspQuoteMismatchError,
+  assertAddressQuote,
+  assertAddressRequest,
+  assertRelayQuote,
+  decodedInvoice,
+  payableAssets,
+  pickPayableAsset,
+  resolveRelayFundingAsset,
+  selectLiquidPaymentAsset,
+  verifyApayAddressAttestation,
+  verifyApayInvoiceProof
+} from './lsp-linked-assets.js'
+
+export {
+  LspAmbiguousPayableAssetError,
+  LspInsufficientAssetLiquidityError,
+  LspNoPayableAssetError,
+  LspQuoteMismatchError,
+  LspUnknownPayableAssetError
+} from './lsp-linked-assets.js'
 
 /** @typedef {import('./lnurl-pay.js').LnurlPayError} LnurlPayError */
 /** @typedef {import('./lsp-client.js').LspError} LspError */
@@ -61,7 +83,7 @@ export class LspLiquidityTimeoutError extends Error {
   }
 }
 
-/** Settlement reached a terminal non-success state (Failed / Expired). */
+/** Settlement reached a terminal non-success state. */
 export class LspSettlementError extends Error {
   /**
    * Create an error for terminal non-success settlement.
@@ -90,19 +112,20 @@ export function peerUri (peer) {
 }
 
 /**
- * Canonicalise the many status shapes RLN / the LSP emit into the four
+ * Canonicalise the many status shapes RLN / the LSP emit into the five
  * receive states. Accepts a bare string (`'Succeeded'`) or an object
  * (`{ status }` from `getInvoiceStatus`).
  *
  * @param {string|{status?:string}|null|undefined} raw - Native or LSP status
  *   value.
- * @returns {'Pending'|'Succeeded'|'Failed'|'Expired'} - Canonical receive
+ * @returns {'Pending'|'Succeeded'|'Cancelled'|'Failed'|'Expired'} - Canonical receive
  *   status.
  */
 export function normalizeReceiveStatus (raw) {
   const s = (typeof raw === 'object' && raw !== null ? raw.status : raw) ?? ''
   const up = String(s).toUpperCase()
   if (up === 'SUCCEEDED' || up === 'SETTLED') return 'Succeeded'
+  if (up === 'CANCELLED' || up === 'CANCELED') return 'Cancelled'
   if (up === 'FAILED') return 'Failed'
   if (up === 'EXPIRED') return 'Expired'
   return 'Pending'
@@ -111,6 +134,7 @@ export function normalizeReceiveStatus (raw) {
 const DEFAULT_CHANNEL_TIMEOUT_MS = 120_000
 const DEFAULT_SETTLEMENT_TIMEOUT_MS = 60_000
 const DEFAULT_POLL_INTERVAL_MS = 2_000
+const DEFAULT_EXPIRY_SECONDS = 3_600
 const LIGHTNING_ADDRESS_LOOKUP_ATTEMPTS = 8
 const LIGHTNING_ADDRESS_LOOKUP_DELAY_MS = 2_000
 
@@ -125,7 +149,7 @@ export class UtexoLsp {
    *   getInvoiceStatus, sendPayment, getNodeInfo, apayNewWithAddress,
    *   apayNew, listPayments, claimHodlInvoice.
    * @param {object} peer - LSP peer details: `{ baseUrl, peerPubkey, peerHost,
-   *   peerPort, bearerToken?, timeoutMs?, allowHttp? }`.
+   *   peerPort, network?, bearerToken?, timeoutMs?, allowHttp? }`.
    * @throws {TypeError} - If the account or peer base URL is missing or
    *   malformed.
    * @throws {Error} - If the LSP client rejects an insecure HTTP origin.
@@ -200,14 +224,17 @@ export class UtexoLsp {
    * settles.
    *
    * @param {object} opts - Receive request.
-   * @param {string} opts.assetId - RGB asset ID to receive.
-   * @param {number} [opts.amountSats] - Lightning amount in satoshis. Omit for
-   *   an amountless BOLT11 invoice.
-   * @param {number} [opts.amountRgb] - RGB units bound to the invoice.
+   * @param {string} opts.assetId - RGB asset delivered over Lightning.
+   * @param {number} opts.amountSats - Lightning amount in satoshis.
+   * @param {number} opts.amountRgb - RGB units bound to the invoice.
    * @param {number} [opts.expirySeconds] - Invoice lifetime in seconds.
    *   Defaults to `3600`.
-   * @returns {Promise<{ lnInvoice:string, rgbInvoice:string, mappingId:string }>} - Paired
-   *   invoices and LSP bridge mapping ID.
+   * @param {'convertible'|'payout'} [opts.onchainAsset] - Omit the on-chain
+   *   asset ID and let the LSP select the configured convertible counterpart,
+   *   or request the Lightning payout asset on both legs. Defaults to
+   *   `convertible`.
+   * @returns {Promise<{ lnInvoice:string, rgbInvoice:string, mappingId:string, onchainAssetId?:string, converted?:boolean }>} - Paired
+   *   invoices, exact on-chain representation, and LSP bridge mapping ID.
    * @throws {TypeError} - If `assetId` is missing or malformed.
    * @throws {LspError} - If the LSP bridge request fails.
    * @throws {Error} - If local invoice creation fails or returns no invoice.
@@ -216,33 +243,111 @@ export class UtexoLsp {
     if (typeof opts.assetId !== 'string' || opts.assetId.length === 0) {
       throw new TypeError('UtexoLsp.receiveAsset: assetId required')
     }
-    const expirySeconds = opts.expirySeconds ?? 3600
+    const assetId = canonicalAssetId(opts.assetId, 'UtexoLsp.receiveAsset: assetId')
+    const amountSats = positiveSafeNumber(opts.amountSats, 'UtexoLsp.receiveAsset: amountSats')
+    const amountRgb = positiveSafeNumber(opts.amountRgb, 'UtexoLsp.receiveAsset: amountRgb')
+    const amountMsat = amountSats * 1000
+    if (!Number.isSafeInteger(amountMsat)) {
+      throw new TypeError('UtexoLsp.receiveAsset: amountSats is too large to convert exactly to millisatoshis')
+    }
+    const expirySeconds = opts.expirySeconds ?? DEFAULT_EXPIRY_SECONDS
+    if (!Number.isSafeInteger(expirySeconds) || expirySeconds <= 0) {
+      throw new TypeError('UtexoLsp.receiveAsset: expirySeconds must be a positive safe integer')
+    }
+    if (opts.onchainAsset !== undefined && opts.onchainAsset !== 'convertible' && opts.onchainAsset !== 'payout') {
+      throw new TypeError('UtexoLsp.receiveAsset: onchainAsset must be "convertible" or "payout"')
+    }
 
+    this._checkAbort(opts.signal)
+    const lspInfo = await this.http.getInfo({ signal: opts.signal })
+    const supportedAssets = this._supportedAssets(lspInfo, this.peer.network)
+    if (!supportedAssets.some((asset) => asset.assetId === assetId)) {
+      throw new LspQuoteMismatchError('the requested Lightning payout asset is not advertised by this LSP')
+    }
+    const expectedNetwork = String(lspInfo.network).toLowerCase()
+    this._checkAbort(opts.signal)
     const createdAtMs = Date.now()
     const created = await this.account.createLightningInvoice({
-      amountMsat: opts.amountSats != null ? Number(opts.amountSats) * 1000 : undefined,
+      amountMsat,
       expirySec: expirySeconds,
-      assetId: opts.assetId,
-      assetAmount: opts.amountRgb
+      assetId,
+      assetAmount: amountRgb
     })
-    const lnInvoice = created?.invoice ?? created?.lnInvoice
-    if (typeof lnInvoice !== 'string' || lnInvoice.length === 0) {
-      throw new Error('UtexoLsp.receiveAsset: createLightningInvoice returned no invoice')
+    const lnInvoice = canonicalInvoice(
+      created?.invoice ?? created?.lnInvoice,
+      'UtexoLsp.receiveAsset: createLightningInvoice returned no invoice'
+    )
+
+    const canVerifyInvoices =
+      typeof this.account.decodeRgbInvoice === 'function' &&
+      typeof this.account.decodeInvoice === 'function'
+    let decodedLn
+    if (canVerifyInvoices) {
+      decodedLn = decodedInvoice(
+        await this.account.decodeInvoice(lnInvoice),
+        'receive Lightning invoice'
+      )
+      this._verifyCreatedReceiveInvoice(
+        decodedLn,
+        { ...opts, assetId, amountSats, amountRgb, expirySeconds },
+        expectedNetwork
+      )
+    } else if (opts.requireInvoiceVerification !== false) {
+      throw new LspQuoteMismatchError('the wallet cannot decode both receive invoices for local verification')
     }
 
     // The LSP validates durationSeconds against the LN invoice's
     // *remaining* lifetime (utexo-lsp EXPIRY_MATCH_TOLERANCE_SEC, ~5s).
     // Invoice creation on a mobile node can take seconds, so send the
-    // remaining lifetime — sending the full expiry 400s once creation
-    // outlasts the tolerance.
-    const elapsedSeconds = Math.round((Date.now() - createdAtMs) / 1000)
-    const durationSeconds = Math.max(1, expirySeconds - elapsedSeconds)
+    // remaining lifetime. Sending the full expiry returns HTTP 400 once
+    // creation outlasts the tolerance.
+    const elapsedSeconds = Math.max(0, Math.ceil((Date.now() - createdAtMs) / 1000))
+    const durationSeconds = expirySeconds - elapsedSeconds
+    if (durationSeconds <= 0) {
+      throw new LspQuoteMismatchError(
+        'the receive Lightning invoice expired before the mapping could be registered'
+      )
+    }
 
-    const lr = await this.http.lightningReceive({
+    this._checkAbort(opts.signal)
+    const receive = typeof this.http.lightningReceiveVerified === 'function'
+      ? this.http.lightningReceiveVerified.bind(this.http)
+      : this.http.lightningReceive.bind(this.http)
+    const lr = await receive({
       lnInvoice,
-      rgb: { assetId: opts.assetId, durationSeconds }
+      rgb: {
+        ...((opts.onchainAsset ?? 'convertible') === 'payout' ? { assetId } : {}),
+        durationSeconds
+      },
+      ...(opts.signal === undefined ? {} : { signal: opts.signal })
     })
-    return { lnInvoice, rgbInvoice: lr.rgbInvoice, mappingId: String(lr.mappingId) }
+    if (lr.lnInvoice !== lnInvoice) {
+      throw new LspQuoteMismatchError('the receive mapping refers to a different Lightning invoice')
+    }
+    if ((opts.onchainAsset ?? 'convertible') === 'payout') {
+      if (lr.converted || (lr.rgbAssetId !== undefined && lr.rgbAssetId !== assetId)) {
+        throw new LspQuoteMismatchError('the LSP converted a receive request that required the payout asset')
+      }
+    }
+    let verifiedReceive
+    if (canVerifyInvoices) {
+      verifiedReceive = await this._verifyRgbReceiveInvoice(
+        lr,
+        { ...opts, assetId, amountSats, amountRgb },
+        decodedLn
+      )
+    }
+    return {
+      lnInvoice,
+      rgbInvoice: lr.rgbInvoice,
+      mappingId: String(lr.mappingId),
+      ...((verifiedReceive?.assetId ?? lr.rgbAssetId) === undefined
+        ? {}
+        : { onchainAssetId: verifiedReceive?.assetId ?? lr.rgbAssetId }),
+      ...(verifiedReceive === undefined && !lr.converted && lr.rgbAssetId === undefined
+        ? {}
+        : { converted: verifiedReceive?.converted ?? lr.converted })
+    }
   }
 
   // ── 4. Settlement polling ─────────────────────────────────────────────────────
@@ -253,8 +358,8 @@ export class UtexoLsp {
    * @param {string} lnInvoice - BOLT11 invoice whose settlement is monitored.
    * @param {object} [opts] - Wait options.
    * @returns {Promise<'settled'|'timed_out'>} - Settlement outcome.
-   * @throws {LspSettlementError} - If settlement reaches `Failed` or
-   *   `Expired`.
+   * @throws {LspSettlementError} - If settlement reaches `Cancelled`,
+   *   `Failed`, or `Expired`.
    * @throws {Error} - If the operation is aborted or account synchronization
    *   fails.
    */
@@ -270,7 +375,7 @@ export class UtexoLsp {
       const status = normalizeReceiveStatus(raw)
       opts.onProgress?.(status)
       if (status === 'Succeeded') return 'settled'
-      if (status === 'Failed' || status === 'Expired') {
+      if (status === 'Cancelled' || status === 'Failed' || status === 'Expired') {
         throw new LspSettlementError('ln_invoice', status)
       }
       await this._sleep(pollIntervalMs, opts.signal)
@@ -324,6 +429,9 @@ export class UtexoLsp {
    * @param {string} opts.rgbInvoice - Recipient's on-chain RGB invoice.
    * @param {object} [opts.ln] - Lightning parameters including `amtMsat`,
    *   `expirySec`, `assetId`, and `assetAmount`.
+   * @param {number} [opts.maxTotalRoutingFeeMsat=0] - Maximum native routing
+   *   fee. Defaults to zero so an omitted policy cannot authorize an
+   *   unbounded payment.
    * @returns {Promise<{ lnInvoice:string, rgbInvoice:string, mappingId:string, sendResult:any }>} - Paired
    *   invoices, mapping ID, and account payment result.
    * @throws {TypeError} - If `rgbInvoice` or Lightning parameters are invalid.
@@ -331,11 +439,50 @@ export class UtexoLsp {
    * @throws {Error} - If the account payment fails.
    */
   async sendAsset (opts = {}) {
-    if (typeof opts.rgbInvoice !== 'string' || opts.rgbInvoice.length === 0) {
-      throw new TypeError('UtexoLsp.sendAsset: rgbInvoice required')
+    const rgbInvoice = canonicalInvoice(opts.rgbInvoice, 'UtexoLsp.sendAsset: rgbInvoice')
+    if (opts.ln !== undefined) snakeCaseLnParams(opts.ln)
+    const maxTotalRoutingFeeMsat = opts.maxTotalRoutingFeeMsat === undefined
+      ? 0
+      : nonNegativeSafeNumber(
+        opts.maxTotalRoutingFeeMsat,
+        'UtexoLsp.sendAsset: maxTotalRoutingFeeMsat'
+      )
+    this._checkAbort(opts.signal)
+    const canVerifyInvoices =
+      typeof this.account.decodeRgbInvoice === 'function' &&
+      typeof this.account.decodeInvoice === 'function'
+    let decodedRgb
+    let recipientNetwork = this.peer.network
+    if (canVerifyInvoices) {
+      decodedRgb = await this.account.decodeRgbInvoice(rgbInvoice)
+      recipientNetwork = this._verifyRecipientRgbInvoice(decodedRgb)
+    } else if (opts.requireInvoiceVerification !== false) {
+      throw new LspQuoteMismatchError('the wallet cannot decode both bridge invoices for local verification')
     }
-    const issued = await this.http.onchainSend({ rgbInvoice: opts.rgbInvoice, ln: opts.ln })
-    const sendResult = await this.account.sendPayment({ invoice: issued.lnInvoice })
+    const supportedAssets = this._supportedAssets(
+      await this.http.getInfo({ signal: opts.signal }),
+      recipientNetwork
+    )
+    this._checkAbort(opts.signal)
+    const issue = typeof this.http.onchainSendVerified === 'function'
+      ? this.http.onchainSendVerified.bind(this.http)
+      : this.http.onchainSend.bind(this.http)
+    const issued = await issue({
+      rgbInvoice,
+      ln: opts.ln,
+      ...(opts.signal === undefined ? {} : { signal: opts.signal })
+    })
+    if (issued.rgbInvoice !== rgbInvoice) {
+      throw new LspQuoteMismatchError('the on-chain mapping refers to a different RGB invoice')
+    }
+    if (canVerifyInvoices) {
+      await this._verifyOnchainSendInvoice(issued, opts, decodedRgb, supportedAssets)
+    }
+    this._checkAbort(opts.signal)
+    const sendResult = await this.account.sendPayment({
+      invoice: issued.lnInvoice,
+      max_total_routing_fee_msat: maxTotalRoutingFeeMsat
+    })
     return {
       lnInvoice: issued.lnInvoice,
       rgbInvoice: issued.rgbInvoice,
@@ -368,6 +515,34 @@ export class UtexoLsp {
    * @throws {Error} - If no invoice is returned or the account payment fails.
    */
   async payAddress (opts = {}) {
+    const quote = await this.quoteAddress(opts)
+    this._checkAbort(opts.signal)
+    const sendResult = await this.account.sendPayment({
+      invoice: quote.invoice,
+      ...(quote.maxTotalRoutingFeeMsat === undefined
+        ? {}
+        : {
+            max_total_routing_fee_msat: quote.maxTotalRoutingFeeMsat
+          })
+    })
+    return {
+      invoice: quote.invoice,
+      sendResult,
+      ...(quote.assetSelection === undefined ? {} : { assetSelection: quote.assetSelection })
+    }
+  }
+
+  /**
+   * Resolve and locally verify a Lightning Address without paying it.
+   * Hosted quotes consume one APay hash, so callers should request a quote only
+   * after the user has supplied a final amount and asset.
+   *
+   * @param {object} opts - Same address, amount, and asset fields as payAddress.
+   * @param {boolean} [opts.requireAddressProof] - Require APay evidence for an
+   *   address hosted by this LSP. Defaults to true for hosted addresses.
+   * @returns {Promise<object>} - Verified BOLT11 quote.
+   */
+  async quoteAddress (opts = {}) {
     const address = opts.address
     let parsed
     try {
@@ -376,34 +551,401 @@ export class UtexoLsp {
       throw new TypeError(`UtexoLsp.payAddress: invalid Lightning Address "${address}"`)
     }
 
-    let invoice
-    let useStandardResolver = parsed.host !== new URL(this.http.baseUrl ?? this.peer.baseUrl).host.toLowerCase()
-    if (!useStandardResolver) {
-      try {
-        const cb = await this.http.resolveAddress(
-          parsed.username, opts.amtMsat, { assetId: opts.asset?.assetId, assetAmount: opts.asset?.assetAmount }
-        )
-        invoice = cb?.pr
-      } catch {
-        useStandardResolver = true
-      }
+    const amtMsat = positiveSafeNumber(opts.amtMsat, 'UtexoLsp.quoteAddress: amtMsat')
+    if (
+      opts.asset !== undefined &&
+      (opts.asset === null || typeof opts.asset !== 'object' || Array.isArray(opts.asset))
+    ) {
+      throw new TypeError('UtexoLsp.quoteAddress: asset must be an object when provided')
+    }
+    const requestedAssetAmount = opts.asset?.assetAmount ?? opts.asset?.amount
+    if (opts.asset && requestedAssetAmount === undefined) {
+      throw new TypeError('UtexoLsp.quoteAddress: asset.assetAmount is required when asset is set')
+    }
+    const assetAmount = requestedAssetAmount === undefined
+      ? undefined
+      : positiveSafeNumber(requestedAssetAmount, 'UtexoLsp.quoteAddress: asset.assetAmount')
+    const maxTotalRoutingFeeMsat = opts.maxTotalRoutingFeeMsat === undefined
+      ? 0
+      : nonNegativeSafeNumber(
+        opts.maxTotalRoutingFeeMsat,
+        'UtexoLsp.quoteAddress: maxTotalRoutingFeeMsat'
+      )
+
+    const localHost = new URL(this.http.baseUrl ?? this.peer.baseUrl).host.toLowerCase()
+    const hosted = parsed.host === localHost
+    let expectedNetwork = this.peer.network
+    if (hosted || expectedNetwork === undefined) {
+      const info = await this.http.getInfo({ signal: opts.signal })
+      this._supportedAssets(info, this.peer.network)
+      expectedNetwork = info.network
+    }
+    let assetSelection
+    let assetId = opts.asset?.assetId === undefined
+      ? undefined
+      : canonicalAssetId(opts.asset.assetId, 'UtexoLsp.quoteAddress: asset.assetId')
+    if (opts.asset && assetId === undefined) {
+      assetSelection = await this.selectPaymentAsset({
+        address: parsed.address,
+        assetAmount,
+        signal: opts.signal
+      })
+      assetId = assetSelection.assetId
     }
 
-    if (useStandardResolver) {
-      const resolved = await resolveAddressToInvoice(parsed.address, opts.amtMsat, {
+    let resolved
+    if (hosted) {
+      const resolve = typeof this.http.resolveAddressVerified === 'function'
+        ? this.http.resolveAddressVerified.bind(this.http)
+        : this.http.resolveAddress.bind(this.http)
+      this._checkAbort(opts.signal)
+      resolved = await resolve(parsed.username, amtMsat, {
+        assetId,
+        assetAmount,
+        signal: opts.signal
+      })
+    } else {
+      resolved = await resolveAddressToInvoice(parsed.address, amtMsat, {
         allowHttp: this.peer.allowHttp === true,
         allowCrossHostCallback: opts.allowCrossHostCallback === true,
-        assetId: opts.asset?.assetId,
-        assetAmount: opts.asset?.assetAmount
+        assetId,
+        assetAmount,
+        signal: opts.signal
       })
-      invoice = resolved.pr
     }
 
-    if (typeof invoice !== 'string' || invoice.length === 0) {
-      throw new Error('UtexoLsp.payAddress: no invoice returned for Lightning Address')
+    const invoice = canonicalInvoice(
+      resolved?.pr,
+      'UtexoLsp.quoteAddress: no invoice returned for Lightning Address'
+    )
+
+    const discovery = resolved.discovery ?? await this.discoverAddress(parsed.address, opts)
+    assertAddressRequest(discovery, { amtMsat, assetId, assetAmount })
+
+    const proof = resolved.proof
+    const canVerifyInvoice = typeof this.account.decodeInvoice === 'function'
+    const requireProof = opts.requireAddressProof ?? hosted
+    if (requireProof && !proof) {
+      throw new LspQuoteMismatchError('the hosted Lightning Address quote has no APay inclusion proof')
     }
-    const sendResult = await this.account.sendPayment({ invoice })
-    return { invoice, sendResult }
+    if (hosted && (requireProof || discovery.addressSig !== undefined)) {
+      if (discovery.recipientPubkey === undefined || discovery.addressSig === undefined) {
+        throw new LspQuoteMismatchError('the hosted Lightning Address has no recipient attestation')
+      }
+      verifyApayAddressAttestation({
+        recipientPubkey: discovery.recipientPubkey,
+        username: parsed.username,
+        domain: parsed.host,
+        addressSig: discovery.addressSig
+      })
+    }
+    const requireInvoiceVerification = opts.requireInvoiceVerification !== false
+    if (canVerifyInvoice) {
+      const decoded = decodedInvoice(await this.account.decodeInvoice(invoice), 'Lightning Address invoice')
+      assertAddressQuote(decoded, {
+        amtMsat,
+        assetId,
+        assetAmount,
+        metadata: discovery.metadata,
+        ...(expectedNetwork === undefined ? {} : { network: expectedNetwork }),
+        ...(hosted ? { lspPubkey: this.peer.peerPubkey } : {}),
+        ...(proof?.paymentHash === undefined ? {} : { paymentHash: proof.paymentHash })
+      })
+      if (proof) {
+        if (discovery.recipientPubkey === undefined) {
+          throw new LspQuoteMismatchError('the Lightning Address discovery does not identify the APay recipient')
+        }
+        if (decoded.payeePubkey === undefined) {
+          throw new LspQuoteMismatchError('the APay invoice does not identify its payment recipient')
+        }
+        verifyApayInvoiceProof(proof, {
+          paymentHash: decoded.paymentHash,
+          recipientPubkey: discovery.recipientPubkey,
+          hostPubkey: hosted ? this.peer.peerPubkey : decoded.payeePubkey
+        })
+      }
+    } else if (requireInvoiceVerification || proof) {
+      throw new LspQuoteMismatchError('the wallet cannot decode the Lightning Address invoice for local verification')
+    }
+    return Object.freeze({
+      invoice,
+      amtMsat,
+      ...(maxTotalRoutingFeeMsat === undefined ? {} : { maxTotalRoutingFeeMsat }),
+      ...(assetId === undefined ? {} : { assetId, assetAmount }),
+      ...(assetSelection === undefined ? {} : { assetSelection }),
+      ...(proof === undefined ? {} : { proof })
+    })
+  }
+
+  /** Discover the exact payout and accepted assets of a Lightning Address. */
+  async discoverAddress (address, opts = {}) {
+    const parsed = parseLightningAddress(address, { allowHttp: this.peer.allowHttp === true })
+    const localHost = new URL(this.http.baseUrl ?? this.peer.baseUrl).host.toLowerCase()
+    if (parsed.host === localHost) {
+      return this.http.discoverAddress(parsed.username, opts)
+    }
+    return fetchDiscovery(parsed.address, {
+      allowHttp: this.peer.allowHttp === true,
+      timeoutMs: opts.timeoutMs,
+      signal: opts.signal
+    })
+  }
+
+  /**
+   * Return the address's payout representation and every exact contract the
+   * callback accepts. This information comes from LNURL discovery, not from
+   * labels or the LSP-wide channel provisioning list.
+   */
+  async listPayableAssets (address, opts = {}) {
+    const target = address ?? (await this._ownLightningAddress('UtexoLsp.listPayableAssets', opts)).address
+    return payableAssets(await this.discoverAddress(target, opts))
+  }
+
+  /**
+   * Pick one accepted representation with enough spendable balance in a single
+   * usable channel. No channel balances are summed because RGB MPP is not part
+   * of this protocol.
+   */
+  async selectPaymentAsset (opts = {}) {
+    if (
+      typeof opts.address !== 'string' ||
+      opts.address.length === 0 ||
+      opts.address !== opts.address.trim()
+    ) {
+      throw new TypeError('UtexoLsp.selectPaymentAsset: address required')
+    }
+    const assetAmount = positiveSafeNumber(opts.assetAmount, 'UtexoLsp.selectPaymentAsset: assetAmount')
+    const discovery = opts.discovery ?? await this.discoverAddress(opts.address, opts)
+    const channels = opts.channels ?? await this._listChannels()
+    return selectLiquidPaymentAsset(discovery, channels, assetAmount)
+  }
+
+  /**
+   * Create a hosted BOLT11 for an external payer. By default the quote uses the
+   * sole canonical/convertible representation advertised by the address; an
+   * ambiguous menu must be resolved explicitly by ticker or contract ID.
+   */
+  async requestExternalInvoice (opts = {}) {
+    const amtMsat = positiveSafeNumber(opts.amtMsat, 'UtexoLsp.requestExternalInvoice: amtMsat')
+    const assetAmount = positiveSafeNumber(opts.assetAmount, 'UtexoLsp.requestExternalInvoice: assetAmount')
+    if (opts.prefer !== undefined && opts.prefer !== 'convertible' && opts.prefer !== 'payout') {
+      throw new TypeError('UtexoLsp.requestExternalInvoice: prefer must be "convertible" or "payout"')
+    }
+    if (
+      opts.asset !== undefined &&
+      (
+        typeof opts.asset !== 'string' ||
+        opts.asset.length === 0 ||
+        opts.asset !== opts.asset.trim()
+      )
+    ) {
+      throw new TypeError('UtexoLsp.requestExternalInvoice: asset must be a non-empty canonical string')
+    }
+    if (
+      opts.address !== undefined &&
+      (
+        typeof opts.address !== 'string' ||
+        opts.address.length === 0 ||
+        opts.address !== opts.address.trim()
+      )
+    ) {
+      throw new TypeError('UtexoLsp.requestExternalInvoice: address must be a non-empty canonical string')
+    }
+    const parsed = opts.address !== undefined
+      ? parseLightningAddress(opts.address, { allowHttp: this.peer.allowHttp === true })
+      : await this._ownLightningAddress('UtexoLsp.requestExternalInvoice', opts)
+    const address = parsed.address ?? `${parsed.username}@${parsed.domain}`
+    const menu = await this.listPayableAssets(address, opts)
+    const selection = pickPayableAsset(
+      address,
+      menu,
+      opts.asset,
+      opts.prefer ?? 'convertible'
+    )
+    const quote = await this.quoteAddress({
+      address,
+      amtMsat,
+      asset: { assetId: selection.asset.assetId, assetAmount },
+      requireAddressProof: opts.requireAddressProof ?? true,
+      requireInvoiceVerification: true,
+      signal: opts.signal
+    })
+    return Object.freeze({
+      ...quote,
+      address,
+      username: parsed.username,
+      domain: parsed.domain ?? parsed.host,
+      asset: selection.asset,
+      converted: selection.converted,
+      ...(quote.proof?.paymentHash === undefined ? {} : { paymentHash: quote.proof.paymentHash })
+    })
+  }
+
+  /**
+   * Ask the LSP for an atomic HODL relay quote, then verify both signed invoice
+   * legs locally. This method does not pay.
+   */
+  async quoteExternalPayment (opts = {}) {
+    const targetInvoice = canonicalInvoice(
+      opts.invoice,
+      'UtexoLsp.quoteExternalPayment: invoice'
+    )
+    const target = decodedInvoice(
+      await this.account.decodeInvoice(targetInvoice),
+      'external target invoice'
+    )
+    if (target.expiresAt <= Math.floor(Date.now() / 1000)) {
+      throw new LspQuoteMismatchError('the external target invoice is already expired')
+    }
+    if (
+      opts.payWith !== undefined &&
+      (
+        typeof opts.payWith !== 'string' ||
+        opts.payWith.length === 0 ||
+        opts.payWith !== opts.payWith.trim()
+      )
+    ) {
+      throw new TypeError('UtexoLsp.quoteExternalPayment: payWith must be a non-empty string when provided')
+    }
+    const requested = opts.payWith ?? ''
+    const maxFeeMsat = opts.maxFeeMsat === undefined
+      ? 0
+      : nonNegativeSafeNumber(opts.maxFeeMsat, 'UtexoLsp.quoteExternalPayment: maxFeeMsat')
+    const maxTotalRoutingFeeMsat = opts.maxTotalRoutingFeeMsat === undefined
+      ? 0
+      : nonNegativeSafeNumber(
+        opts.maxTotalRoutingFeeMsat,
+        'UtexoLsp.quoteExternalPayment: maxTotalRoutingFeeMsat'
+      )
+    const supportedAssets = this._supportedAssets(
+      await this.http.getInfo({ signal: opts.signal }),
+      target.network
+    )
+    const channels = requested === '' ? (opts.channels ?? await this._listChannels()) : []
+    const payWithAssetId = resolveRelayFundingAsset(target, channels, opts.payWith, supportedAssets)
+    this._checkAbort(opts.signal)
+    const response = await this.http.lightningSend({
+      invoice: targetInvoice,
+      payWithAssetId,
+      timeoutMs: opts.timeoutMs,
+      signal: opts.signal
+    })
+    const quotedFundingAsset = response.inbound?.assetId
+    if (
+      quotedFundingAsset !== undefined &&
+      !supportedAssets.some((asset) => asset.assetId === quotedFundingAsset)
+    ) {
+      throw new LspQuoteMismatchError('the funding invoice uses an asset not advertised by this LSP')
+    }
+    if (payWithAssetId !== undefined && quotedFundingAsset !== payWithAssetId) {
+      throw new LspQuoteMismatchError('the funding invoice changed the explicitly selected payment asset')
+    }
+    const hodl = decodedInvoice(
+      await this.account.decodeInvoice(response.lnInvoice),
+      'LSP funding invoice'
+    )
+    assertRelayQuote(target, hodl, response, {
+      maxFeeMsat,
+      lspPubkey: this.peer.peerPubkey
+    })
+    return Object.freeze({
+      targetInvoice,
+      invoice: response.lnInvoice,
+      paymentHash: response.paymentHash,
+      inbound: response.inbound,
+      outbound: response.outbound,
+      converted: response.converted,
+      feeMsat: response.feeMsat,
+      maxFeeMsat,
+      maxTotalRoutingFeeMsat,
+      expiresAt: response.expiresAt,
+      verified: true
+    })
+  }
+
+  /**
+   * Re-verify a serialized or previously returned relay quote without paying.
+   * Applications with their own durable payment journal use this immediately
+   * before crossing their native commit boundary.
+   */
+  async verifyExternalQuote (quote, opts = {}) {
+    this._checkAbort(opts.signal)
+    if (!quote || quote.verified !== true) {
+      throw new TypeError('UtexoLsp.verifyExternalQuote: a verified quote is required')
+    }
+    const targetInvoice = typeof quote.targetInvoice === 'string'
+      ? quote.targetInvoice.trim()
+      : ''
+    const invoice = typeof quote.invoice === 'string' ? quote.invoice.trim() : ''
+    if (targetInvoice.length === 0 || invoice.length === 0) {
+      throw new TypeError('UtexoLsp.verifyExternalQuote: both signed invoices are required')
+    }
+    if (targetInvoice !== quote.targetInvoice || invoice !== quote.invoice) {
+      throw new TypeError('UtexoLsp.verifyExternalQuote: invoice strings must be canonical')
+    }
+    const target = decodedInvoice(
+      await this.account.decodeInvoice(targetInvoice),
+      'external target invoice'
+    )
+    const hodl = decodedInvoice(
+      await this.account.decodeInvoice(invoice),
+      'LSP funding invoice'
+    )
+    assertRelayQuote(target, hodl, quote, {
+      maxFeeMsat: quote.maxFeeMsat,
+      lspPubkey: this.peer.peerPubkey
+    })
+    nonNegativeSafeNumber(
+      quote.maxTotalRoutingFeeMsat,
+      'UtexoLsp.verifyExternalQuote: maxTotalRoutingFeeMsat'
+    )
+    const supportedAssets = this._supportedAssets(
+      await this.http.getInfo({ signal: opts.signal }),
+      target.network
+    )
+    if (
+      quote.inbound?.assetId !== undefined &&
+      !supportedAssets.some((asset) => asset.assetId === quote.inbound.assetId)
+    ) {
+      throw new LspQuoteMismatchError('the restored funding asset is no longer advertised by this LSP')
+    }
+    this._checkAbort(opts.signal)
+    return Object.freeze({ ...quote, targetInvoice, invoice })
+  }
+
+  /**
+   * Re-verify a previously quoted relay immediately before handing its funding
+   * invoice to the native node. This prevents mutable or deserialized quote
+   * objects from bypassing the two-leg checks.
+   */
+  async payExternalQuote (quote, opts = {}) {
+    const verifiedQuote = await this.verifyExternalQuote(quote, opts)
+    if (opts.maxTotalRoutingFeeMsat !== undefined) {
+      const requestedCap = nonNegativeSafeNumber(
+        opts.maxTotalRoutingFeeMsat,
+        'UtexoLsp.payExternalQuote: maxTotalRoutingFeeMsat'
+      )
+      if (requestedCap !== verifiedQuote.maxTotalRoutingFeeMsat) {
+        throw new LspQuoteMismatchError('the routing fee ceiling differs from the reviewed quote')
+      }
+    }
+    this._checkAbort(opts.signal)
+    const sendResult = await this.account.sendPayment({
+      invoice: verifiedQuote.invoice,
+      max_total_routing_fee_msat: verifiedQuote.maxTotalRoutingFeeMsat
+    })
+    return { quote: verifiedQuote, sendResult }
+  }
+
+  /** Quote and immediately submit an external cross-asset payment. */
+  async payExternalInvoice (opts = {}) {
+    const quote = await this.quoteExternalPayment(opts)
+    return this.payExternalQuote(quote, opts)
+  }
+
+  /** Read the LSP's durable relay state without touching the native queue. */
+  externalPaymentStatus (paymentHash, opts = {}) {
+    return this.http.lightningSendStatus(paymentHash, opts)
   }
 
   // ── 8. Async / offline receive (APay) ─────────────────────────────────────────
@@ -435,6 +977,7 @@ export class UtexoLsp {
     if (typeof lspPubkey !== 'string' || lspPubkey.length === 0) {
       throw new Error('UtexoLsp.enableLightningAddress: LSP /get_info returned no pubkey')
     }
+    this._supportedAssets(lspInfo)
 
     if (requireAddressAttestation) {
       if (typeof this.account.apayNewWithAddress !== 'function') {
@@ -444,12 +987,29 @@ export class UtexoLsp {
           'requireAddressAttestation to false for legacy registration'
         )
       }
-      await this.account.apayNewWithAddress(lspPubkey, addr.username, addr.domain)
+      const pool = await this.account.apayNewWithAddress(lspPubkey, addr.username, addr.domain)
+      return {
+        username: addr.username,
+        domain: addr.domain,
+        address: `${addr.username}@${addr.domain}`,
+        ...this._hashPoolMetadata(pool)
+      }
     } else {
       await this.account.apayNew(lspPubkey)
     }
 
     return { username: addr.username, domain: addr.domain, address: `${addr.username}@${addr.domain}` }
+  }
+
+  /** Register the next address-attested APay hash batch. */
+  async refillHashPool (opts = {}) {
+    if (typeof this.account.apayNewWithAddress !== 'function') {
+      throw new Error('UtexoLsp.refillHashPool: address-attested APay is unavailable')
+    }
+    const address = await this._ownLightningAddress('UtexoLsp.refillHashPool', opts)
+    const info = await this.http.getInfo({ signal: opts.signal })
+    this._supportedAssets(info)
+    return this.account.apayNewWithAddress(info.pubkey, address.username, address.domain)
   }
 
   // ── 9. Claim pending HODL payments ────────────────────────────────────────────
@@ -504,6 +1064,156 @@ export class UtexoLsp {
     return []
   }
 
+  _verifyCreatedReceiveInvoice (decodedLn, opts, expectedNetwork) {
+    if (decodedLn.assetId !== opts.assetId || decodedLn.assetAmount !== opts.amountRgb) {
+      throw new LspQuoteMismatchError('the receive Lightning invoice does not carry the requested payout asset')
+    }
+    if (decodedLn.amtMsat !== opts.amountSats * 1000) {
+      throw new LspQuoteMismatchError('the receive Lightning invoice does not carry the requested carrier amount')
+    }
+    if (decodedLn.expiresAt <= Math.floor(Date.now() / 1000)) {
+      throw new LspQuoteMismatchError('the receive Lightning invoice is already expired')
+    }
+    if (decodedLn.expirySeconds !== opts.expirySeconds) {
+      throw new LspQuoteMismatchError('the receive Lightning invoice changed the requested expiry')
+    }
+    if (decodedLn.network !== expectedNetwork) {
+      throw new LspQuoteMismatchError('the receive Lightning invoice is for a different LSP network')
+    }
+  }
+
+  async _verifyRgbReceiveInvoice (response, opts, decodedLn) {
+    if (typeof this.account.decodeRgbInvoice !== 'function') {
+      throw new LspQuoteMismatchError('the wallet cannot decode the LSP RGB invoice for local verification')
+    }
+    const decodedRgb = await this.account.decodeRgbInvoice(response.rgbInvoice)
+    const rgbAssetId = this._raw(decodedRgb, 'assetId', 'asset_id')
+    if (typeof rgbAssetId !== 'string' || rgbAssetId.length === 0) {
+      throw new LspQuoteMismatchError('the LSP RGB invoice carries no asset id')
+    }
+    if (response.rgbAssetId !== undefined && response.rgbAssetId !== rgbAssetId) {
+      throw new LspQuoteMismatchError('the LSP response asset differs from its signed RGB invoice')
+    }
+    const converted = rgbAssetId !== opts.assetId
+    if (response.converted !== converted) {
+      throw new LspQuoteMismatchError('the LSP conversion flag differs from the signed invoice asset pair')
+    }
+    const assignment = decodedRgb?.assignment
+    const assignmentType = assignment?.type
+    const assignmentAmount = assignment?.value
+    if (assignmentType !== 'Fungible' || assignmentAmount !== opts.amountRgb) {
+      throw new LspQuoteMismatchError('the RGB invoice does not pin the requested fungible amount')
+    }
+
+    const rgbExpiry = this._raw(decodedRgb, 'expirationTimestamp', 'expiration_timestamp')
+    if (!Number.isSafeInteger(rgbExpiry) || rgbExpiry <= Math.floor(Date.now() / 1000)) {
+      throw new LspQuoteMismatchError('the receive RGB invoice has no valid future expiry')
+    }
+    if (rgbExpiry > decodedLn.expiresAt) {
+      throw new LspQuoteMismatchError('the receive RGB invoice outlives its Lightning payout')
+    }
+    if (decodedLn.expiresAt <= Math.floor(Date.now() / 1000)) {
+      throw new LspQuoteMismatchError('the receive Lightning invoice expired while the mapping was created')
+    }
+
+    const rgbNetwork = this._raw(decodedRgb, 'network', 'network')
+    if (typeof rgbNetwork !== 'string' || rgbNetwork.length === 0) {
+      throw new LspQuoteMismatchError('the receive RGB invoice does not identify its Bitcoin network')
+    }
+    if (rgbNetwork.toLowerCase() !== decodedLn.network) {
+      throw new LspQuoteMismatchError('the receive invoices are for different Bitcoin networks')
+    }
+    return Object.freeze({ assetId: rgbAssetId, converted })
+  }
+
+  _verifyRecipientRgbInvoice (decodedRgb) {
+    const rgbAssetId = this._raw(decodedRgb, 'assetId', 'asset_id')
+    const assignment = decodedRgb?.assignment
+    if (typeof rgbAssetId !== 'string' || rgbAssetId.length === 0) {
+      throw new LspQuoteMismatchError('the recipient RGB invoice carries no asset id')
+    }
+    if (assignment?.type !== 'Fungible' || !Number.isSafeInteger(assignment.value) || assignment.value <= 0) {
+      throw new LspQuoteMismatchError('the recipient RGB invoice carries no positive fungible amount')
+    }
+
+    const rgbNetwork = this._raw(decodedRgb, 'network', 'network')
+    if (typeof rgbNetwork !== 'string' || rgbNetwork.length === 0) {
+      throw new LspQuoteMismatchError('the recipient RGB invoice does not identify its Bitcoin network')
+    }
+
+    const expiresAt = this._raw(decodedRgb, 'expirationTimestamp', 'expiration_timestamp')
+    if (!Number.isSafeInteger(expiresAt) || expiresAt <= Math.floor(Date.now() / 1000)) {
+      throw new LspQuoteMismatchError('the recipient RGB invoice has no valid future expiry')
+    }
+    return rgbNetwork.toLowerCase()
+  }
+
+  async _verifyOnchainSendInvoice (response, opts, decodedRgb, supportedAssets) {
+    const rgbAssetId = this._raw(decodedRgb, 'assetId', 'asset_id')
+    const assignment = decodedRgb.assignment
+
+    const decodedLn = decodedInvoice(
+      await this.account.decodeInvoice(response.lnInvoice),
+      'on-chain bridge Lightning invoice'
+    )
+    if (decodedLn.assetId !== rgbAssetId || decodedLn.assetAmount !== assignment.value) {
+      throw new LspQuoteMismatchError('the bridge Lightning invoice does not match the recipient RGB asset and amount')
+    }
+    if (decodedLn.payeePubkey !== String(this.peer.peerPubkey).toLowerCase()) {
+      throw new LspQuoteMismatchError('the bridge Lightning invoice is not payable to the configured LSP')
+    }
+    if (
+      decodedLn.assetId !== undefined &&
+      !supportedAssets.some((asset) => asset.assetId === decodedLn.assetId)
+    ) {
+      throw new LspQuoteMismatchError('the bridge Lightning invoice uses an asset not advertised by this LSP')
+    }
+    if (decodedLn.expiresAt <= Math.floor(Date.now() / 1000)) {
+      throw new LspQuoteMismatchError('the bridge Lightning invoice is already expired')
+    }
+
+    const rgbNetwork = this._raw(decodedRgb, 'network', 'network')
+    const rgbExpiry = this._raw(decodedRgb, 'expirationTimestamp', 'expiration_timestamp')
+    if (decodedLn.expiresAt > rgbExpiry) {
+      throw new LspQuoteMismatchError('the bridge Lightning invoice outlives the recipient RGB invoice')
+    }
+    if (rgbNetwork.toLowerCase() !== decodedLn.network) {
+      throw new LspQuoteMismatchError('the bridge invoices are for different Bitcoin networks')
+    }
+
+    const requested = opts.ln ?? {}
+    if (requested.amtMsat !== undefined) {
+      const amount = positiveSafeNumber(requested.amtMsat, 'UtexoLsp.sendAsset: ln.amtMsat')
+      if (decodedLn.amtMsat !== amount) {
+        throw new LspQuoteMismatchError('the bridge Lightning invoice carries a different millisatoshi amount')
+      }
+    }
+    if (requested.assetId !== undefined && decodedLn.assetId !== requested.assetId) {
+      throw new LspQuoteMismatchError('the bridge Lightning invoice carries a different requested asset')
+    }
+    if (requested.assetAmount !== undefined) {
+      const assetAmount = positiveSafeNumber(
+        requested.assetAmount,
+        'UtexoLsp.sendAsset: ln.assetAmount'
+      )
+      if (decodedLn.assetAmount !== assetAmount) {
+        throw new LspQuoteMismatchError('the bridge Lightning invoice carries a different requested asset amount')
+      }
+    }
+    if (requested.paymentHash !== undefined && decodedLn.paymentHash !== String(requested.paymentHash).toLowerCase()) {
+      throw new LspQuoteMismatchError('the bridge Lightning invoice carries a different requested payment hash')
+    }
+    if (requested.expirySec !== undefined) {
+      const expirySeconds = positiveSafeNumber(
+        requested.expirySec,
+        'UtexoLsp.sendAsset: ln.expirySec'
+      )
+      if (decodedLn.expirySeconds !== expirySeconds) {
+        throw new LspQuoteMismatchError('the bridge Lightning invoice carries a different requested expiry')
+      }
+    }
+  }
+
   _isUsableRgbChannel (c, assetId) {
     return (
       this._raw(c, 'assetId', 'asset_id') === assetId &&
@@ -536,28 +1246,48 @@ export class UtexoLsp {
     return obj[camel] ?? obj[snake]
   }
 
-  async _ownLightningAddress (context) {
+  async _ownLightningAddress (context, opts = {}) {
+    this._checkAbort(opts.signal)
     const nodeInfo = await this.account.getNodeInfo()
     const pubkey = String(nodeInfo?.pubkey ?? '')
     if (!pubkey) throw new Error(`${context}: wallet not unlocked (no pubkey)`)
 
     let lastError
     for (let attempt = 0; attempt < LIGHTNING_ADDRESS_LOOKUP_ATTEMPTS; attempt += 1) {
+      this._checkAbort(opts.signal)
       try {
-        const address = await this.http.getLightningAddressByPubkey(pubkey)
+        const lookup = typeof this.http.getLightningAddressByPubkeyVerified === 'function'
+          ? this.http.getLightningAddressByPubkeyVerified.bind(this.http)
+          : this.http.getLightningAddressByPubkey.bind(this.http)
+        const address = opts.signal === undefined
+          ? await lookup(pubkey)
+          : await lookup(pubkey, { signal: opts.signal })
         if (
           typeof address?.username === 'string' && address.username.length > 0 &&
           typeof address?.domain === 'string' && address.domain.length > 0
         ) {
+          if (
+            address.recipientPubkey !== undefined &&
+            String(address.recipientPubkey).toLowerCase() !== pubkey.toLowerCase()
+          ) {
+            throw new LspQuoteMismatchError('the Lightning Address belongs to a different wallet node')
+          }
           return address
         }
         lastError = new Error('LSP returned an incomplete Lightning Address')
       } catch (error) {
+        if (
+          error instanceof LspQuoteMismatchError ||
+          error instanceof TypeError ||
+          error?.name === 'LspProtocolError'
+        ) {
+          throw error
+        }
         lastError = error
       }
 
       if (attempt + 1 < LIGHTNING_ADDRESS_LOOKUP_ATTEMPTS) {
-        await this._sleep(LIGHTNING_ADDRESS_LOOKUP_DELAY_MS)
+        await this._sleep(LIGHTNING_ADDRESS_LOOKUP_DELAY_MS, opts.signal)
       }
     }
 
@@ -565,6 +1295,44 @@ export class UtexoLsp {
       `${context}: LSP did not provision a Lightning Address for ${pubkey}. ` +
       `Last error: ${String(lastError)}`
     )
+  }
+
+  _supportedAssets (info, expectedNetwork) {
+    if (String(info?.pubkey ?? '').toLowerCase() !== String(this.peer.peerPubkey).toLowerCase()) {
+      throw new LspQuoteMismatchError('the LSP discovery identity differs from the configured peer')
+    }
+    const discoveredNetwork = String(info?.network ?? '').toLowerCase()
+    if (
+      this.peer.network !== undefined &&
+      discoveredNetwork !== String(this.peer.network).toLowerCase()
+    ) {
+      throw new LspQuoteMismatchError('the LSP discovery network differs from the configured peer')
+    }
+    if (
+      expectedNetwork !== undefined &&
+      discoveredNetwork !== String(expectedNetwork).toLowerCase()
+    ) {
+      throw new LspQuoteMismatchError('the LSP discovery and target invoice use different Bitcoin networks')
+    }
+    return (info?.supported_assets ?? info?.supportedAssets ?? []).map((asset) => Object.freeze({
+      assetId: asset.asset_id ?? asset.assetId,
+      schema: asset.schema,
+      ...(asset.ticker === undefined ? {} : { ticker: asset.ticker }),
+      name: asset.name,
+      precision: asset.precision
+    }))
+  }
+
+  _hashPoolMetadata (pool) {
+    if (!pool || typeof pool !== 'object') return {}
+    const unusedHashes = this._raw(pool, 'unusedHashes', 'unused_hashes')
+    const nextIndexExpected = this._raw(pool, 'nextIndexExpected', 'next_index_expected')
+    const refillBatchSize = this._raw(pool, 'refillBatchSize', 'refill_batch_size')
+    return {
+      ...(Number.isSafeInteger(unusedHashes) ? { unusedHashes } : {}),
+      ...(Number.isSafeInteger(nextIndexExpected) ? { nextIndexExpected } : {}),
+      ...(Number.isSafeInteger(refillBatchSize) ? { refillBatchSize } : {})
+    }
   }
 
   _checkAbort (signal) {
@@ -575,8 +1343,30 @@ export class UtexoLsp {
     // Do not unref this timer: it is a deliberate poll-interval wait and
     // must keep the event loop alive until it resolves or aborts.
     return new Promise((resolve, reject) => {
-      const t = setTimeout(resolve, ms)
-      signal?.addEventListener('abort', () => { clearTimeout(t); reject(new Error('UtexoLsp: aborted')) }, { once: true })
+      const onAbort = () => {
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
+        reject(new Error('UtexoLsp: aborted'))
+      }
+      const timer = setTimeout(() => {
+        signal?.removeEventListener('abort', onAbort)
+        resolve()
+      }, ms)
+      signal?.addEventListener('abort', onAbort, { once: true })
     })
   }
+}
+
+function nonNegativeSafeNumber (value, field) {
+  const number = typeof value === 'bigint' || typeof value === 'string' ? Number(value) : value
+  if (!Number.isSafeInteger(number) || number < 0 || String(number) !== String(value).replace(/^0+(?=\d)/, '')) {
+    throw new TypeError(`${field} must be a non-negative safe integer`)
+  }
+  return number
+}
+
+function positiveSafeNumber (value, field) {
+  const number = nonNegativeSafeNumber(value, field)
+  if (number === 0) throw new TypeError(`${field} must be positive`)
+  return number
 }

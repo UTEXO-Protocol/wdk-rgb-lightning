@@ -6,11 +6,23 @@
 
 import {
   camelCaseLspResponse,
+  canonicalAssetId,
+  canonicalInvoice,
   snakeCaseLnParams,
   snakeCaseRgbParams,
   toUint64String
 } from './lsp-utils.js'
 import { parseLspInfo } from './lsp-info.js'
+import {
+  LspProtocolError,
+  parseLightningAddressByPubkey,
+  parseLightningReceive,
+  parseLightningSend,
+  parseLightningSendStatus,
+  parseLnurlCallback,
+  parseLnurlDiscovery,
+  parseOnchainSend
+} from './lsp-response-contracts.js'
 
 // Thin typed wrapper around utexo-lsp's HTTP API. Side-effect free:
 // methods build URLs, send JSON, validate response status, and return
@@ -128,7 +140,7 @@ export class LspClient {
    *   without explicit opt-in.
    */
   constructor ({ baseUrl, timeoutMs = DEFAULT_TIMEOUT_MS, fetch: fetchImpl, defaultHeaders, allowHttp = false, maxRetries = DEFAULT_RETRIES } = {}) {
-    if (typeof baseUrl !== 'string' || baseUrl.length === 0) {
+    if (typeof baseUrl !== 'string' || baseUrl.length === 0 || baseUrl !== baseUrl.trim()) {
       throw new TypeError('LspClient: baseUrl is required')
     }
     const fetcher = fetchImpl ?? globalThis.fetch
@@ -149,6 +161,12 @@ export class LspClient {
     }
     if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
       throw new TypeError(`LspClient: baseUrl must use http: or https:, got ${parsedUrl.protocol}`)
+    }
+    if (parsedUrl.username !== '' || parsedUrl.password !== '') {
+      throw new TypeError('LspClient: baseUrl must not contain credentials')
+    }
+    if (parsedUrl.search !== '' || parsedUrl.hash !== '') {
+      throw new TypeError('LspClient: baseUrl must not contain a query or fragment')
     }
     if (parsedUrl.protocol === 'http:' && !allowHttp && !LOOPBACK_HOSTS.has(parsedUrl.hostname)) {
       throw new Error(
@@ -206,6 +224,12 @@ export class LspClient {
     return this._req('GET', `/.well-known/lnurlp/${encodeURIComponent(username)}`, undefined, opts)
   }
 
+  /** Strict discovery alias matching the shared SDK vocabulary. */
+  async discoverAddress (username, opts = {}) {
+    const path = `/.well-known/lnurlp/${encodeURIComponent(username)}`
+    return parseLnurlDiscovery(await this.lnurlDiscovery(username, opts), path)
+  }
+
   /**
    * LUD-06 callback. Returns `{ pr, routes }`. The wallet pays `pr`
    * through its own RLN node.
@@ -228,9 +252,13 @@ export class LspClient {
     if (!isNonEmptyString(username)) throw new TypeError('LspClient.lnurlCallback: username required')
     const params = new URLSearchParams()
     params.set('amount', toUint64String(amountMsat, 'amountMsat'))
-    if (opts.assetId !== undefined) params.set('asset_id', String(opts.assetId))
-    if (opts.assetAmount !== undefined) params.set('asset_amount', toUint64String(opts.assetAmount, 'assetAmount'))
-    return this._req('GET', `/pay/callback/${encodeURIComponent(username)}?${params.toString()}`, undefined, opts)
+    appendAssetQuery(params, opts, 'LspClient.lnurlCallback')
+    return this._req(
+      'GET',
+      `/pay/callback/${encodeURIComponent(username)}?${params.toString()}`,
+      undefined,
+      { ...opts, retry: false }
+    )
   }
 
   /**
@@ -270,10 +298,62 @@ export class LspClient {
     const cbPath = this._rewriteCallbackToPath(meta.callback)
     const params = new URLSearchParams()
     params.set('amount', toUint64String(amountMsat, 'amountMsat'))
-    if (opts.assetId !== undefined) params.set('asset_id', String(opts.assetId))
-    if (opts.assetAmount !== undefined) params.set('asset_amount', toUint64String(opts.assetAmount, 'assetAmount'))
-    const sep = cbPath.includes('?') ? '&' : '?'
-    return this._req('GET', `${cbPath}${sep}${params.toString()}`, undefined, opts)
+    appendAssetQuery(params, opts, 'LspClient.resolveAddress')
+    const path = appendPathQuery(cbPath, params)
+    return this._req(
+      'GET',
+      path,
+      undefined,
+      { ...opts, retry: false }
+    )
+  }
+
+  /** Resolve a hosted address and validate both protocol responses. */
+  async resolveAddressVerified (username, amountMsat, opts = {}) {
+    if (!isNonEmptyString(username)) throw new TypeError('LspClient.resolveAddressVerified: username required')
+    const discoveryPath = `/.well-known/lnurlp/${encodeURIComponent(username)}`
+    const discovery = parseLnurlDiscovery(
+      await this.lnurlDiscovery(username, opts),
+      discoveryPath
+    )
+    const amount = toUint64String(amountMsat, 'amountMsat')
+    const minimum = BigInt(toUint64String(discovery.minSendable, 'minSendable'))
+    const maximum = BigInt(toUint64String(discovery.maxSendable, 'maxSendable'))
+    if (BigInt(amount) < minimum || BigInt(amount) > maximum) {
+      throw new LspProtocolError(
+        discoveryPath,
+        'amount',
+        `a value in the advertised range [${minimum}, ${maximum}]`
+      )
+    }
+
+    const hasAssetId = opts.assetId !== undefined
+    const hasAssetAmount = opts.assetAmount !== undefined
+    if (hasAssetId !== hasAssetAmount) {
+      throw new TypeError('LspClient.resolveAddressVerified: assetId and assetAmount must be set together')
+    }
+    if (hasAssetId) {
+      const assetId = typeof opts.assetId === 'string' ? opts.assetId.trim() : ''
+      if (assetId.length === 0 || assetId !== opts.assetId) {
+        throw new TypeError('LspClient.resolveAddressVerified: assetId must be a non-empty trimmed string')
+      }
+      const accepted = discovery.acceptedAssets ?? (discovery.payoutAsset ? [discovery.payoutAsset] : [])
+      if (!accepted.some((asset) => asset.assetId === assetId)) {
+        throw new LspProtocolError(discoveryPath, 'assetId', 'an exact contract advertised by accepted_assets')
+      }
+    }
+    const callbackPath = this._rewriteCallbackToPath(discovery.callback)
+    const params = new URLSearchParams()
+    params.set('amount', amount)
+    appendAssetQuery(params, opts, 'LspClient.resolveAddressVerified')
+    const path = appendPathQuery(callbackPath, params)
+    return {
+      ...parseLnurlCallback(
+        await this._req('GET', path, undefined, { ...opts, retry: false }),
+        path
+      ),
+      discovery
+    }
   }
 
   /**
@@ -302,20 +382,48 @@ export class LspClient {
     return this._req('GET', `/lightning_address/by_pubkey/${encodeURIComponent(pk)}`, undefined, opts)
   }
 
+  /** Resolve and strictly validate an auto-assigned Lightning Address. */
+  async getLightningAddressByPubkeyVerified (peerPubkey, opts = {}) {
+    const expected = typeof peerPubkey === 'string' ? peerPubkey.trim().toLowerCase() : ''
+    if (!/^(02|03)[0-9a-f]{64}$/.test(expected)) {
+      throw new TypeError('LspClient.getLightningAddressByPubkeyVerified: peerPubkey must be a compressed public key')
+    }
+    const address = parseLightningAddressByPubkey(
+      await this.getLightningAddressByPubkey(peerPubkey, opts)
+    )
+    if (address.recipientPubkey !== undefined && address.recipientPubkey !== expected) {
+      throw new LspProtocolError(
+        '/lightning_address/by_pubkey',
+        'recipient_pubkey',
+        'the public key requested by the caller'
+      )
+    }
+    return address
+  }
+
   /**
-   * Reduce an LSP-advertised callback URL to a path (+query+hash) rooted
+   * Reduce an LSP-advertised callback URL to a path and query rooted
    * at this client's `baseUrl`. Keeps the second LUD-06 hop on the same
    * origin so it inherits the client's retry/timeout config and dodges
-   * unreachable internal hosts. Falls back to the raw string if it can't
-   * be parsed.
+   * unreachable internal hosts. Malformed and non-HTTP(S) callbacks fail
+   * closed.
    * @private
    */
   _rewriteCallbackToPath (callbackUrl) {
     try {
       const cb = new URL(callbackUrl, this._base)
-      return `${cb.pathname}${cb.search}${cb.hash}`
+      if (cb.protocol !== 'https:' && cb.protocol !== 'http:') {
+        throw new TypeError('LspClient: callback URL must use HTTP(S)')
+      }
+      if (cb.username !== '' || cb.password !== '') {
+        throw new TypeError('LspClient: callback URL must not contain credentials')
+      }
+      if (cb.hash !== '') {
+        throw new TypeError('LspClient: callback URL must not contain a fragment')
+      }
+      return `${cb.pathname}${cb.search}`
     } catch {
-      return callbackUrl.startsWith('/') ? callbackUrl : `/${callbackUrl}`
+      throw new TypeError('LspClient: callback URL is malformed')
     }
   }
 
@@ -351,15 +459,19 @@ export class LspClient {
    * @throws {TypeError} - If required inputs or integer fields are invalid.
    * @throws {LspError} - If the bridge request fails.
    */
-  async onchainSend ({ rgbInvoice, ln, timeoutMs } = {}) {
-    if (!isNonEmptyString(rgbInvoice)) throw new TypeError('LspClient.onchainSend: rgbInvoice required')
-    if (!ln || typeof ln !== 'object') throw new TypeError('LspClient.onchainSend: ln params required')
-    const body = {
-      rgb_invoice: rgbInvoice,
-      lninvoice: snakeCaseLnParams(ln)
+  async onchainSend ({ rgbInvoice, ln, timeoutMs, signal } = {}) {
+    const invoice = canonicalInvoice(rgbInvoice, 'LspClient.onchainSend: rgbInvoice')
+    if (ln !== undefined && (ln === null || typeof ln !== 'object' || Array.isArray(ln))) {
+      throw new TypeError('LspClient.onchainSend: ln params must be an object when provided')
     }
-    const raw = await this._req('POST', '/onchain_send', body, { timeoutMs })
-    return camelCaseLspResponse(raw)
+    const body = { rgb_invoice: invoice }
+    if (ln !== undefined) body.lninvoice = snakeCaseLnParams(ln)
+    return camelCaseLspResponse(await this._req('POST', '/onchain_send', body, { timeoutMs, signal }))
+  }
+
+  /** Submit and strictly validate an RGB-to-Lightning bridge response. */
+  async onchainSendVerified (params = {}) {
+    return parseOnchainSend(await this.onchainSend(params))
   }
 
   /**
@@ -373,7 +485,8 @@ export class LspClient {
    * @param {object} params - Lightning-to-RGB bridge request.
    * @param {string} params.lnInvoice - BOLT11 invoice paid by the LSP.
    * @param {object} params.rgb - RGB invoice parameters.
-   * @param {string} params.rgb.assetId - RGB asset ID.
+   * @param {string} [params.rgb.assetId] - RGB asset ID. Omit to ask the LSP
+   *   to resolve the canonical on-chain counterpart of the Lightning asset.
    * @param {string} [params.rgb.assignment] - RGB assignment kind. Defaults to
    *   `Any`.
    * @param {number} [params.rgb.durationSeconds] - RGB invoice lifetime in
@@ -389,16 +502,71 @@ export class LspClient {
    * @throws {TypeError} - If required inputs or integer fields are invalid.
    * @throws {LspError} - If the bridge request fails.
    */
-  async lightningReceive ({ lnInvoice, rgb, timeoutMs } = {}) {
-    if (!isNonEmptyString(lnInvoice)) throw new TypeError('LspClient.lightningReceive: lnInvoice required')
-    if (!rgb || typeof rgb !== 'object') throw new TypeError('LspClient.lightningReceive: rgb params required')
-    if (!isNonEmptyString(rgb.assetId)) throw new TypeError('LspClient.lightningReceive: rgb.assetId required')
+  async lightningReceive ({ lnInvoice, rgb, timeoutMs, signal } = {}) {
+    const invoice = canonicalInvoice(lnInvoice, 'LspClient.lightningReceive: lnInvoice')
+    if (!rgb || typeof rgb !== 'object' || Array.isArray(rgb)) {
+      throw new TypeError('LspClient.lightningReceive: rgb params required')
+    }
     const body = {
-      ln_invoice: lnInvoice,
+      ln_invoice: invoice,
       rgb_invoice: snakeCaseRgbParams(rgb)
     }
-    const raw = await this._req('POST', '/lightning_receive', body, { timeoutMs })
-    return camelCaseLspResponse(raw)
+    return camelCaseLspResponse(await this._req('POST', '/lightning_receive', body, { timeoutMs, signal }))
+  }
+
+  /** Submit and strictly validate a Lightning-to-RGB bridge response. */
+  async lightningReceiveVerified (params = {}) {
+    return parseLightningReceive(await this.lightningReceive(params))
+  }
+
+  /**
+   * Ask the LSP to relay a third-party RGB BOLT11 through a HODL invoice.
+   * The caller must decode and verify both invoices before paying.
+   *
+   * @param {object} params
+   * @param {string} params.invoice - Third-party delivery invoice.
+   * @param {string} [params.payWithAssetId] - Asset used for the funding leg.
+   * @param {number} [params.timeoutMs] - Per-call timeout.
+   * @param {AbortSignal} [params.signal] - Caller cancellation signal.
+   * @returns {Promise<object>} - Validated relay quote.
+   */
+  async lightningSend ({ invoice, payWithAssetId, timeoutMs, signal } = {}) {
+    const target = canonicalInvoice(invoice, 'LspClient.lightningSend: invoice')
+    const body = { invoice: target }
+    if (payWithAssetId !== undefined) {
+      body.pay_with_asset_id = canonicalAssetId(
+        payWithAssetId,
+        'LspClient.lightningSend: payWithAssetId'
+      )
+    }
+    return parseLightningSend(
+      await this._req('POST', '/lightning_send', body, { timeoutMs, signal })
+    )
+  }
+
+  /**
+   * Read the durable LSP state for a Lightning relay by payment hash.
+   *
+   * @param {string} paymentHash - 32-byte payment hash in hex.
+   * @param {object} [opts] - Per-call timeout/cancellation options.
+   * @returns {Promise<object>} - Validated relay status.
+   */
+  async lightningSendStatus (paymentHash, opts = {}) {
+    const hash = typeof paymentHash === 'string' ? paymentHash.trim().toLowerCase() : ''
+    if (!/^[0-9a-f]{64}$/.test(hash)) {
+      throw new TypeError('LspClient.lightningSendStatus: paymentHash must be 32-byte hexadecimal')
+    }
+    const result = parseLightningSendStatus(
+      await this._req('GET', `/lightning_send/${encodeURIComponent(hash)}`, undefined, opts)
+    )
+    if (result.paymentHash !== hash) {
+      throw new LspProtocolError(
+        '/lightning_send/{payment_hash}',
+        'payment_hash',
+        'the payment hash requested by the caller'
+      )
+    }
+    return result
   }
 
   // ---------------------------------------------------------------------------
@@ -408,17 +576,22 @@ export class LspClient {
     const callTimeoutMs = opts && Number.isFinite(Number(opts.timeoutMs)) && Number(opts.timeoutMs) > 0
       ? Math.trunc(Number(opts.timeoutMs))
       : this._timeoutMs
-    const canRetry = IDEMPOTENT_METHODS.has(method) && this._maxRetries > 0
+    const canRetry = opts?.retry !== false && IDEMPOTENT_METHODS.has(method) && this._maxRetries > 0
     // attempt 0 is the original; subsequent attempts are retries.
     // Backoff: 250ms, 500ms, 1000ms, …  (exponential, doubled per try).
     for (let attempt = 0; ; attempt++) {
+      if (opts?.signal?.aborted) {
+        throw new LspError(path, 0, '', abortCause(opts.signal, 'LSP request aborted'))
+      }
+      const requestSignal = composeRequestSignal(this._timeoutSignal(callTimeoutMs), opts?.signal)
       const init = {
         method,
+        redirect: 'error',
         headers: {
           Accept: 'application/json',
           ...this._headers
         },
-        signal: this._timeoutSignal(callTimeoutMs)
+        signal: requestSignal.signal
       }
       if (body !== undefined && body !== null) {
         init.headers['Content-Type'] = 'application/json'
@@ -428,23 +601,31 @@ export class LspClient {
       let res
       try {
         res = await this._fetch(url, init)
+        assertNoRedirect(res, url, path)
       } catch (cause) {
+        requestSignal.cleanup()
+        if (cause instanceof LspError) throw cause
         // Transport-level failure (DNS, TCP reset, abort). Retry the
         // idempotent class — these are exactly the case where a 5xx
         // upstream proxy can't even respond, and a backoff is the
         // right fix.
-        if (canRetry && attempt < this._maxRetries) {
-          await wait(backoffMs(attempt))
+        if (canRetry && !opts?.signal?.aborted && attempt < this._maxRetries) {
+          await wait(backoffMs(attempt), opts?.signal)
           continue
         }
         throw new LspError(path, 0, '', cause)
       }
 
-      const text = await readResponseText(res, path)
+      let text
+      try {
+        text = await readResponseText(res, path)
+      } finally {
+        requestSignal.cleanup()
+      }
 
       if (!res.ok) {
         if (canRetry && RETRY_STATUSES.has(res.status) && attempt < this._maxRetries) {
-          await wait(backoffMs(attempt))
+          await wait(backoffMs(attempt), opts?.signal)
           continue
         }
         throw new LspError(path, res.status, text.trim())
@@ -459,14 +640,11 @@ export class LspClient {
   }
 
   /**
-   * `AbortSignal.timeout()` is supported in Bare (via bare-abort-controller)
-   * and Node ≥17. Falls back to a manually plumbed AbortController for
-   * older runtimes — keeps the package portable without bumping the
-   * `engines.node` floor.
+   * Build a timeout signal without changing the SDK's historic runtime floor.
+   * Caller cancellation is composed separately by `_req`.
    *
-   * @param {number} timeoutMs - Per-call timeout override in milliseconds.
-   * @returns {AbortSignal|undefined} - Timeout signal when supported by the
-   *   runtime.
+   * @param {number} timeoutMs
+   * @returns {AbortSignal|undefined}
    */
   _timeoutSignal (timeoutMs) {
     const ms = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : this._timeoutMs
@@ -474,16 +652,60 @@ export class LspClient {
       return AbortSignal.timeout(ms)
     }
     if (typeof AbortController !== 'undefined') {
-      const ctrl = new AbortController()
-      setTimeout(() => ctrl.abort(new Error(`LSP request timed out after ${ms}ms`)), ms).unref?.()
-      return ctrl.signal
+      const controller = new AbortController()
+      setTimeout(
+        () => controller.abort(new Error(`LSP request timed out after ${ms}ms`)),
+        ms
+      ).unref?.()
+      return controller.signal
     }
     return undefined
   }
 }
 
-function wait (ms) { return new Promise((resolve) => setTimeout(resolve, ms)) }
+function wait (ms, signal) {
+  if (signal?.aborted) return Promise.reject(abortCause(signal, 'LSP request aborted'))
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      reject(abortCause(signal, 'LSP request aborted'))
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
 function backoffMs (attempt) { return RETRY_BASE_MS * Math.pow(2, attempt) }
+
+function composeRequestSignal (timeoutSignal, callerSignal) {
+  if (!timeoutSignal) return { signal: callerSignal, cleanup: () => {} }
+  if (!callerSignal) return { signal: timeoutSignal, cleanup: () => {} }
+  if (typeof AbortController === 'undefined') {
+    return { signal: callerSignal, cleanup: () => {} }
+  }
+
+  const controller = new AbortController()
+  const onTimeout = () => controller.abort(abortCause(timeoutSignal, 'LSP request timed out'))
+  const onCallerAbort = () => controller.abort(abortCause(callerSignal, 'LSP request aborted'))
+  timeoutSignal.addEventListener('abort', onTimeout, { once: true })
+  callerSignal.addEventListener('abort', onCallerAbort, { once: true })
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      timeoutSignal.removeEventListener('abort', onTimeout)
+      callerSignal.removeEventListener('abort', onCallerAbort)
+    }
+  }
+}
+
+function abortCause (signal, fallback) {
+  return signal && 'reason' in signal && signal.reason !== undefined
+    ? signal.reason
+    : new Error(fallback)
+}
 
 async function readResponseText (res, path) {
   const body = res && res.body
@@ -537,6 +759,40 @@ function assertResponseSize (path, status, byteLength) {
   }
 }
 
+function assertNoRedirect (response, requestedUrl, path) {
+  const finalUrl = typeof response?.url === 'string' && response.url.length > 0
+    ? response.url
+    : requestedUrl
+  if (response?.redirected === true || finalUrl !== requestedUrl) {
+    throw new LspError(path, Number(response?.status) || 0, 'redirected responses are not accepted')
+  }
+}
+
 function isNonEmptyString (v) {
   return typeof v === 'string' && v.length > 0
+}
+
+function appendAssetQuery (params, opts, context) {
+  const hasAssetId = opts.assetId !== undefined
+  const hasAssetAmount = opts.assetAmount !== undefined
+  if (hasAssetId !== hasAssetAmount) {
+    throw new TypeError(`${context}: assetId and assetAmount must be set together`)
+  }
+  if (!hasAssetId) return
+
+  if (typeof opts.assetId !== 'string' || opts.assetId.length === 0 || opts.assetId !== opts.assetId.trim()) {
+    throw new TypeError(`${context}: assetId must be a non-empty trimmed string`)
+  }
+  const amount = toUint64String(opts.assetAmount, 'assetAmount')
+  if (BigInt(amount) === 0n) {
+    throw new TypeError(`${context}: assetAmount must be positive`)
+  }
+  params.set('asset_id', opts.assetId)
+  params.set('asset_amount', amount)
+}
+
+function appendPathQuery (path, params) {
+  const callback = new URL(path, 'http://lsp.invalid')
+  for (const [key, value] of params) callback.searchParams.set(key, value)
+  return `${callback.pathname}${callback.search}`
 }

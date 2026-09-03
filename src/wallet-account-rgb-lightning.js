@@ -533,7 +533,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * `peerPort` overrides the advertised port for legacy deployments.
    *
    * Explicit form takes a full LspPeer
-   * (`{ baseUrl, peerPubkey, peerHost, peerPort, bearerToken?, timeoutMs?, allowHttp? }`).
+   * (`{ baseUrl, peerPubkey, peerHost, peerPort, network?, bearerToken?, timeoutMs?, allowHttp? }`).
    *
    * @param {object} [peer]
    * @param {number} [peerPort]  Used only by the auto-discover form.
@@ -555,6 +555,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       peerPubkey: info.pubkey,
       peerHost: info.host ?? new URL(baseUrl).hostname,
       peerPort: peerPort ?? info.port ?? 9735,
+      network: info.network,
       bearerToken: bearerToken ?? undefined
     })
   }

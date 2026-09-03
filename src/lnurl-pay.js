@@ -5,6 +5,7 @@
 'use strict'
 
 import { toUint64String } from './lsp-utils.js'
+import { parseLnurlCallback, parseLnurlDiscovery } from './lsp-response-contracts.js'
 
 // Generic LUD-06 (Lightning Address) client, independent of utexo-lsp:
 // any LNURL-pay server that follows the spec works. We split this out
@@ -46,6 +47,7 @@ export class LnurlPayError extends Error {
 
 /** Default request timeout for both discovery + callback fetches. */
 const DEFAULT_TIMEOUT_MS = 15_000
+const MAX_RESPONSE_BYTES = 1 << 20
 
 /** Prefix that distinguishes a UMA address from a Lightning Address. */
 export const UMA_PREFIX = '$'
@@ -156,11 +158,9 @@ function isLoopback (host) {
 }
 
 /**
- * Fetch the LUD-06 discovery document for an address. Returns the
- * server's response verbatim (no schema validation beyond shape). The
- * caller is expected to honour `minSendable` / `maxSendable` and
- * compute `metadata` hash from the returned `metadata` string when
- * checking the invoice's description-hash anchor.
+ * Fetch and validate the LUD-06 discovery document for an address. The caller
+ * must still decode the returned invoice and compare its description-hash
+ * anchor with the exact `metadata` bytes before authorizing payment.
  *
  * @param {string} addr - Lightning Address, UMA address, or a full URL to a
  *   `/.well-known/lnurlp/<user>` endpoint (useful for
@@ -183,11 +183,21 @@ export async function fetchDiscovery (addr, opts = {}) {
   }
   const url = discoveryUrlFor(addr, opts)
 
-  const data = await fetchJson(fetcher, url, {
-    signal: timeoutSignal(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS)
-  })
-  validateDiscovery(data, url)
-  return /** @type {LnurlPayDiscovery} */ (data)
+  const requestSignal = composeRequestSignal(
+    timeoutSignal(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+    opts.signal
+  )
+  try {
+    const data = await fetchJson(fetcher, url, { signal: requestSignal.signal })
+    validateDiscovery(data, url)
+    try {
+      return parseLnurlDiscovery(data, url)
+    } catch (cause) {
+      throw new LnurlPayError(cause.message, { cause })
+    }
+  } finally {
+    requestSignal.cleanup()
+  }
 }
 
 /**
@@ -231,6 +241,8 @@ export async function resolveAddressToInvoice (addr, amountMsat, opts = {}) {
   assertCallbackOrigin(discovery.callback, discoveryUrl, opts)
   const amount = asUint64String(amountMsat, 'amountMsat')
   enforceRange(amount, discovery)
+  enforceAssetRequest(opts.assetId, opts.assetAmount, discovery)
+  enforceComment(opts.comment, discovery)
 
   const callbackUrl = appendQuery(discovery.callback, {
     amount,
@@ -239,21 +251,36 @@ export async function resolveAddressToInvoice (addr, amountMsat, opts = {}) {
     ...(opts.comment ? { comment: opts.comment } : {})
   })
 
-  const data = await fetchJson(fetcher, callbackUrl, {
-    signal: timeoutSignal(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS)
-  })
-  if (data.status === 'ERROR') {
-    throw new LnurlPayError(`LUD-06 callback rejected: ${data.reason ?? 'no reason'}`, {
-      status: 200,
-      body: JSON.stringify(data)
-    })
-  }
-  if (typeof data.pr !== 'string' || data.pr.length === 0) {
-    throw new LnurlPayError(`LUD-06 callback missing 'pr': ${truncate(JSON.stringify(data))}`)
+  const requestSignal = composeRequestSignal(
+    timeoutSignal(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+    opts.signal
+  )
+  let data
+  try {
+    const raw = await fetchJson(fetcher, callbackUrl, { signal: requestSignal.signal })
+    if (raw.status === 'ERROR') {
+      throw new LnurlPayError(`LUD-06 callback rejected: ${raw.reason ?? 'no reason'}`, {
+        status: 200,
+        body: JSON.stringify(raw)
+      })
+    }
+    if (typeof raw.pr !== 'string' || raw.pr.length === 0) {
+      throw new LnurlPayError(`LUD-06 callback missing 'pr': ${truncate(JSON.stringify(raw))}`)
+    }
+    try {
+      data = parseLnurlCallback(raw, callbackUrl)
+    } catch (cause) {
+      throw new LnurlPayError(cause.message, { cause })
+    }
+  } finally {
+    requestSignal.cleanup()
   }
   return {
     pr: data.pr,
     routes: Array.isArray(data.routes) ? data.routes : [],
+    ...(data.status === undefined ? {} : { status: data.status }),
+    ...(data.reason === undefined ? {} : { reason: data.reason }),
+    ...(data.proof === undefined ? {} : { proof: data.proof }),
     discovery,
     callbackUrl
   }
@@ -266,11 +293,17 @@ export async function resolveAddressToInvoice (addr, amountMsat, opts = {}) {
 async function fetchJson (fetcher, url, init) {
   let res
   try {
-    res = await fetcher(url, { ...init, headers: { Accept: 'application/json', ...(init?.headers ?? {}) } })
+    res = await fetcher(url, {
+      ...init,
+      redirect: 'error',
+      headers: { Accept: 'application/json', ...(init?.headers ?? {}) }
+    })
+    assertNoRedirect(res, url)
   } catch (cause) {
+    if (cause instanceof LnurlPayError) throw cause
     throw new LnurlPayError(`fetch failed for ${url}`, { cause })
   }
-  const text = await res.text()
+  const text = await readBoundedResponseText(res, url)
   if (!res.ok) {
     throw new LnurlPayError(`HTTP ${res.status} from ${url}`, { status: res.status, body: text.trim() })
   }
@@ -279,6 +312,73 @@ async function fetchJson (fetcher, url, init) {
   } catch (cause) {
     throw new LnurlPayError(`invalid JSON from ${url}: ${truncate(text)}`, { status: res.status, body: text, cause })
   }
+}
+
+function assertNoRedirect (response, requestedUrl) {
+  const finalUrl = typeof response?.url === 'string' && response.url.length > 0
+    ? response.url
+    : requestedUrl
+  if (response?.redirected === true || finalUrl !== requestedUrl) {
+    throw new LnurlPayError(`redirected response is not accepted for ${requestedUrl}`, {
+      status: Number(response?.status) || 0
+    })
+  }
+}
+
+async function readBoundedResponseText (response, url) {
+  const declaredLength = response.headers?.get?.('content-length')
+  if (declaredLength !== null && declaredLength !== undefined && declaredLength !== '') {
+    const bytes = Number(declaredLength)
+    if (Number.isFinite(bytes) && bytes > MAX_RESPONSE_BYTES) {
+      throw responseTooLarge(url, response.status, bytes)
+    }
+  }
+
+  const body = response.body
+  if (!body || typeof body.getReader !== 'function') {
+    const text = await response.text()
+    const bytes = new TextEncoder().encode(text).byteLength
+    if (bytes > MAX_RESPONSE_BYTES) throw responseTooLarge(url, response.status, bytes)
+    return text
+  }
+
+  const reader = body.getReader()
+  const chunks = []
+  let byteLength = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      const chunk = value instanceof Uint8Array
+        ? value
+        : new Uint8Array(value.buffer ?? value, value.byteOffset ?? 0, value.byteLength)
+      byteLength += chunk.byteLength
+      if (byteLength > MAX_RESPONSE_BYTES) {
+        try {
+          await reader.cancel()
+        } catch {}
+        throw responseTooLarge(url, response.status, byteLength)
+      }
+      chunks.push(chunk)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  const bytes = new Uint8Array(byteLength)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(bytes)
+}
+
+function responseTooLarge (url, status, bytes) {
+  return new LnurlPayError(
+    `response from ${url} exceeds ${MAX_RESPONSE_BYTES} bytes (${bytes} received)`,
+    { status }
+  )
 }
 
 function validateDiscovery (data, url) {
@@ -323,6 +423,45 @@ function enforceRange (amountStr, d) {
   }
 }
 
+function enforceAssetRequest (assetId, assetAmount, discovery) {
+  const hasAssetId = assetId !== undefined
+  const hasAssetAmount = assetAmount !== undefined
+  if (hasAssetId !== hasAssetAmount) {
+    throw new LnurlPayError('assetId and assetAmount must be set together')
+  }
+  if (!hasAssetId) return
+  if (
+    typeof assetId !== 'string' ||
+    assetId.length === 0 ||
+    assetId !== assetId.trim() ||
+    /\s/.test(assetId)
+  ) {
+    throw new LnurlPayError('assetId must be a non-empty whitespace-free string')
+  }
+  if (BigInt(asUint64String(assetAmount, 'assetAmount')) === 0n) {
+    throw new LnurlPayError('assetAmount must be positive')
+  }
+  const accepted = discovery.acceptedAssets ??
+    (discovery.payoutAsset ? [discovery.payoutAsset] : [])
+  if (!accepted.some((asset) => asset.assetId === assetId)) {
+    throw new LnurlPayError(`asset '${assetId}' is not advertised by this Lightning Address`)
+  }
+}
+
+function enforceComment (comment, discovery) {
+  if (comment === undefined || comment === '') return
+  if (typeof comment !== 'string') {
+    throw new LnurlPayError('comment must be a string')
+  }
+  const maximum = discovery.commentAllowed ?? 0
+  if (maximum === 0) {
+    throw new LnurlPayError('this Lightning Address does not accept comments')
+  }
+  if ([...comment].length > maximum) {
+    throw new LnurlPayError(`comment exceeds the advertised ${maximum}-character limit`)
+  }
+}
+
 function appendQuery (url, params) {
   const callback = new URL(url)
   for (const [key, value] of Object.entries(params)) callback.searchParams.set(key, String(value))
@@ -340,6 +479,9 @@ function discoveryUrlFor (addr, opts) {
   } catch (cause) {
     throw new LnurlPayError(`invalid discovery URL '${addr}'`, { cause })
   }
+  if (url.username !== '' || url.password !== '' || url.hash !== '') {
+    throw new LnurlPayError('discovery URL must not contain credentials or a fragment')
+  }
   if (url.protocol === 'http:' && opts.allowHttp !== true && !isLoopback(url.host) && !url.hostname.endsWith('.onion')) {
     throw new LnurlPayError(`plain HTTP discovery is not allowed for '${url.host}'`)
   }
@@ -349,6 +491,9 @@ function discoveryUrlFor (addr, opts) {
 function assertCallbackOrigin (callbackUrl, discoveryUrl, opts) {
   const callback = new URL(callbackUrl)
   const discovery = new URL(discoveryUrl)
+  if (callback.username !== '' || callback.password !== '' || callback.hash !== '') {
+    throw new LnurlPayError('LUD-06 callback must not contain credentials or a fragment')
+  }
   if (callback.protocol === 'http:' && opts.allowHttp !== true && !isLoopback(callback.host) && !callback.hostname.endsWith('.onion')) {
     throw new LnurlPayError(`LUD-06 callback uses disallowed plain HTTP origin '${callback.origin}'`)
   }
@@ -362,7 +507,10 @@ function assertCallbackOrigin (callbackUrl, discoveryUrl, opts) {
 function isHttpUrl (value) {
   try {
     const url = new URL(value)
-    return url.protocol === 'http:' || url.protocol === 'https:'
+    return (url.protocol === 'http:' || url.protocol === 'https:') &&
+      url.username === '' &&
+      url.password === '' &&
+      url.hash === ''
   } catch {
     return false
   }
@@ -381,11 +529,37 @@ function timeoutSignal (ms) {
     return AbortSignal.timeout(ms)
   }
   if (typeof AbortController !== 'undefined') {
-    const ctrl = new AbortController()
-    setTimeout(() => ctrl.abort(new Error(`LNURL request timed out after ${ms}ms`)), ms).unref?.()
-    return ctrl.signal
+    const controller = new AbortController()
+    setTimeout(
+      () => controller.abort(new Error(`LNURL request timed out after ${ms}ms`)),
+      ms
+    ).unref?.()
+    return controller.signal
   }
   return undefined
+}
+
+function composeRequestSignal (timeout, callerSignal) {
+  if (callerSignal?.aborted) {
+    throw new LnurlPayError('LNURL request aborted', { cause: callerSignal.reason })
+  }
+  if (!timeout) return { signal: callerSignal, cleanup: () => {} }
+  if (!callerSignal) return { signal: timeout, cleanup: () => {} }
+  if (typeof AbortController === 'undefined') {
+    return { signal: callerSignal, cleanup: () => {} }
+  }
+  const controller = new AbortController()
+  const onTimeout = () => controller.abort(timeout.reason)
+  const onAbort = () => controller.abort(callerSignal.reason)
+  timeout.addEventListener('abort', onTimeout, { once: true })
+  callerSignal.addEventListener('abort', onAbort, { once: true })
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      timeout.removeEventListener('abort', onTimeout)
+      callerSignal.removeEventListener('abort', onAbort)
+    }
+  }
 }
 
 function truncate (s) { return s.length > 200 ? s.slice(0, 197) + '…' : s }
@@ -398,4 +572,6 @@ function truncate (s) { return s.length > 200 ? s.slice(0, 197) + '…' : s }
  * @property {number|string} maxSendable - Maximum amount in millisatoshis.
  * @property {string} metadata - LUD-06 metadata JSON string.
  * @property {number|string} [commentAllowed] - Maximum LUD-12 comment length.
+ * @property {object} [payoutAsset] - Receiver's exact payout representation.
+ * @property {object[]} [acceptedAssets] - Exact representations accepted by the callback.
  */

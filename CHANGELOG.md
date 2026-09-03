@@ -28,6 +28,27 @@ while pre-`1.0`.
 ## [Unreleased]
 
 ### Added
+- Strict linked-asset LSP contracts and composed flows for exact Lightning
+  Address asset discovery, quote-only address resolution, canonical-to-linked
+  receive requests, linked-to-canonical external BOLT11 relay quotes, durable
+  relay-status lookup, and APay hash-pool refill metadata. Signed target and
+  funding invoices are checked for payment-hash, contract, amount, network,
+  payee, expiry, and fee equivalence before native payment.
+- Exact APay verification for the native address-attestation and hash-batch
+  protocols. The SDK verifies the recipient's Lightning-message signatures,
+  reconstructs Merkle inclusion paths, and binds the proof to the configured
+  LSP or external BOLT11 payee, hosted address, and decoded invoice payment
+  hash.
+- Exact LUD-06 metadata commitment verification. A composed Lightning Address
+  quote now requires the decoded BOLT11 `description_hash` to equal SHA-256 of
+  the discovery document's exact UTF-8 `metadata` bytes.
+- Caller cancellation across LSP HTTP, LNURL discovery/callback, retry backoff,
+  and composed linked-asset flows. Successful protocol responses are bounded
+  and strictly parsed before they cross the SDK boundary.
+- Explicit recovery semantics for linked-payment relays: durable status lookup
+  prevents blind duplication after a persisted quote, while documentation now
+  fails closed on the unrecoverable lost-POST-response case because the current
+  status endpoint does not return the funding invoice.
 - Address-attested APay across the Bare and Node bindings, account surface, and
   composed LSP flow. `enableLightningAddress()` now resolves the
   LSP-provisioned address before submitting exactly one signed hash batch and
@@ -87,6 +108,49 @@ while pre-`1.0`.
   metadata through the C-FFI decode response.
 
 ### Fixed
+- Rejected zero-unit RGB LNURL requests and locally expired receive invoices
+  before invoking their state-creating callback or bridge endpoint.
+- Preserved RGB contract identifiers as case-sensitive authorization values
+  during Lightning Address and relay-funding selection. Human-facing tickers
+  remain case-insensitive, but differently cased contract IDs no longer match.
+- Treated native `Cancelled` and `Canceled` receive statuses as terminal
+  settlement failures instead of silently polling them as `Pending` until the
+  caller timeout.
+- Prevented an LSP from substituting either side of an on-chain RGB delivery
+  bridge. `sendAsset()` and `receiveAsset()` now require local verification of
+  the recipient RGB invoice and signed BOLT11 by default; the legacy downgrade
+  requires explicit `requireInvoiceVerification: false`.
+- Prevented automatic retries of state-creating Lightning Address callbacks.
+  Discovery and status reads retain bounded retries, but an ambiguous callback
+  failure cannot silently consume a second APay hash or create a second quote.
+- Hardened LNURL callback construction against credentials, fragments,
+  unsupported schemes, duplicate reserved query keys, incomplete RGB asset
+  pairs, unadvertised contracts, invalid comments, and oversized streamed
+  responses. LSP and LNURL requests ask the transport to reject redirects and
+  independently reject responses whose final URL changed. Mobile `bare-fetch`
+  still follows before returning, so redirected state-creating callbacks remain
+  ambiguous and are never automatically retried.
+- Made the exported APay verifiers validate their complete public inputs before
+  cryptographic processing, so malformed direct calls fail through the stable
+  `LspQuoteMismatchError` contract.
+- Required both same-asset and converted RGB receive invoices to preserve the
+  exact fungible amount, rejected expired or networkless bridge invoices, and
+  applied an explicit native routing-fee ceiling to `sendAsset()` (zero by
+  default).
+- Moved locally decidable signed-invoice checks ahead of non-idempotent LSP
+  bridge requests, enforced cross-leg expiry ordering, and bound APay address
+  discovery and registration to the configured LSP and wallet node identities.
+- Bound hosted Lightning Address quotes to fresh LSP identity and network
+  discovery before invoking their state-creating callback. Restored external
+  relay quotes now refresh that discovery and require the exact funding asset
+  to remain advertised immediately before native payment.
+- Bound legacy on-chain/Lightning bridge creation to fresh LSP identity and
+  network discovery as well. Receive refuses an unadvertised payout contract
+  before creating a local invoice, and locally created invoices must preserve
+  the requested expiry and LSP network before registration.
+- Centralized canonical invoice and RGB asset validation so state-creating
+  bridge calls reject whitespace, malformed selectors, and unsupported
+  selection policies before transport or native work.
 - Aligned the wallet snapshot runtime fingerprint and public TypeScript
   contract with the required v0.11 native peers. Snapshot refreshes now accept
   `rgb-lightning-node-v0.11.0-beta.3+utexo-wallet-v3` and continue to reject

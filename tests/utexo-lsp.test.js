@@ -52,10 +52,33 @@ function makeAccount (overrides = {}) {
 function makeLsp (account, peer = PEER) {
   const lsp = new UtexoLsp(account, peer)
   lsp.http = {
-    lightningReceive: jest.fn(async () => ({ rgbInvoice: 'rgb:abc', mappingId: 1 })),
+    lightningReceive: jest.fn(async ({ lnInvoice }) => ({
+      lnInvoice,
+      rgbInvoice: 'rgb:abc',
+      mappingId: 1,
+      converted: false
+    })),
     onchainSend: jest.fn(async () => ({ lnInvoice: 'lnbcrt-issued', rgbInvoice: 'rgb:xyz', mappingId: 2 })),
     resolveAddress: jest.fn(async () => ({ pr: 'lnbcrt-resolved' })),
-    getInfo: jest.fn(async () => ({ pubkey: 'lsppubkey' })),
+    discoverAddress: jest.fn(async () => ({
+      minSendable: 1,
+      maxSendable: 100000,
+      payoutAsset: { assetId: 'assetX', schema: 'Ifa', ticker: 'AX', name: 'Asset X', precision: 0 },
+      acceptedAssets: [
+        { assetId: 'assetX', schema: 'Ifa', ticker: 'AX', name: 'Asset X', precision: 0 }
+      ]
+    })),
+    getInfo: jest.fn(async () => ({
+      pubkey: PEER.peerPubkey,
+      network: 'regtest',
+      supported_assets: [{
+        asset_id: 'assetX',
+        schema: 'Ifa',
+        ticker: 'AX',
+        name: 'Asset X',
+        precision: 0
+      }]
+    })),
     getLightningAddressByPubkey: jest.fn(async () => ({ username: 'alice', domain: 'lsp.example.io' }))
   }
   return lsp
@@ -66,12 +89,21 @@ function lnurlResponse (body) {
 }
 
 function lnurlDiscovery (callback) {
+  const asset = {
+    asset_id: 'assetY',
+    schema: 'Ifa',
+    ticker: 'AY',
+    name: 'Asset Y',
+    precision: 0
+  }
   return {
     tag: 'payRequest',
     callback,
     minSendable: 1,
     maxSendable: 100000,
-    metadata: '[["text/plain","pay"]]'
+    metadata: '[["text/plain","pay"]]',
+    payout_asset: asset,
+    accepted_assets: [asset]
   }
 }
 
@@ -104,7 +136,9 @@ describe('normalizeReceiveStatus', () => {
     expect(normalizeReceiveStatus({ status: 'settled' })).toBe('Succeeded')
   })
 
-  it('maps FAILED to Failed and EXPIRED to Expired', () => {
+  it('maps cancellation, failure, and expiry to terminal statuses', () => {
+    expect(normalizeReceiveStatus('Cancelled')).toBe('Cancelled')
+    expect(normalizeReceiveStatus({ status: 'CANCELED' })).toBe('Cancelled')
     expect(normalizeReceiveStatus('Failed')).toBe('Failed')
     expect(normalizeReceiveStatus({ status: 'EXPIRED' })).toBe('Expired')
   })
@@ -316,7 +350,13 @@ describe('receiveAsset', () => {
       createLightningInvoice: jest.fn(async () => ({ invoice: 'lnbcrt-mine' }))
     })
     const lsp = makeLsp(account)
-    const out = await lsp.receiveAsset({ assetId: 'assetX', amountSats: 100, amountRgb: 5, expirySeconds: 600 })
+    const out = await lsp.receiveAsset({
+      assetId: 'assetX',
+      amountSats: 100,
+      amountRgb: 5,
+      expirySeconds: 600,
+      requireInvoiceVerification: false
+    })
     expect(account.createLightningInvoice).toHaveBeenCalledWith({
       amountMsat: 100000,
       expirySec: 600,
@@ -326,7 +366,7 @@ describe('receiveAsset', () => {
     // No measurable time elapses, so the full lifetime is forwarded.
     expect(lsp.http.lightningReceive).toHaveBeenCalledWith({
       lnInvoice: 'lnbcrt-mine',
-      rgb: { assetId: 'assetX', durationSeconds: 600 }
+      rgb: { durationSeconds: 600 }
     })
     expect(out).toEqual({ lnInvoice: 'lnbcrt-mine', rgbInvoice: 'rgb:abc', mappingId: '1' })
   })
@@ -343,17 +383,23 @@ describe('receiveAsset', () => {
     })
     const lsp = makeLsp(account)
     try {
-      await lsp.receiveAsset({ assetId: 'assetX', expirySeconds: 600 })
+      await lsp.receiveAsset({
+        assetId: 'assetX',
+        amountSats: 100,
+        amountRgb: 5,
+        expirySeconds: 600,
+        requireInvoiceVerification: false
+      })
     } finally {
       nowSpy.mockRestore()
     }
     expect(lsp.http.lightningReceive).toHaveBeenCalledWith({
       lnInvoice: 'lnbcrt-mine',
-      rgb: { assetId: 'assetX', durationSeconds: 593 }
+      rgb: { durationSeconds: 593 }
     })
   })
 
-  it('floors durationSeconds at 1 when invoice creation outlasts the expiry', async () => {
+  it('does not register a mapping when invoice creation outlasts the expiry', async () => {
     // Fifty seconds of elapsed time exceeds the ten-second expiry.
     const nowSpy = jest.spyOn(Date, 'now')
     nowSpy.mockReturnValueOnce(2_000_000) // createdAtMs
@@ -365,39 +411,72 @@ describe('receiveAsset', () => {
     })
     const lsp = makeLsp(account)
     try {
-      await lsp.receiveAsset({ assetId: 'assetX', expirySeconds: 10 })
+      await expect(lsp.receiveAsset({
+        assetId: 'assetX',
+        amountSats: 100,
+        amountRgb: 5,
+        expirySeconds: 10,
+        requireInvoiceVerification: false
+      })).rejects.toThrow(/expired before the mapping/)
     } finally {
       nowSpy.mockRestore()
     }
-    expect(lsp.http.lightningReceive).toHaveBeenCalledWith({
-      lnInvoice: 'lnbcrt-slow',
-      rgb: { assetId: 'assetX', durationSeconds: 1 }
-    })
+    expect(lsp.http.lightningReceive).not.toHaveBeenCalled()
   })
 
-  it('omits amountMsat for an amountless invoice and defaults expiry to 3600', async () => {
+  it('rejects amountless bridge invoices before consuming native or LSP resources', async () => {
     const account = makeAccount()
     const lsp = makeLsp(account)
-    await lsp.receiveAsset({ assetId: 'assetX' })
-    expect(account.createLightningInvoice).toHaveBeenCalledWith({
-      amountMsat: undefined,
-      expirySec: 3600,
-      assetId: 'assetX',
-      assetAmount: undefined
-    })
+    await expect(lsp.receiveAsset({ assetId: 'assetX' })).rejects.toThrow('amountSats')
+    await expect(lsp.receiveAsset({ assetId: 'assetX', amountSats: 1 })).rejects.toThrow('amountRgb')
+    expect(account.createLightningInvoice).not.toHaveBeenCalled()
+    expect(lsp.http.lightningReceive).not.toHaveBeenCalled()
   })
 
   it('accepts the lnInvoice fallback field name', async () => {
     const account = makeAccount({ createLightningInvoice: jest.fn(async () => ({ lnInvoice: 'lnbcrt-alt' })) })
     const lsp = makeLsp(account)
-    const out = await lsp.receiveAsset({ assetId: 'assetX' })
+    const out = await lsp.receiveAsset({
+      assetId: 'assetX',
+      amountSats: 100,
+      amountRgb: 5,
+      requireInvoiceVerification: false
+    })
     expect(out.lnInvoice).toBe('lnbcrt-alt')
   })
 
   it('throws when createLightningInvoice returns no invoice', async () => {
     const account = makeAccount({ createLightningInvoice: jest.fn(async () => ({})) })
     const lsp = makeLsp(account)
-    await expect(lsp.receiveAsset({ assetId: 'assetX' })).rejects.toThrow('returned no invoice')
+    await expect(lsp.receiveAsset({ assetId: 'assetX', amountSats: 100, amountRgb: 5 }))
+      .rejects.toThrow('returned no invoice')
+  })
+
+  it('fails closed by default when receive invoice decoding is unavailable', async () => {
+    const account = makeAccount()
+    const lsp = makeLsp(account)
+
+    await expect(lsp.receiveAsset({
+      assetId: 'assetX',
+      amountSats: 100,
+      amountRgb: 5
+    })).rejects.toThrow(/cannot decode both receive invoices/)
+  })
+
+  it('honors cancellation before creating a receive invoice', async () => {
+    const account = makeAccount()
+    const lsp = makeLsp(account)
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(lsp.receiveAsset({
+      assetId: 'assetX',
+      amountSats: 100,
+      amountRgb: 5,
+      signal: controller.signal
+    })).rejects.toThrow(/operation aborted/)
+    expect(account.createLightningInvoice).not.toHaveBeenCalled()
+    expect(lsp.http.lightningReceive).not.toHaveBeenCalled()
   })
 })
 
@@ -419,6 +498,18 @@ describe('awaitReceiveSettlement', () => {
     expect(err).toBeInstanceOf(LspSettlementError)
     expect(err.status).toBe('Failed')
     expect(err.step).toBe('ln_invoice')
+  })
+
+  it.each(['Cancelled', 'Canceled'])('throws LspSettlementError on a %s status', async (status) => {
+    const account = makeAccount({ getInvoiceStatus: jest.fn(async () => ({ status })) })
+    const lsp = makeLsp(account)
+
+    const err = await lsp.awaitReceiveSettlement('ln', { timeoutMs: 1000 }).catch((error) => error)
+
+    expect(err).toBeInstanceOf(LspSettlementError)
+    expect(err.status).toBe('Cancelled')
+    expect(err.step).toBe('ln_invoice')
+    expect(account.getInvoiceStatus).toHaveBeenCalledTimes(1)
   })
 
   it('keeps polling through Pending and settles on a later Succeeded (multi-iteration)', async () => {
@@ -540,9 +631,16 @@ describe('sendAsset', () => {
     const account = makeAccount({ sendPayment: jest.fn(async () => ({ payment_hash: 'sent' })) })
     const lsp = makeLsp(account)
     const ln = { amtMsat: 1000, expirySec: 60 }
-    const out = await lsp.sendAsset({ rgbInvoice: 'rgb:xyz', ln })
+    const out = await lsp.sendAsset({
+      rgbInvoice: 'rgb:xyz',
+      ln,
+      requireInvoiceVerification: false
+    })
     expect(lsp.http.onchainSend).toHaveBeenCalledWith({ rgbInvoice: 'rgb:xyz', ln })
-    expect(account.sendPayment).toHaveBeenCalledWith({ invoice: 'lnbcrt-issued' })
+    expect(account.sendPayment).toHaveBeenCalledWith({
+      invoice: 'lnbcrt-issued',
+      max_total_routing_fee_msat: 0
+    })
     expect(out).toEqual({
       lnInvoice: 'lnbcrt-issued',
       rgbInvoice: 'rgb:xyz',
@@ -573,10 +671,15 @@ describe('payAddress', () => {
     const out = await lsp.payAddress({
       address: 'alice@lsp.example.io',
       amtMsat: 2000,
-      asset: { assetId: 'assetX', assetAmount: 7 }
+      asset: { assetId: 'assetX', assetAmount: 7 },
+      requireAddressProof: false,
+      requireInvoiceVerification: false
     })
     expect(lsp.http.resolveAddress).toHaveBeenCalledWith('alice', 2000, { assetId: 'assetX', assetAmount: 7 })
-    expect(account.sendPayment).toHaveBeenCalledWith({ invoice: 'lnbcrt-resolved' })
+    expect(account.sendPayment).toHaveBeenCalledWith({
+      invoice: 'lnbcrt-resolved',
+      max_total_routing_fee_msat: 0
+    })
     expect(out).toEqual({ invoice: 'lnbcrt-resolved', sendResult: { payment_hash: 'paid' } })
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
@@ -585,14 +688,22 @@ describe('payAddress', () => {
     const account = makeAccount({ sendPayment: jest.fn(async () => ({ payment_hash: 'uma-local' })) })
     const lsp = makeLsp(account)
 
-    await lsp.payAddress({ address: '$Alice@LSP.Example.IO', amtMsat: 2000 })
+    await lsp.payAddress({
+      address: '$Alice@LSP.Example.IO',
+      amtMsat: 2000,
+      requireAddressProof: false,
+      requireInvoiceVerification: false
+    })
 
     expect(lsp.http.resolveAddress).toHaveBeenCalledWith('alice', 2000, {
       assetId: undefined,
       assetAmount: undefined
     })
     expect(globalThis.fetch).not.toHaveBeenCalled()
-    expect(account.sendPayment).toHaveBeenCalledWith({ invoice: 'lnbcrt-resolved' })
+    expect(account.sendPayment).toHaveBeenCalledWith({
+      invoice: 'lnbcrt-resolved',
+      max_total_routing_fee_msat: 0
+    })
   })
 
   it('uses the shared LNURL resolver directly for an external address', async () => {
@@ -605,7 +716,8 @@ describe('payAddress', () => {
     const out = await lsp.payAddress({
       address: 'bob@other.test',
       amtMsat: 3000,
-      asset: { assetId: 'assetY', assetAmount: 9 }
+      asset: { assetId: 'assetY', assetAmount: 9 },
+      requireInvoiceVerification: false
     })
     expect(globalThis.fetch.mock.calls[0][0]).toBe('https://other.test/.well-known/lnurlp/bob')
     expect(lsp.http.resolveAddress).not.toHaveBeenCalled()
@@ -623,7 +735,11 @@ describe('payAddress', () => {
       .mockResolvedValueOnce(lnurlResponse(lnurlDiscovery('https://other.test/cb')))
       .mockResolvedValueOnce(lnurlResponse({ pr: 'lnbcrt-uma-external' }))
 
-    await lsp.payAddress({ address: '$Bob@Other.Test', amtMsat: 3000 })
+    await lsp.payAddress({
+      address: '$Bob@Other.Test',
+      amtMsat: 3000,
+      requireInvoiceVerification: false
+    })
 
     expect(lsp.http.resolveAddress).not.toHaveBeenCalled()
     expect(globalThis.fetch.mock.calls[0][0]).toBe('https://other.test/.well-known/lnurlp/bob')
@@ -651,13 +767,17 @@ describe('payAddress', () => {
     await expect(lsp.payAddress({
       address: 'bob@other.test',
       amtMsat: '3000',
-      allowCrossHostCallback: true
+      allowCrossHostCallback: true,
+      requireInvoiceVerification: false
     })).resolves.toEqual({
       invoice: 'lnbcrt-delegated',
       sendResult: { payment_hash: 'delegated' }
     })
     expect(globalThis.fetch.mock.calls[1][0]).toBe('https://delegate.test/cb?amount=3000')
-    expect(account.sendPayment).toHaveBeenCalledWith({ invoice: 'lnbcrt-delegated' })
+    expect(account.sendPayment).toHaveBeenCalledWith({
+      invoice: 'lnbcrt-delegated',
+      max_total_routing_fee_msat: 0
+    })
   })
 
   it('uses a ? separator in the fallback callback when none is present', async () => {
@@ -665,7 +785,11 @@ describe('payAddress', () => {
     globalThis.fetch = jest.fn()
       .mockResolvedValueOnce(lnurlResponse(lnurlDiscovery('https://other.test/cb')))
       .mockResolvedValueOnce(lnurlResponse({ pr: 'lnbcrt-q' }))
-    await lsp.payAddress({ address: 'bob@other.test', amtMsat: 1 })
+    await lsp.payAddress({
+      address: 'bob@other.test',
+      amtMsat: 1,
+      requireInvoiceVerification: false
+    })
     expect(globalThis.fetch.mock.calls[1][0]).toContain('https://other.test/cb?amount=1')
   })
 
@@ -683,29 +807,28 @@ describe('payAddress', () => {
       .rejects.toThrow('invalid callback')
   })
 
-  it('falls back to the shared resolver when the same-host LSP path fails', async () => {
+  it('does not downgrade a same-host LSP lookup to an unauthenticated resolver', async () => {
     const lsp = makeLsp(makeAccount())
     lsp.http.resolveAddress = jest.fn(async () => { throw new Error('LSP unavailable') })
     globalThis.fetch = jest.fn()
       .mockResolvedValueOnce(lnurlResponse(lnurlDiscovery('https://lsp.example.io/cb')))
       .mockResolvedValueOnce(lnurlResponse({ pr: 'lnbcrt-fallback' }))
     await expect(lsp.payAddress({ address: 'alice@lsp.example.io', amtMsat: 2 }))
-      .resolves.toMatchObject({ invoice: 'lnbcrt-fallback' })
+      .rejects.toThrow('LSP unavailable')
     expect(lsp.http.resolveAddress).toHaveBeenCalledTimes(1)
-    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
-  it('uses the normalized address when an UMA same-host payment falls back', async () => {
+  it('does not downgrade a same-host UMA lookup to an unauthenticated resolver', async () => {
     const lsp = makeLsp(makeAccount())
     lsp.http.resolveAddress = jest.fn(async () => { throw new Error('LSP unavailable') })
     globalThis.fetch = jest.fn()
       .mockResolvedValueOnce(lnurlResponse(lnurlDiscovery('https://lsp.example.io/cb')))
       .mockResolvedValueOnce(lnurlResponse({ pr: 'lnbcrt-uma-fallback' }))
 
-    await lsp.payAddress({ address: '$Alice@LSP.Example.IO', amtMsat: 2 })
-
-    expect(globalThis.fetch.mock.calls[0][0])
-      .toBe('https://lsp.example.io/.well-known/lnurlp/alice')
+    await expect(lsp.payAddress({ address: '$Alice@LSP.Example.IO', amtMsat: 2 }))
+      .rejects.toThrow('LSP unavailable')
+    expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
   it('throws when no invoice is returned from either path', async () => {
@@ -726,7 +849,7 @@ describe('enableLightningAddress', () => {
     expect(lsp.http.getInfo).toHaveBeenCalled()
     expect(lsp.http.getLightningAddressByPubkey).toHaveBeenCalledWith('wallet-pk')
     expect(account.apayNewWithAddress).toHaveBeenCalledWith(
-      'lsppubkey',
+      PEER.peerPubkey,
       'alice',
       'lsp.example.io'
     )
@@ -748,6 +871,34 @@ describe('enableLightningAddress', () => {
     const lsp = makeLsp(account)
     lsp.http.getInfo = jest.fn(async () => ({}))
     await expect(lsp.enableLightningAddress()).rejects.toThrow('returned no pubkey')
+    expect(account.apayNewWithAddress).not.toHaveBeenCalled()
+  })
+
+  it('does not register hashes when the HTTP service identifies a different LSP node', async () => {
+    const account = makeAccount({ getNodeInfo: jest.fn(async () => ({ pubkey: 'wallet-pk' })) })
+    const lsp = makeLsp(account)
+    lsp.http.getInfo = jest.fn(async () => ({
+      pubkey: `03${'b'.repeat(64)}`,
+      supported_assets: []
+    }))
+
+    await expect(lsp.enableLightningAddress()).rejects.toThrow(/identity differs/)
+    expect(account.apayNewWithAddress).not.toHaveBeenCalled()
+  })
+
+  it('does not retry or register an address assigned to another wallet node', async () => {
+    const account = makeAccount({ getNodeInfo: jest.fn(async () => ({ pubkey: 'wallet-pk' })) })
+    const lsp = makeLsp(account)
+    lsp._sleep = jest.fn(async () => {})
+    lsp.http.getLightningAddressByPubkeyVerified = jest.fn(async () => ({
+      username: 'alice',
+      domain: 'lsp.example.io',
+      recipientPubkey: 'another-wallet'
+    }))
+
+    await expect(lsp.enableLightningAddress()).rejects.toThrow(/different wallet node/)
+    expect(lsp.http.getLightningAddressByPubkeyVerified).toHaveBeenCalledTimes(1)
+    expect(lsp._sleep).not.toHaveBeenCalled()
     expect(account.apayNewWithAddress).not.toHaveBeenCalled()
   })
 
@@ -775,7 +926,7 @@ describe('enableLightningAddress', () => {
         domain: 'lsp.example.io',
         address: 'alice@lsp.example.io'
       })
-    expect(account.apayNew).toHaveBeenCalledWith('lsppubkey')
+    expect(account.apayNew).toHaveBeenCalledWith(PEER.peerPubkey)
   })
 
   it('retries while the LSP is still provisioning the address account', async () => {

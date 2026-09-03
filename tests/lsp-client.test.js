@@ -37,13 +37,15 @@ function lspInfo (overrides = {}) {
 
 // Build a Response-like object. `text` defaults to a JSON serialization of
 // `json` so callers can pass either.
-function makeRes ({ ok = true, status = 200, json, text, headers } = {}) {
+function makeRes ({ ok = true, status = 200, json, text, headers, redirected, url } = {}) {
   const bodyText = text !== undefined
     ? text
     : (json !== undefined ? JSON.stringify(json) : '')
   return {
     ok,
     status,
+    redirected,
+    url,
     headers: headers ?? {},
     json: async () => (json !== undefined ? json : JSON.parse(bodyText)),
     text: async () => bodyText
@@ -181,6 +183,15 @@ describe('LspClient constructor', () => {
     expect(() => new LspClient({ baseUrl: 'ftp://lsp.utexo.io', fetch: jest.fn() })).toThrow(/must use http: or https:/)
   })
 
+  it('rejects credentials, query parameters, and fragments in the base URL', () => {
+    expect(() => new LspClient({ baseUrl: 'https://user:pass@lsp.utexo.io', fetch: jest.fn() }))
+      .toThrow(/must not contain credentials/)
+    expect(() => new LspClient({ baseUrl: 'https://lsp.utexo.io?tenant=a', fetch: jest.fn() }))
+      .toThrow(/must not contain a query or fragment/)
+    expect(() => new LspClient({ baseUrl: 'https://lsp.utexo.io#fragment', fetch: jest.fn() }))
+      .toThrow(/must not contain a query or fragment/)
+  })
+
   it('rejects plain http on a non-loopback host by default', () => {
     expect(() => new LspClient({ baseUrl: 'http://example.com', fetch: jest.fn() }))
       .toThrow(/plain http:\/\/ is only allowed for loopback/)
@@ -227,10 +238,30 @@ describe('GET endpoint methods', () => {
     const [url, init] = fetchImpl.mock.calls[0]
     expect(url).toBe('https://lsp.utexo.io/health')
     expect(init.method).toBe('GET')
+    expect(init.redirect).toBe('error')
     expect(init.headers.Accept).toBe('application/json')
     // No body / Content-Type on a GET.
     expect(init.body).toBeUndefined()
     expect(init.headers['Content-Type']).toBeUndefined()
+  })
+
+  it('rejects a response already redirected by the transport without retrying', async () => {
+    const response = makeRes({
+      json: { status: 'ok' },
+      redirected: true,
+      url: 'https://redirected.example/health'
+    })
+    const { client, fetchImpl } = makeClient({
+      fetch: fetchReturning(response),
+      maxRetries: 3
+    })
+
+    await expect(client.health()).rejects.toMatchObject({
+      name: 'LspError',
+      endpoint: '/health',
+      status: 200
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
   it('getInfo() issues GET /get_info', async () => {
@@ -311,11 +342,16 @@ describe('GET endpoint methods', () => {
     expect(url).not.toContain('callback/al ice')
   })
 
-  it('lnurlCallback() String()-coerces a non-string assetId into the query', async () => {
-    const { client, fetchImpl } = makeClient({ fetch: fetchReturning(makeRes({ json: {} })) })
-    await client.lnurlCallback('alice', 1000, { assetId: 12345 })
-    const url = fetchImpl.mock.calls[0][0]
-    expect(url).toContain('asset_id=12345')
+  it('lnurlCallback() rejects incomplete or malformed asset requests', () => {
+    const { client } = makeClient()
+    expect(() => client.lnurlCallback('alice', 1000, { assetId: 'rgb:asset' }))
+      .toThrow(/must be set together/)
+    expect(() => client.lnurlCallback('alice', 1000, { assetAmount: 7 }))
+      .toThrow(/must be set together/)
+    expect(() => client.lnurlCallback('alice', 1000, { assetId: 12345, assetAmount: 7 }))
+      .toThrow(/non-empty trimmed string/)
+    expect(() => client.lnurlCallback('alice', 1000, { assetId: 'rgb:asset', assetAmount: 0 }))
+      .toThrow(/must be positive/)
   })
 
   it('lnurlCallback() requires a username', () => {
@@ -341,6 +377,40 @@ describe('GET endpoint methods', () => {
     const { client } = makeClient()
     expect(() => client.getLightningAddressByPubkey('   ')).toThrow(/peerPubkey required/)
     expect(() => client.getLightningAddressByPubkey(123)).toThrow(/peerPubkey required/)
+  })
+
+  it('binds a verified Lightning Address lookup to the requested wallet node', async () => {
+    const publicKey = `02${'11'.repeat(32)}`
+    const { client } = makeClient({
+      fetch: fetchReturning(makeRes({
+        json: {
+          username: 'alice',
+          domain: 'lsp.utexo.io',
+          recipient_pubkey: publicKey
+        }
+      }))
+    })
+
+    await expect(client.getLightningAddressByPubkeyVerified(publicKey))
+      .resolves.toMatchObject({ recipientPubkey: publicKey })
+  })
+
+  it('rejects a malformed or substituted wallet identity in a verified address lookup', async () => {
+    const publicKey = `02${'11'.repeat(32)}`
+    const fetchImpl = fetchReturning(makeRes({
+      json: {
+        username: 'alice',
+        domain: 'lsp.utexo.io',
+        recipient_pubkey: `03${'22'.repeat(32)}`
+      }
+    }))
+    const { client } = makeClient({ fetch: fetchImpl })
+
+    await expect(client.getLightningAddressByPubkeyVerified('not-a-key'))
+      .rejects.toThrow(/compressed public key/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+    await expect(client.getLightningAddressByPubkeyVerified(publicKey))
+      .rejects.toMatchObject({ name: 'LspProtocolError', field: 'recipient_pubkey' })
   })
 })
 
@@ -385,6 +455,25 @@ describe('resolveAddress', () => {
     expect(url).toContain('nonce=1&amount=100')
   })
 
+  it('replaces reserved callback query values instead of sending duplicates', async () => {
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce(makeRes({
+        json: {
+          callback: 'https://lsp.utexo.io/pay/callback/x?nonce=1&amount=999&asset_id=rgb%3Awrong&asset_amount=9'
+        }
+      }))
+      .mockResolvedValueOnce(makeRes({ json: { pr: 'lnbc3' } }))
+    const { client } = makeClient({ fetch: fetchImpl })
+
+    await client.resolveAddress('x', 100, { assetId: 'rgb:right', assetAmount: 3 })
+
+    const callback = new URL(fetchImpl.mock.calls[1][0])
+    expect(callback.searchParams.getAll('amount')).toEqual(['100'])
+    expect(callback.searchParams.getAll('asset_id')).toEqual(['rgb:right'])
+    expect(callback.searchParams.getAll('asset_amount')).toEqual(['3'])
+    expect(callback.searchParams.get('nonce')).toBe('1')
+  })
+
   it('throws an LspError when the discovery response lacks a callback', async () => {
     const fetchImpl = fetchReturning(makeRes({ json: { other: true } }))
     const { client } = makeClient({ fetch: fetchImpl })
@@ -405,8 +494,8 @@ describe('POST endpoint methods', () => {
         expirySec: 3600,
         assetId: 'rgb:a',
         assetAmount: 5,
-        descriptionHash: 'dh',
-        paymentHash: 'ph',
+        descriptionHash: 'dd'.repeat(32),
+        paymentHash: 'ee'.repeat(32),
         minFinalCltvExpiryDelta: 40
       }
     })
@@ -430,17 +519,29 @@ describe('POST endpoint methods', () => {
         expiry_sec: 3600,
         asset_id: 'rgb:a',
         asset_amount: 5,
-        description_hash: 'dh',
-        payment_hash: 'ph',
+        description_hash: 'dd'.repeat(32),
+        payment_hash: 'ee'.repeat(32),
         min_final_cltv_expiry_delta: 40
       }
     })
   })
 
-  it('onchainSend() requires rgbInvoice and ln params', async () => {
-    const { client } = makeClient()
+  it('onchainSend() requires a canonical RGB invoice and permits omitted LN overrides', async () => {
+    const { client, fetchImpl } = makeClient()
     await expect(client.onchainSend({})).rejects.toThrow(/rgbInvoice required/)
-    await expect(client.onchainSend({ rgbInvoice: 'rgb:x' })).rejects.toThrow(/ln params required/)
+    await expect(client.onchainSend({ rgbInvoice: ' rgb:x' })).rejects.toThrow(/rgbInvoice required/)
+    await expect(client.onchainSend({ rgbInvoice: 'rgb:x' })).resolves.toEqual({ ok: true })
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ rgb_invoice: 'rgb:x' })
+  })
+
+  it('onchainSend() accepts independently supplied asset overrides', async () => {
+    const { client, fetchImpl } = makeClient()
+
+    await client.onchainSend({ rgbInvoice: 'rgb:x', ln: { assetId: 'rgb:a' } })
+    await client.onchainSend({ rgbInvoice: 'rgb:x', ln: { assetAmount: 5 } })
+
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).lninvoice).toEqual({ asset_id: 'rgb:a' })
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body).lninvoice).toEqual({ asset_amount: 5 })
   })
 
   it('lightningReceive() posts snake_cased rgb params with defaults', async () => {
@@ -477,37 +578,42 @@ describe('POST endpoint methods', () => {
     })
   })
 
-  it('lightningReceive() coerces a truthy non-boolean witness to true', async () => {
-    // The wire format requires a boolean even when the caller supplies a
-    // truthy value.
+  it('lightningReceive() rejects a truthy non-boolean witness before transport', async () => {
     const fetchImpl = fetchReturning(makeRes({ json: {} }))
     const { client } = makeClient({ fetch: fetchImpl })
-    await client.lightningReceive({
+    await expect(client.lightningReceive({
       lnInvoice: 'lnbc',
       rgb: { assetId: 'rgb:a', witness: 1 }
-    })
-    const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
-    expect(body.rgb_invoice.witness).toBe(true)
+    })).rejects.toThrow(/witness must be a boolean/)
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
-  it('lightningReceive() coerces a falsy non-boolean witness to false', async () => {
-    // The wire format requires a boolean even when the caller supplies a
-    // falsy value.
+  it('lightningReceive() rejects a falsy non-boolean witness before transport', async () => {
+    const fetchImpl = fetchReturning(makeRes({ json: {} }))
+    const { client } = makeClient({ fetch: fetchImpl })
+    await expect(client.lightningReceive({
+      lnInvoice: 'lnbc',
+      rgb: { assetId: 'rgb:a', witness: 0 }
+    })).rejects.toThrow(/witness must be a boolean/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('lightningReceive() normalizes supported assignment casing', async () => {
     const fetchImpl = fetchReturning(makeRes({ json: {} }))
     const { client } = makeClient({ fetch: fetchImpl })
     await client.lightningReceive({
       lnInvoice: 'lnbc',
-      rgb: { assetId: 'rgb:a', witness: 0 }
+      rgb: { assignment: ' value ' }
     })
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
-    expect(body.rgb_invoice.witness).toBe(false)
+    expect(body.rgb_invoice.assignment).toBe('Value')
   })
 
   it('lightningReceive() validates lnInvoice and rgb params', async () => {
     const { client } = makeClient()
     await expect(client.lightningReceive({})).rejects.toThrow(/lnInvoice required/)
     await expect(client.lightningReceive({ lnInvoice: 'lnbc' })).rejects.toThrow(/rgb params required/)
-    await expect(client.lightningReceive({ lnInvoice: 'lnbc', rgb: {} })).rejects.toThrow(/rgb.assetId required/)
+    await expect(client.lightningReceive({ lnInvoice: 'lnbc', rgb: {} })).resolves.toEqual({ ok: true })
   })
 })
 
@@ -686,12 +792,21 @@ describe('_req retry behaviour', () => {
     await expect(client.onchainSend({ rgbInvoice: 'rgb:x', ln: { amtMsat: 1 } })).rejects.toMatchObject({ status: 503 })
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
+
+  it('does not retry a state-creating LNURL callback even though it uses GET', async () => {
+    const fetchImpl = jest.fn(async () => makeRes({ ok: false, status: 503, text: 'unavailable' }))
+    const { client } = makeClient({ fetch: fetchImpl, maxRetries: 3 })
+
+    await expect(client.lnurlCallback('alice', 3_000_000))
+      .rejects.toMatchObject({ status: 503 })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('_rewriteCallbackToPath', () => {
-  it('reduces an absolute URL to path+search+hash', () => {
+  it('reduces an absolute URL to path and search', () => {
     const { client } = makeClient()
-    expect(client._rewriteCallbackToPath('https://other.example/pay/cb?x=1#frag')).toBe('/pay/cb?x=1#frag')
+    expect(client._rewriteCallbackToPath('https://other.example/pay/cb?x=1')).toBe('/pay/cb?x=1')
   })
 
   it('resolves a relative path against the baseUrl', () => {
@@ -699,12 +814,16 @@ describe('_rewriteCallbackToPath', () => {
     expect(client._rewriteCallbackToPath('/pay/cb')).toBe('/pay/cb')
   })
 
-  it('falls back to a leading-slash-prefixed string when parsing throws', () => {
+  it('rejects malformed, credential-bearing, and fragment-bearing callbacks', () => {
     const { client } = makeClient()
-    // Force `new URL(...)` to throw by stubbing the base to an unparseable value.
+    expect(() => client._rewriteCallbackToPath('https://user:pass@other.example/pay/cb'))
+      .toThrow(/callback URL is malformed/)
+    expect(() => client._rewriteCallbackToPath('https://other.example/pay/cb#fragment'))
+      .toThrow(/callback URL is malformed/)
+    expect(() => client._rewriteCallbackToPath('javascript:alert(1)'))
+      .toThrow(/callback URL is malformed/)
     client._base = '::::'
-    expect(client._rewriteCallbackToPath('pay/cb')).toBe('/pay/cb')
-    expect(client._rewriteCallbackToPath('/already')).toBe('/already')
+    expect(() => client._rewriteCallbackToPath('pay/cb')).toThrow(/callback URL is malformed/)
   })
 })
 
@@ -817,5 +936,315 @@ describe('_timeoutSignal', () => {
     const { client } = makeClient({ timeoutMs: 5000 })
     const sig = client._timeoutSignal(0)
     expect(sig).toBeInstanceOf(AbortSignal)
+  })
+})
+
+describe('linked-asset response contracts', () => {
+  const payout = {
+    asset_id: 'rgb:lnusdt',
+    schema: 'Ifa',
+    ticker: 'LNUSDT',
+    name: 'Lightning USDT',
+    precision: 6
+  }
+  const canonical = {
+    asset_id: 'rgb:usdt',
+    schema: 'Ifa',
+    ticker: 'USDT',
+    name: 'USDT',
+    precision: 6
+  }
+  const hash = 'ab'.repeat(32)
+  const lspKey = '02' + '11'.repeat(32)
+  const payeeKey = '03' + '22'.repeat(32)
+  const lightningSignature = 'y'.repeat(104)
+
+  function discoveryWire (overrides = {}) {
+    return {
+      callback: `${BASE}/pay/callback/alice`,
+      minSendable: '3000000',
+      maxSendable: 9000000,
+      metadata: '[["text/plain","alice"]]',
+      tag: 'payRequest',
+      recipient_pubkey: payeeKey,
+      address_sig: lightningSignature,
+      payout_asset: payout,
+      accepted_assets: [payout, canonical],
+      ...overrides
+    }
+  }
+
+  it('strictly normalizes an address asset menu without changing the raw method', async () => {
+    const wire = discoveryWire()
+    const { client } = makeClient({ fetch: fetchReturning(makeRes({ json: wire })) })
+
+    await expect(client.lnurlDiscovery('alice')).resolves.toEqual(wire)
+    await expect(client.discoverAddress('alice')).resolves.toMatchObject({
+      payoutAsset: { assetId: payout.asset_id, ticker: 'LNUSDT' },
+      acceptedAssets: [
+        { assetId: payout.asset_id, ticker: 'LNUSDT' },
+        { assetId: canonical.asset_id, ticker: 'USDT' }
+      ]
+    })
+  })
+
+  it('rejects a malformed or internally inconsistent address asset menu', async () => {
+    const { client } = makeClient({
+      fetch: fetchReturning(makeRes({
+        json: {
+          callback: `${BASE}/pay/callback/alice`,
+          minSendable: 3000000,
+          maxSendable: 9000000,
+          metadata: '[]',
+          tag: 'payRequest',
+          payout_asset: payout,
+          accepted_assets: [canonical]
+        }
+      }))
+    })
+    await expect(client.discoverAddress('alice')).rejects.toMatchObject({
+      name: 'LspProtocolError',
+      field: 'accepted_assets'
+    })
+  })
+
+  it.each([
+    'https://user:pass@lsp.utexo.io/pay/callback/alice',
+    'https://lsp.utexo.io/pay/callback/alice#fragment'
+  ])('rejects unsafe callback URL %s before consuming a quote', async (callback) => {
+    const fetchImpl = fetchReturning(makeRes({ json: discoveryWire({ callback }) }))
+    const { client } = makeClient({ fetch: fetchImpl })
+
+    await expect(client.resolveAddressVerified('alice', 3_000_000, {
+      assetId: canonical.asset_id,
+      assetAmount: 500_000
+    })).rejects.toMatchObject({ name: 'LspProtocolError', field: 'callback' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects payout metadata that disagrees with the same accepted contract id', async () => {
+    const { client } = makeClient({
+      fetch: fetchReturning(makeRes({
+        json: discoveryWire({
+          accepted_assets: [{ ...payout, name: 'Substituted asset' }, canonical]
+        })
+      }))
+    })
+    await expect(client.discoverAddress('alice')).rejects.toMatchObject({
+      name: 'LspProtocolError',
+      field: 'accepted_assets'
+    })
+  })
+
+  it('validates the discovery range and exact asset menu before consuming an APay hash', async () => {
+    const fetchImpl = jest.fn(async () => makeRes({ json: discoveryWire() }))
+    const { client } = makeClient({ fetch: fetchImpl })
+
+    await expect(client.resolveAddressVerified('alice', 2_999_999, {
+      assetId: canonical.asset_id,
+      assetAmount: 1
+    })).rejects.toMatchObject({ name: 'LspProtocolError', field: 'amount' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+
+    fetchImpl.mockClear()
+    await expect(client.resolveAddressVerified('alice', 3_000_000, {
+      assetId: 'rgb:not-advertised',
+      assetAmount: 1
+    })).rejects.toMatchObject({ name: 'LspProtocolError', field: 'assetId' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+
+    fetchImpl.mockClear()
+    await expect(client.resolveAddressVerified('alice', 3_000_000, {
+      assetId: canonical.asset_id
+    })).rejects.toThrow(/must be set together/)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('strictly parses canonical APay wire encodings on a verified callback', async () => {
+    const callback = {
+      pr: 'ln-address',
+      routes: [],
+      proof: {
+        version: 1,
+        recipient_pubkey: payeeKey,
+        host_pubkey: lspKey,
+        batch_id: '000102030405060708090a0b0c0d0e0f',
+        hash_index: 7,
+        payment_hash: hash,
+        batch_root: 'cd'.repeat(32),
+        batch_size: 1,
+        merkle_proof: [],
+        batch_sig: lightningSignature,
+        created_at: 1700000000,
+        expires_at: 2000000000
+      }
+    }
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce(makeRes({ json: discoveryWire() }))
+      .mockResolvedValueOnce(makeRes({ json: callback }))
+    const { client } = makeClient({ fetch: fetchImpl })
+
+    await expect(client.resolveAddressVerified('alice', 3_000_000, {
+      assetId: canonical.asset_id,
+      assetAmount: 500_000
+    })).resolves.toMatchObject({
+      proof: {
+        batchId: '000102030405060708090a0b0c0d0e0f',
+        batchSig: lightningSignature,
+        batchSize: 1
+      }
+    })
+  })
+
+  it('rejects non-canonical APay signatures and impossible proof depth', async () => {
+    const invalidProof = {
+      pr: 'ln-address',
+      routes: [],
+      proof: {
+        version: 1,
+        recipient_pubkey: payeeKey,
+        host_pubkey: lspKey,
+        batch_id: '000102030405060708090a0b0c0d0e0f',
+        hash_index: 7,
+        payment_hash: hash,
+        batch_root: 'cd'.repeat(32),
+        batch_size: 2,
+        merkle_proof: [],
+        batch_sig: 'aa'.repeat(64),
+        created_at: 1700000000,
+        expires_at: 2000000000
+      }
+    }
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce(makeRes({ json: discoveryWire() }))
+      .mockResolvedValueOnce(makeRes({ json: invalidProof }))
+    const { client } = makeClient({ fetch: fetchImpl })
+
+    await expect(client.resolveAddressVerified('alice', 3_000_000, {
+      assetId: canonical.asset_id,
+      assetAmount: 500_000
+    })).rejects.toMatchObject({ name: 'LspProtocolError' })
+  })
+
+  it('normalizes a converted receive response and preserves the exact asset id', async () => {
+    const { client } = makeClient({
+      fetch: fetchReturning(makeRes({
+        json: {
+          ln_invoice: 'ln-wallet',
+          rgb_invoice: 'rgb-invoice',
+          mapping_id: 7,
+          rgb_asset_id: canonical.asset_id,
+          converted: true
+        }
+      }))
+    })
+    await expect(client.lightningReceiveVerified({
+      lnInvoice: 'ln-wallet',
+      rgb: { durationSeconds: 600 }
+    })).resolves.toEqual({
+      lnInvoice: 'ln-wallet',
+      rgbInvoice: 'rgb-invoice',
+      mappingId: '7',
+      rgbAssetId: canonical.asset_id,
+      converted: true
+    })
+  })
+
+  it('validates every signed relay-quote field before returning it', async () => {
+    const fetchImpl = fetchReturning(makeRes({
+      json: {
+        ln_invoice: 'ln-hodl',
+        payment_hash: hash,
+        inbound: {
+          asset_id: payout.asset_id,
+          asset_amount: 500000,
+          amt_msat: 3001000,
+          payee_pubkey: lspKey
+        },
+        outbound: {
+          asset_id: canonical.asset_id,
+          asset_amount: 500000,
+          amt_msat: 3000000,
+          payee_pubkey: payeeKey
+        },
+        converted: true,
+        fee_msat: 1000,
+        expires_at: 2000000000
+      }
+    }))
+    const { client } = makeClient({ fetch: fetchImpl })
+    await expect(client.lightningSend({
+      invoice: 'ln-target',
+      payWithAssetId: payout.asset_id
+    })).resolves.toMatchObject({
+      paymentHash: hash,
+      converted: true,
+      inbound: { assetId: payout.asset_id, assetAmount: 500000 },
+      outbound: { assetId: canonical.asset_id, assetAmount: 500000 }
+    })
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      invoice: 'ln-target',
+      pay_with_asset_id: payout.asset_id
+    })
+  })
+
+  it('rejects a relay quote whose converted flag contradicts its asset legs', async () => {
+    const { client } = makeClient({
+      fetch: fetchReturning(makeRes({
+        json: {
+          ln_invoice: 'ln-hodl',
+          payment_hash: hash,
+          inbound: { asset_id: payout.asset_id, asset_amount: 1, amt_msat: 2 },
+          outbound: { asset_id: canonical.asset_id, asset_amount: 1, amt_msat: 1 },
+          converted: false,
+          fee_msat: 1,
+          expires_at: 2000000000
+        }
+      }))
+    })
+    await expect(client.lightningSend({ invoice: 'ln-target' }))
+      .rejects.toMatchObject({ name: 'LspProtocolError', field: 'converted' })
+  })
+
+  it('rejects non-canonical relay input before creating server state', async () => {
+    const { client, fetchImpl } = makeClient()
+
+    await expect(client.lightningSend({ invoice: ' ln-target' }))
+      .rejects.toThrow(/invoice required/)
+    await expect(client.lightningSend({ invoice: 'ln-target', payWithAssetId: ' rgb:asset' }))
+      .rejects.toThrow(/whitespace-free/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('rejects a status response for a different payment hash', async () => {
+    const { client } = makeClient({
+      fetch: fetchReturning(makeRes({
+        json: {
+          payment_hash: 'cd'.repeat(32),
+          status: 'settled'
+        }
+      }))
+    })
+    await expect(client.lightningSendStatus(hash))
+      .rejects.toMatchObject({ name: 'LspProtocolError', field: 'payment_hash' })
+  })
+
+  it('honors a caller abort before dispatching any request', async () => {
+    const controller = new AbortController()
+    controller.abort(new Error('screen closed'))
+    const { client, fetchImpl } = makeClient()
+    await expect(client.health({ signal: controller.signal })).rejects.toMatchObject({
+      name: 'LspError',
+      status: 0
+    })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('never retries the state-creating lightning_send POST', async () => {
+    const fetchImpl = jest.fn(async () => makeRes({ ok: false, status: 503, text: 'unavailable' }))
+    const { client } = makeClient({ fetch: fetchImpl, maxRetries: 3 })
+    await expect(client.lightningSend({ invoice: 'ln-target' }))
+      .rejects.toMatchObject({ status: 503 })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 })
