@@ -700,6 +700,21 @@ describe('waitForOutboundLiquidity', () => {
     expect(onProgress).toHaveBeenCalledWith('outbound: 5000 msat (need 5000)')
   })
 
+  it('uses the strongest usable LSP channel instead of depending on channel order', async () => {
+    const account = makeAccount({
+      listChannels: jest.fn(async () => [
+        { peerPubkey: PEER.peerPubkey, isUsable: true, outboundBalanceMsat: 1 },
+        { peerPubkey: PEER.peerPubkey, isUsable: true, outboundBalanceMsat: 5000 }
+      ])
+    })
+    const lsp = makeLsp(account)
+    const onProgress = jest.fn()
+
+    await expect(lsp.waitForOutboundLiquidity(5000, { timeoutMs: 1000, onProgress }))
+      .resolves.toBeUndefined()
+    expect(onProgress).toHaveBeenCalledWith('outbound: 5000 msat (need 5000)')
+  })
+
   it('reads snake_case fields for the LSP channel match', async () => {
     const channel = { peer_pubkey: PEER.peerPubkey, is_usable: true, outbound_balance_msat: 9000 }
     const account = makeAccount({ listChannels: jest.fn(async () => [channel]) })

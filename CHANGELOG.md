@@ -100,6 +100,10 @@ while pre-`1.0`.
   whether the input used UMA form.
 
 ### Changed
+- Evaluate every explicitly usable channel to the configured LSP when waiting
+  for outbound liquidity. Channel ordering can no longer produce a false
+  timeout when a later matching channel has sufficient balance, while malformed
+  native balance evidence still fails closed.
 - Apply the documented `onEachPoll` hook before every account sync in receive
   settlement and outbound-liquidity waits, matching channel-readiness polling
   and allowing callers to perform deterministic chain or peer maintenance.

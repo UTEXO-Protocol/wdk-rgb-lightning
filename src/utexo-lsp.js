@@ -443,13 +443,17 @@ export class UtexoLsp {
       if (opts.onEachPoll) await opts.onEachPoll()
       await this.account.sync()
       const channels = await this._listChannels()
-      const lspChan = channels.find((c) =>
-        this._isConfiguredPeer(c) && this._isExplicitlyUsable(c)
+      const lspChannels = channels.filter((channel) =>
+        this._isConfiguredPeer(channel) && this._isExplicitlyUsable(channel)
       )
-      const outbound = nonNegativeSafeNumber(
-        this._outboundMsat(lspChan),
-        'UtexoLsp.waitForOutboundLiquidity: native outbound balance'
-      )
+      let outbound = 0
+      for (const channel of lspChannels) {
+        const channelOutbound = nonNegativeSafeNumber(
+          this._outboundMsat(channel),
+          'UtexoLsp.waitForOutboundLiquidity: native outbound balance'
+        )
+        outbound = Math.max(outbound, channelOutbound)
+      }
       opts.onProgress?.(`outbound: ${outbound} msat (need ${requiredMsat})`)
       if (outbound >= requiredMsat) return
       await this._sleep(pollIntervalMs, opts.signal)
