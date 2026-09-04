@@ -9,6 +9,7 @@ import {
   LspNoPayableAssetError,
   LspQuoteMismatchError,
   LspUnknownPayableAssetError,
+  assertLiquidPaymentAsset,
   assertAddressQuote,
   assertAddressRequest,
   assertRelayQuote,
@@ -54,6 +55,7 @@ function channel (assetId, amount, overrides = {}) {
   return {
     assetId,
     assetLocalAmount: amount,
+    outboundBalanceMsat: 10_000_000,
     isUsable: true,
     peerPubkey: LSP_KEY,
     ...overrides
@@ -73,6 +75,17 @@ function decoded (overrides = {}) {
     ...overrides
   }, 'test invoice')
 }
+
+describe('decoded invoice contract', () => {
+  it('preserves the signed minimum final CLTV delta', () => {
+    expect(decoded({ min_final_cltv_expiry_delta: 42 }).minFinalCltvExpiryDelta).toBe(42)
+  })
+
+  it('rejects a minimum final CLTV delta outside the native uint16 contract', () => {
+    expect(() => decoded({ min_final_cltv_expiry_delta: 65_536 }))
+      .toThrow(/minimum final CLTV delta exceeds uint16/)
+  })
+})
 
 function relayQuote (overrides = {}) {
   return {
@@ -161,6 +174,40 @@ describe('linked-asset menus', () => {
 })
 
 describe('linked-asset liquidity selection', () => {
+  it('requires the RGB units and carrier amount in one exact usable channel', () => {
+    expect(assertLiquidPaymentAsset(
+      [channel(PAYOUT.assetId, 500_000, { outboundBalanceMsat: 3_001_000 })],
+      PAYOUT.assetId,
+      500_000,
+      3_001_000
+    )).toEqual({ assetId: PAYOUT.assetId, localAssetAmount: 500_000 })
+
+    expect(() => assertLiquidPaymentAsset(
+      [
+        channel(PAYOUT.assetId, 500_000, { outboundBalanceMsat: 1 }),
+        channel(PAYOUT.assetId, 1, { outboundBalanceMsat: 3_001_000 })
+      ],
+      PAYOUT.assetId,
+      500_000,
+      3_001_000
+    )).toThrow(LspInsufficientAssetLiquidityError)
+  })
+
+  it('rejects malformed or unbounded channel collections', () => {
+    expect(() => assertLiquidPaymentAsset(
+      null,
+      PAYOUT.assetId,
+      1,
+      1
+    )).toThrow(/channels must be an array/)
+    expect(() => assertLiquidPaymentAsset(
+      Array.from({ length: 513 }, () => channel(PAYOUT.assetId, 1)),
+      PAYOUT.assetId,
+      1,
+      1
+    )).toThrow(/channels exceeds 512 entries/)
+  })
+
   it('prefers the no-conversion payout rail when it can cover the whole payment', () => {
     expect(selectLiquidPaymentAsset(
       discovery(),
@@ -187,6 +234,79 @@ describe('linked-asset liquidity selection', () => {
       ],
       500_000
     )).toThrow(LspInsufficientAssetLiquidityError)
+  })
+
+  it('does not infer spendable liquidity from ready without explicit usability', () => {
+    expect(() => selectLiquidPaymentAsset(
+      discovery(),
+      [channel(PAYOUT.assetId, 9_000_000, { isUsable: undefined, ready: true })],
+      500_000
+    )).toThrow(LspInsufficientAssetLiquidityError)
+  })
+
+  it('requires RGB and native liquidity in the same usable channel', () => {
+    expect(selectLiquidPaymentAsset(
+      discovery(),
+      [
+        channel(PAYOUT.assetId, 1_000_000, { outboundBalanceMsat: 1 }),
+        channel(CANONICAL.assetId, 500_000, { outboundBalanceMsat: 3_000_000 })
+      ],
+      500_000,
+      3_000_000
+    )).toMatchObject({ assetId: CANONICAL.assetId, converted: true })
+
+    expect(() => selectLiquidPaymentAsset(
+      discovery(),
+      [
+        channel(PAYOUT.assetId, 1_000_000, { outboundBalanceMsat: 1 }),
+        channel(PAYOUT.assetId, 1, { outboundBalanceMsat: 3_000_000 })
+      ],
+      500_000,
+      3_000_000
+    )).toThrow(LspInsufficientAssetLiquidityError)
+  })
+
+  it('honours native next-HTLC limits when they are available', () => {
+    expect(() => selectLiquidPaymentAsset(
+      discovery(),
+      [channel(PAYOUT.assetId, 1_000_000, {
+        outboundBalanceMsat: 10_000_000,
+        nextOutboundHtlcMinimumMsat: 4_000_000
+      })],
+      500_000,
+      3_000_000
+    )).toThrow(LspInsufficientAssetLiquidityError)
+
+    expect(() => selectLiquidPaymentAsset(
+      discovery(),
+      [channel(PAYOUT.assetId, 1_000_000, {
+        outboundBalanceMsat: 10_000_000,
+        next_outbound_htlc_limit_msat: 2_000_000
+      })],
+      500_000,
+      3_000_000
+    )).toThrow(LspInsufficientAssetLiquidityError)
+  })
+
+  it('accepts compatible snake-case carrier fields and rejects malformed balances', () => {
+    expect(selectLiquidPaymentAsset(
+      discovery(),
+      [channel(PAYOUT.assetId, 1_000_000, {
+        outboundBalanceMsat: undefined,
+        local_balance_msat: '3000000',
+        next_outbound_htlc_minimum_msat: '3000000',
+        next_outbound_htlc_limit_msat: '3000000'
+      })],
+      500_000,
+      3_000_000
+    )).toMatchObject({ assetId: PAYOUT.assetId, converted: false })
+
+    expect(() => selectLiquidPaymentAsset(
+      discovery(),
+      [channel(PAYOUT.assetId, 1_000_000, { outboundBalanceMsat: 'invalid' })],
+      500_000,
+      3_000_000
+    )).toThrow(/channel outbound balance/)
   })
 })
 

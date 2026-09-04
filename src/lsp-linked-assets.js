@@ -20,18 +20,23 @@ const ZBASE32_VALUES = new Map([...ZBASE32_ALPHABET].map((char, index) => [char,
 const DEFAULT_PROOF_CLOCK_SKEW_SECONDS = 300
 const MAX_APAY_BATCH_SIZE = 200
 const MAX_APAY_MERKLE_DEPTH = 64
+const MAX_LIQUIDITY_CHANNELS = 512
 
 /** No accepted asset has enough spendable liquidity in one usable channel. */
 export class LspInsufficientAssetLiquidityError extends Error {
-  constructor (required, candidates) {
+  constructor (required, candidates, requiredMsat = 0) {
+    const carrier = requiredMsat > 0
+      ? ` and ${requiredMsat} msat carrier liquidity in the same usable channel`
+      : ''
     super(
       candidates.length > 0
-        ? `No accepted asset has ${required} spendable base units; ` +
+        ? `No accepted asset has ${required} spendable base units${carrier}; ` +
           candidates.map(({ assetId, localAmount }) => `${assetId}: ${localAmount}`).join(', ')
-        : `No accepted asset has a usable channel for ${required} base units`
+        : `No accepted asset has a usable channel for ${required} base units${carrier}`
     )
     this.name = 'LspInsufficientAssetLiquidityError'
     this.required = required
+    this.requiredMsat = requiredMsat
     this.candidates = candidates
   }
 }
@@ -165,10 +170,12 @@ export function pickPayableAsset (address, payable, requested, preference) {
  * @param {object} discovery
  * @param {unknown[]} channels
  * @param {number|bigint|string} required
+ * @param {number|bigint|string} [requiredMsat=0]
  * @returns {{assetId:string,asset?:object,converted:boolean,localAssetAmount:number,payoutAsset?:object}}
  */
-export function selectLiquidPaymentAsset (discovery, channels, required) {
+export function selectLiquidPaymentAsset (discovery, channels, required, requiredMsat = 0) {
   const requiredAmount = positiveSafeInteger(required, 'assetAmount')
+  const requiredCarrierMsat = nonNegativeSafeInteger(requiredMsat, 'amtMsat')
   const payoutAsset = discovery?.payoutAsset
   const accepted = discovery?.acceptedAssets ?? []
   const ordered = []
@@ -180,7 +187,7 @@ export function selectLiquidPaymentAsset (discovery, channels, required) {
     throw new LspNoPayableAssetError('Lightning Address')
   }
 
-  const local = largestUsableAssetBalances(channels)
+  const local = largestUsableAssetBalances(channels, requiredCarrierMsat)
   const candidates = []
   for (const asset of ordered) {
     const localAmount = local.get(asset.assetId) ?? 0
@@ -195,7 +202,39 @@ export function selectLiquidPaymentAsset (discovery, channels, required) {
       })
     }
   }
-  throw new LspInsufficientAssetLiquidityError(requiredAmount, candidates)
+  throw new LspInsufficientAssetLiquidityError(
+    requiredAmount,
+    candidates,
+    requiredCarrierMsat
+  )
+}
+
+/**
+ * Assert that one currently usable channel can carry both the exact RGB units
+ * and the native millisatoshi amount. RGB multi-part payments are not
+ * available, so balances from different channels must never be combined.
+ *
+ * @param {unknown[]} channels
+ * @param {string} assetId
+ * @param {number|bigint|string} required
+ * @param {number|bigint|string} requiredMsat
+ * @returns {{assetId:string,localAssetAmount:number}}
+ */
+export function assertLiquidPaymentAsset (channels, assetId, required, requiredMsat) {
+  const exactAssetId = nonEmptyString(assetId, 'assetId')
+  const requiredAmount = positiveSafeInteger(required, 'assetAmount')
+  const requiredCarrierMsat = positiveSafeInteger(requiredMsat, 'amtMsat')
+  const localAmount = largestUsableAssetBalances(channels, requiredCarrierMsat)
+    .get(exactAssetId) ?? 0
+
+  if (localAmount < requiredAmount) {
+    throw new LspInsufficientAssetLiquidityError(
+      requiredAmount,
+      [Object.freeze({ assetId: exactAssetId, localAmount })],
+      requiredCarrierMsat
+    )
+  }
+  return Object.freeze({ assetId: exactAssetId, localAssetAmount: localAmount })
 }
 
 /**
@@ -231,7 +270,10 @@ export function resolveRelayFundingAsset (target, channels, requested, supported
 
   const required = target.assetAmount
   if (required === undefined) return undefined
-  const balances = largestUsableAssetBalances(channels)
+  const balances = largestUsableAssetBalances(
+    channels,
+    nonNegativeSafeInteger(target.amtMsat ?? 0, 'amtMsat')
+  )
   if (
     target.assetId &&
     supportedAssets.some((asset) => asset.assetId === target.assetId) &&
@@ -280,6 +322,17 @@ export function decodedInvoice (value, context) {
   const descriptionHash = descriptionHashRaw === null || descriptionHashRaw === undefined || descriptionHashRaw === ''
     ? undefined
     : requiredHash(descriptionHashRaw, `${context} description hash`)
+  const minFinalCltvRaw = read(
+    raw,
+    'minFinalCltvExpiryDelta',
+    'min_final_cltv_expiry_delta'
+  )
+  const minFinalCltvExpiryDelta = minFinalCltvRaw === null || minFinalCltvRaw === undefined
+    ? undefined
+    : nonNegativeSafeInteger(minFinalCltvRaw, `${context} minimum final CLTV delta`)
+  if (minFinalCltvExpiryDelta !== undefined && minFinalCltvExpiryDelta > 0xffff) {
+    throw new LspQuoteMismatchError(`${context} minimum final CLTV delta exceeds uint16`)
+  }
   const timestamp = positiveSafeInteger(read(raw, 'timestamp', 'timestamp'), `${context} timestamp`)
   const expirySeconds = positiveSafeInteger(read(raw, 'expirySec', 'expiry_sec'), `${context} expiry`)
   const network = nonEmptyString(read(raw, 'network', 'network'), `${context} network`).toLowerCase()
@@ -292,6 +345,7 @@ export function decodedInvoice (value, context) {
     ...(assetId === undefined ? {} : { assetId, assetAmount }),
     ...(payeePubkey === undefined ? {} : { payeePubkey }),
     ...(descriptionHash === undefined ? {} : { descriptionHash }),
+    ...(minFinalCltvExpiryDelta === undefined ? {} : { minFinalCltvExpiryDelta }),
     timestamp,
     expirySeconds,
     expiresAt: timestamp + expirySeconds,
@@ -599,12 +653,19 @@ export function verifyLightningMessageSignature (message, signature, expectedPub
   }
 }
 
-function largestUsableAssetBalances (channels) {
+function largestUsableAssetBalances (channels, requiredMsat = 0) {
+  if (!Array.isArray(channels)) {
+    throw new TypeError('channels must be an array')
+  }
+  if (channels.length > MAX_LIQUIDITY_CHANNELS) {
+    throw new TypeError(`channels exceeds ${MAX_LIQUIDITY_CHANNELS} entries`)
+  }
   const balances = new Map()
-  for (const channel of Array.isArray(channels) ? channels : []) {
+  for (const channel of channels) {
     const assetId = read(channel, 'assetId', 'asset_id')
-    const usable = read(channel, 'isUsable', 'is_usable') ?? read(channel, 'ready', 'ready')
-    if (typeof assetId !== 'string' || assetId.length === 0 || !usable) continue
+    const usable = read(channel, 'isUsable', 'is_usable')
+    if (typeof assetId !== 'string' || assetId.length === 0 || usable !== true) continue
+    if (!channelCarriesMsat(channel, requiredMsat)) continue
     const amount = nonNegativeSafeInteger(
       read(channel, 'assetLocalAmount', 'asset_local_amount') ?? 0,
       `channel ${assetId} asset balance`
@@ -612,6 +673,41 @@ function largestUsableAssetBalances (channels) {
     if (amount > (balances.get(assetId) ?? 0)) balances.set(assetId, amount)
   }
   return balances
+}
+
+function channelCarriesMsat (channel, requiredMsat) {
+  if (requiredMsat === 0) return true
+
+  const outboundRaw =
+    read(channel, 'outboundBalanceMsat', 'outbound_balance_msat') ??
+    read(channel, 'localBalanceMsat', 'local_balance_msat')
+  if (outboundRaw === undefined || outboundRaw === null) return false
+  const outbound = nonNegativeSafeInteger(outboundRaw, 'channel outbound balance')
+  if (outbound < requiredMsat) return false
+
+  const minimumRaw = read(
+    channel,
+    'nextOutboundHtlcMinimumMsat',
+    'next_outbound_htlc_minimum_msat'
+  )
+  if (
+    minimumRaw !== undefined &&
+    minimumRaw !== null &&
+    nonNegativeSafeInteger(minimumRaw, 'channel minimum outbound HTLC') > requiredMsat
+  ) {
+    return false
+  }
+
+  const limitRaw = read(
+    channel,
+    'nextOutboundHtlcLimitMsat',
+    'next_outbound_htlc_limit_msat'
+  )
+  return (
+    limitRaw === undefined ||
+    limitRaw === null ||
+    nonNegativeSafeInteger(limitRaw, 'channel outbound HTLC limit') >= requiredMsat
+  )
 }
 
 function quoteLeg (value, field) {

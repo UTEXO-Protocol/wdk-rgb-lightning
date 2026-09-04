@@ -100,10 +100,17 @@ const externalQuote: Promise<ExternalPaymentQuote> = lsp.quoteExternalPayment({
   maxFeeMsat: 1_000
 })
 declare const verifiedQuote: ExternalPaymentQuote
-const externalPayment: Promise<ExternalPaymentResult> = lsp.payExternalQuote(verifiedQuote)
+const externalPayment: Promise<ExternalPaymentResult> = lsp.payExternalQuote(verifiedQuote, {
+  invoice: 'lnbc1...',
+  fundingAssetId: 'rgb:funding'
+})
 const reverifiedQuote: Promise<ExternalPaymentQuote> = lsp.verifyExternalQuote(
   verifiedQuote,
-  { signal: new AbortController().signal }
+  {
+    invoice: 'lnbc1...',
+    fundingAssetId: 'rgb:funding',
+    signal: new AbortController().signal
+  }
 )
 const addressRoutingFeeCap: number = lightningAddressQuote.maxTotalRoutingFeeMsat
 const lspPeer: LspPeer = {

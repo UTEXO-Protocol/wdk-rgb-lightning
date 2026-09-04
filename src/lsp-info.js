@@ -13,6 +13,7 @@ const MAX_SUPPORTED_ASSETS = 512
 const MAX_ASSET_FIELDS = 8
 const MAX_ASSET_ID_LENGTH = 512
 const MAX_TEXT_LENGTH = 128
+const MAX_UINT64 = 18_446_744_073_709_551_615n
 
 function invalid (field) {
   throw new TypeError(`LSP /get_info returned an invalid ${field}`)
@@ -43,7 +44,12 @@ function boundedText (value, field, maximum = MAX_TEXT_LENGTH) {
 }
 
 function decimalString (value, field) {
-  if (typeof value !== 'string' || !DECIMAL_STRING.test(value)) {
+  if (
+    typeof value !== 'string' ||
+    !DECIMAL_STRING.test(value) ||
+    value.length > 20 ||
+    BigInt(value) > MAX_UINT64
+  ) {
     return invalid(field)
   }
   return value

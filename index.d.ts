@@ -1526,6 +1526,17 @@ export interface ExternalPaymentResult {
   sendResult: object
 }
 
+export interface ExternalPaymentAuthorization extends Pick<
+  ExternalPaymentOptions,
+  'invoice' | 'maxFeeMsat' | 'maxTotalRoutingFeeMsat' | 'signal'
+> {
+  /**
+   * Exact contract authorized for the funding leg. Use `null` only when the
+   * reviewed quote has no RGB asset leg. Tickers are intentionally rejected.
+   */
+  fundingAssetId: string | null
+}
+
 export interface LightningAddressInfo {
   username: string
   domain: string
@@ -1542,6 +1553,8 @@ export interface EnableLightningAddressOptions {
    * only for an explicit compatibility downgrade to legacy `apayNew`.
    */
   requireAddressAttestation?: boolean
+  /** Cancels address discovery and registration before the native commit starts. */
+  signal?: AbortSignal
 }
 
 export interface ClaimResult {
@@ -1564,12 +1577,12 @@ export class UtexoLsp {
   payAddress(opts: PayAddressOptions): Promise<PayAddressResult>
   discoverAddress(address: string, opts?: LspRequestOptions): Promise<LnurlPayDiscovery>
   listPayableAssets(address?: string, opts?: LspRequestOptions): Promise<PayableAssetMenu>
-  selectPaymentAsset(opts: { address: string; assetAmount: bigint | number | string; discovery?: LnurlPayDiscovery; channels?: readonly object[]; signal?: AbortSignal }): Promise<AssetSelection>
+  selectPaymentAsset(opts: { address: string; assetAmount: bigint | number | string; amtMsat?: bigint | number | string; discovery?: LnurlPayDiscovery; channels?: readonly object[]; signal?: AbortSignal }): Promise<AssetSelection>
   requestExternalInvoice(opts: RequestExternalInvoiceOptions): Promise<ExternalInvoiceQuote>
   quoteExternalPayment(opts: ExternalPaymentOptions): Promise<ExternalPaymentQuote>
-  /** Re-verify both signed relay legs without submitting a native payment. */
-  verifyExternalQuote(quote: ExternalPaymentQuote, opts?: Pick<ExternalPaymentOptions, 'signal'>): Promise<ExternalPaymentQuote>
-  payExternalQuote(quote: ExternalPaymentQuote, opts?: Pick<ExternalPaymentOptions, 'maxTotalRoutingFeeMsat' | 'signal'>): Promise<ExternalPaymentResult>
+  /** Re-verify both signed relay legs against the original trusted payment intent without paying. */
+  verifyExternalQuote(quote: ExternalPaymentQuote, authorization: ExternalPaymentAuthorization): Promise<ExternalPaymentQuote>
+  payExternalQuote(quote: ExternalPaymentQuote, authorization: ExternalPaymentAuthorization): Promise<ExternalPaymentResult>
   payExternalInvoice(opts: ExternalPaymentOptions): Promise<ExternalPaymentResult>
   /**
    * Read durable relay status after a quote has been persisted. The current
@@ -1606,8 +1619,13 @@ export class LspSettlementError extends Error {
 }
 
 export class LspInsufficientAssetLiquidityError extends Error {
-  constructor(required: number, candidates: readonly { assetId: string; localAmount: number }[])
+  constructor(
+    required: number,
+    candidates: readonly { assetId: string; localAmount: number }[],
+    requiredMsat?: number
+  )
   readonly required: number
+  readonly requiredMsat: number
   readonly candidates: readonly { assetId: string; localAmount: number }[]
 }
 

@@ -358,8 +358,8 @@ Key methods: `connect()`, `waitForChannel(assetId, opts?)`,
 `receiveAsset(opts)`, `awaitReceiveSettlement(lnInvoice, opts?)`,
 `waitForOutboundLiquidity(minMsat, opts?)`, `sendAsset(opts)`,
 `quoteAddress(opts)`, `payAddress(opts)`, `requestExternalInvoice(opts)`,
-`quoteExternalPayment(opts)`, `verifyExternalQuote(quote, opts?)`,
-`payExternalQuote(quote, opts?)`,
+`quoteExternalPayment(opts)`, `verifyExternalQuote(quote, authorization)`,
+`payExternalQuote(quote, authorization)`,
 `externalPaymentStatus(paymentHash)`, `enableLightningAddress()`,
 `refillHashPool()`, and `claimPendingPayments()`.
 Channel and liquidity wait timeouts throw `LspChannelTimeoutError` and
@@ -385,9 +385,19 @@ name.
   `POST /lightning_send`, verifies the target and funding invoices have the
   same payment hash, checks the exact contracts, 1:1 asset amount, LSP payee,
   network, expiry, and explicit LSP fee bound, and returns without paying.
-- `payExternalQuote()` re-verifies the signed invoices and refreshes the LSP's
-  identity, network, and advertised funding asset immediately before the native
-  payment. `externalPaymentStatus()` reads the LSP's durable relay state by
+- `verifyExternalQuote()` and `payExternalQuote()` require the original target
+  invoice, exact funding contract (or explicit `null` for a non-RGB leg), and
+  fee ceilings as a separate trusted authorization input. They do not treat
+  mutable fields restored with the quote as authority, including when the SDK
+  originally selected the funding representation automatically. Applications
+  must keep that payment intent in authenticated storage, separate from
+  untrusted quote transport. `payExternalQuote()` then re-verifies the signed invoices and
+  refreshes the LSP's identity, network, and advertised funding asset
+  immediately before the native payment. Every RGB payment path also refreshes
+  native channel state at that boundary and requires the exact asset units and
+  signed BOLT11 carrier amount in one explicitly usable channel; balances from
+  separate channels are not combined because RGB MPP is unavailable.
+  `externalPaymentStatus()` reads the LSP's durable relay state by
   payment hash, which prevents blind duplication and supports terminal-state
   reconciliation after a quote has been persisted.
 - `receiveAsset({ onchainAsset: 'convertible' })` omits the RGB contract on
@@ -420,11 +430,11 @@ payment hash, batch root, timestamps, or signature fails closed.
 
 The composed Lightning Address path also requires the signed BOLT11
 `description_hash` to equal SHA-256 of the exact UTF-8 LUD-06 `metadata`
-string. RLN's SDK/HTTP decoder already returns that field, but the currently
-published C-FFI response projection used by the Bare and Node wrappers omits
-it. Until an immutable wrapper release propagates the existing field, verified
-Lightning Address quotes fail closed. This is a release gate, not a reason to
-skip the metadata commitment.
+string. RLN's HTTP decoder returns that field, but the current RLN SDK DTO does
+not project it. The omission therefore propagates through UniFFI/C-FFI and the
+published Bare and Node wrappers. Until immutable releases carry the field
+through that complete native chain, verified Lightning Address quotes fail
+closed. This is a release gate, not a reason to skip the metadata commitment.
 
 All LNURL callback URLs reject embedded credentials and fragments. Hosted
 callbacks are reduced to the configured LSP origin, reserved amount/asset query

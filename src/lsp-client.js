@@ -92,6 +92,9 @@ export class LspError extends Error {
 /** Default request timeout if the caller doesn't override. */
 const DEFAULT_TIMEOUT_MS = 15_000
 
+/** Largest delay accepted by the JavaScript timer APIs (signed 32-bit ms). */
+const MAX_TIMEOUT_MS = 2_147_483_647
+
 /** Maximum UTF-8 response body accepted from the LSP (1 MiB). */
 const MAX_RESPONSE_BYTES = 1 << 20
 
@@ -108,6 +111,7 @@ const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE'])
 
 /** Default retry budget: 3 attempts with exponential backoff (250/500/1000 ms). */
 const DEFAULT_RETRIES = 3
+const MAX_RETRIES = 10
 const RETRY_BASE_MS = 250
 
 /**
@@ -176,8 +180,8 @@ export class LspClient {
       )
     }
     this._base = normalized
-    this._timeoutMs = Math.max(1, Number(timeoutMs) || DEFAULT_TIMEOUT_MS)
-    this._maxRetries = Math.max(0, Number.isFinite(maxRetries) ? Math.trunc(maxRetries) : DEFAULT_RETRIES)
+    this._timeoutMs = parseTimeoutMs(timeoutMs, 'LspClient: timeoutMs')
+    this._maxRetries = parseRetryCount(maxRetries, 'LspClient: maxRetries')
     this._fetch = fetcher
     this._headers = { ...(defaultHeaders ?? {}) }
   }
@@ -573,9 +577,9 @@ export class LspClient {
 
   async _req (method, path, body, opts) {
     const url = `${this._base}${path}`
-    const callTimeoutMs = opts && Number.isFinite(Number(opts.timeoutMs)) && Number(opts.timeoutMs) > 0
-      ? Math.trunc(Number(opts.timeoutMs))
-      : this._timeoutMs
+    const callTimeoutMs = opts?.timeoutMs === undefined
+      ? this._timeoutMs
+      : parseTimeoutMs(opts.timeoutMs, 'LspClient request timeoutMs')
     const canRetry = opts?.retry !== false && IDEMPOTENT_METHODS.has(method) && this._maxRetries > 0
     // attempt 0 is the original; subsequent attempts are retries.
     // Backoff: 250ms, 500ms, 1000ms, …  (exponential, doubled per try).
@@ -647,7 +651,9 @@ export class LspClient {
    * @returns {AbortSignal|undefined}
    */
   _timeoutSignal (timeoutMs) {
-    const ms = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : this._timeoutMs
+    const ms = timeoutMs === undefined
+      ? this._timeoutMs
+      : parseTimeoutMs(timeoutMs, 'LspClient request timeoutMs')
     if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
       return AbortSignal.timeout(ms)
     }
@@ -661,6 +667,20 @@ export class LspClient {
     }
     return undefined
   }
+}
+
+function parseTimeoutMs (value, label) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > MAX_TIMEOUT_MS) {
+    throw new TypeError(`${label} must be an integer from 1 to ${MAX_TIMEOUT_MS}`)
+  }
+  return value
+}
+
+function parseRetryCount (value, label) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > MAX_RETRIES) {
+    throw new TypeError(`${label} must be an integer from 0 to ${MAX_RETRIES}`)
+  }
+  return value
 }
 
 function wait (ms, signal) {
@@ -708,6 +728,21 @@ function abortCause (signal, fallback) {
 }
 
 async function readResponseText (res, path) {
+  const declaredLength = res?.headers?.get?.('content-length')
+  if (declaredLength !== null && declaredLength !== undefined && declaredLength !== '') {
+    if (!/^(0|[1-9][0-9]*)$/.test(declaredLength)) {
+      throw new LspError(path, res.status, 'invalid Content-Length response header')
+    }
+    const byteLength = BigInt(declaredLength)
+    if (byteLength > BigInt(MAX_RESPONSE_BYTES)) {
+      throw new LspError(
+        path,
+        res.status,
+        `response too large (${declaredLength} bytes; maximum ${MAX_RESPONSE_BYTES})`
+      )
+    }
+  }
+
   const body = res && res.body
   if (!body || typeof body.getReader !== 'function') {
     const text = await res.text()

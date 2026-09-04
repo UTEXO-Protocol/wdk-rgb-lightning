@@ -45,6 +45,18 @@ while pre-`1.0`.
 - Caller cancellation across LSP HTTP, LNURL discovery/callback, retry backoff,
   and composed linked-asset flows. Successful protocol responses are bounded
   and strictly parsed before they cross the SDK boundary.
+- Restored external-payment quotes are rebound to a separately supplied trusted
+  target invoice, exact funding contract, LSP fee ceiling, and routing-fee
+  ceiling before they can cross the native payment boundary. This also covers
+  funding representations that were selected automatically while quoting.
+- RGB Lightning payments re-read native channels immediately before payment and
+  require the exact asset units and BOLT11 carrier amount to coexist in one
+  explicitly usable channel. Stale quotes and split-channel liquidity fail
+  before `sendPayment`; channel balances are never summed as RGB MPP.
+- LSP discovery decimal policy fields are bounded to the server's exact uint64
+  contract before BigInt conversion or application use.
+- LSP timeout and retry configuration now rejects non-integer, out-of-range,
+  and type-coerced values instead of silently changing caller policy.
 - Explicit recovery semantics for linked-payment relays: durable status lookup
   prevents blind duplication after a persisted quote, while documentation now
   fails closed on the unrecoverable lost-POST-response case because the current
@@ -88,6 +100,15 @@ while pre-`1.0`.
   whether the input used UMA form.
 
 ### Changed
+- Apply the documented `onEachPoll` hook before every account sync in receive
+  settlement and outbound-liquidity waits, matching channel-readiness polling
+  and allowing callers to perform deterministic chain or peer maintenance.
+- Match the deployed Go LSP request contract by emitting exact JSON numbers for
+  Lightning uint64 fields and rejecting values above JavaScript's safe range
+  instead of sending server-invalid quoted numbers.
+- Validate polling inputs and native channel balances before they can affect
+  readiness decisions, propagate Lightning Address cancellation through
+  discovery, and verify requested description-hash and final-CLTV invoice data.
 - Raised native peer floors to `@utexo/rgb-lightning-node-bare
   >=0.1.0-beta.20 <0.2.0` and `@utexo/rgb-lightning-node-nodejs
   >=0.1.0-beta.16 <0.2.0`, the first published wrappers exposing

@@ -35,6 +35,7 @@ function decodedInvoice (overrides = {}) {
     asset_amount: 500_000,
     payee_pubkey: PAYEE_KEY,
     description_hash: METADATA_HASH,
+    min_final_cltv_expiry_delta: 42,
     timestamp: NOW - 10,
     expiry_sec: 3_600,
     network: 'Signet',
@@ -73,6 +74,16 @@ function account (overrides = {}) {
     listPayments: jest.fn(async () => []),
     claimHodlInvoice: jest.fn(async () => ({})),
     ...overrides
+  }
+}
+
+function paymentChannel (assetId, assetAmount, outboundBalanceMsat = 10_000_000) {
+  return {
+    assetId,
+    assetLocalAmount: assetAmount,
+    outboundBalanceMsat,
+    isUsable: true,
+    peerPubkey: LSP_KEY
   }
 }
 
@@ -358,6 +369,7 @@ describe('linked receive flows', () => {
 describe('on-chain delivery bridge', () => {
   function bridgeAccount (overrides = {}) {
     return account({
+      listChannels: jest.fn(async () => [paymentChannel(CANONICAL.assetId, 500_000)]),
       decodeInvoice: jest.fn(async () => decodedInvoice({
         asset_id: CANONICAL.assetId,
         payee_pubkey: LSP_KEY,
@@ -376,7 +388,9 @@ describe('on-chain delivery bridge', () => {
         expirySec: 900,
         assetId: CANONICAL.assetId,
         assetAmount: 500_000,
-        paymentHash: HASH
+        paymentHash: HASH,
+        descriptionHash: METADATA_HASH,
+        minFinalCltvExpiryDelta: 42
       },
       requireInvoiceVerification: true
     })
@@ -388,7 +402,9 @@ describe('on-chain delivery bridge', () => {
         expirySec: 900,
         assetId: CANONICAL.assetId,
         assetAmount: 500_000,
-        paymentHash: HASH
+        paymentHash: HASH,
+        descriptionHash: METADATA_HASH,
+        minFinalCltvExpiryDelta: 42
       }
     })
     expect(wallet.decodeRgbInvoice).toHaveBeenCalledWith('rgb-invoice')
@@ -402,6 +418,28 @@ describe('on-chain delivery bridge', () => {
       lnInvoice: 'ln-bridge',
       mappingId: '9'
     })
+  })
+
+  it.each([
+    [
+      'description hash',
+      { descriptionHash: 'bb'.repeat(32) },
+      /different requested description hash/
+    ],
+    [
+      'minimum final CLTV delta',
+      { minFinalCltvExpiryDelta: 144 },
+      /different requested minimum final CLTV delta/
+    ]
+  ])('does not pay when the signed LSP invoice changes the requested %s', async (_field, ln, error) => {
+    const { lsp, wallet } = makeLsp(bridgeAccount())
+
+    await expect(lsp.sendAsset({
+      rgbInvoice: 'rgb-invoice',
+      ln: { amtMsat: 3_000_000, ...ln },
+      requireInvoiceVerification: true
+    })).rejects.toThrow(error)
+    expect(wallet.sendPayment).not.toHaveBeenCalled()
   })
 
   it('does not pay when the LSP substitutes the recipient RGB invoice', async () => {
@@ -519,6 +557,21 @@ describe('on-chain delivery bridge', () => {
     })
   })
 
+  it('does not pay when RGB and carrier liquidity are split across channels', async () => {
+    const { lsp, wallet } = makeLsp(bridgeAccount({
+      listChannels: jest.fn(async () => [
+        paymentChannel(CANONICAL.assetId, 500_000, 1),
+        paymentChannel(CANONICAL.assetId, 1, 3_000_000)
+      ])
+    }))
+
+    await expect(lsp.sendAsset({
+      rgbInvoice: 'rgb-invoice',
+      ln: { amtMsat: 3_000_000 }
+    })).rejects.toThrow(/same usable channel/)
+    expect(wallet.sendPayment).not.toHaveBeenCalled()
+  })
+
   it('rejects a bridge invoice in an asset the LSP does not advertise', async () => {
     const { lsp, wallet } = makeLsp(bridgeAccount())
     lsp.http.getInfo.mockResolvedValue({
@@ -615,6 +668,62 @@ describe('on-chain delivery bridge', () => {
 })
 
 describe('Lightning Address linked flows', () => {
+  it('selects automatic RGB liquidity against the same channel carrier amount', async () => {
+    const { lsp } = makeLsp(account({
+      listChannels: jest.fn(async () => [{
+        assetId: PAYOUT.assetId,
+        assetLocalAmount: 500_000,
+        outboundBalanceMsat: 3_000_000,
+        isUsable: true
+      }]),
+      decodeInvoice: jest.fn(async () => decodedInvoice({
+        asset_id: PAYOUT.assetId,
+        payee_pubkey: LSP_KEY
+      }))
+    }))
+
+    await expect(lsp.quoteAddress({
+      address: 'alice@lsp.example',
+      amtMsat: 3_000_000,
+      asset: { assetAmount: 500_000 }
+    })).resolves.toMatchObject({
+      assetId: PAYOUT.assetId,
+      assetSelection: { assetId: PAYOUT.assetId, converted: false }
+    })
+
+    lsp.account.listChannels.mockResolvedValueOnce([{
+      assetId: PAYOUT.assetId,
+      assetLocalAmount: 500_000,
+      outboundBalanceMsat: 2_999_999,
+      isUsable: true
+    }])
+    await expect(lsp.quoteAddress({
+      address: 'alice@lsp.example',
+      amtMsat: 3_000_000,
+      asset: { assetAmount: 500_000 }
+    })).rejects.toThrow(/No accepted asset has 500000 spendable base units/)
+  })
+
+  it('rechecks explicit Lightning Address liquidity before native payment', async () => {
+    const { lsp, wallet } = makeLsp(account({
+      listChannels: jest.fn(async () => [
+        paymentChannel(PAYOUT.assetId, 500_000, 1),
+        paymentChannel(PAYOUT.assetId, 1, 3_000_000)
+      ]),
+      decodeInvoice: jest.fn(async () => decodedInvoice({
+        asset_id: PAYOUT.assetId,
+        payee_pubkey: LSP_KEY
+      }))
+    }))
+
+    await expect(lsp.payAddress({
+      address: 'alice@lsp.example',
+      amtMsat: 3_000_000,
+      asset: { assetId: PAYOUT.assetId, assetAmount: 500_000 }
+    })).rejects.toThrow(/same usable channel/)
+    expect(wallet.sendPayment).not.toHaveBeenCalled()
+  })
+
   it('rejects malformed selection input before discovery or callback state', async () => {
     const { lsp } = makeLsp()
 
@@ -781,7 +890,9 @@ describe('Lightning Address linked flows', () => {
 
 describe('external BOLT11 relay', () => {
   it('quotes, independently re-verifies, pays, and exposes durable LSP status', async () => {
-    const { lsp, wallet } = makeLsp()
+    const { lsp, wallet } = makeLsp(account({
+      listChannels: jest.fn(async () => [paymentChannel(PAYOUT.assetId, 500_000)])
+    }))
     const quote = await lsp.quoteExternalPayment({
       invoice: 'ln-target',
       payWith: PAYOUT.assetId,
@@ -796,8 +907,14 @@ describe('external BOLT11 relay', () => {
       verified: true
     })
 
-    await expect(lsp.verifyExternalQuote(quote)).resolves.toStrictEqual(quote)
-    const paid = await lsp.payExternalQuote(quote, { maxTotalRoutingFeeMsat: 2_000 })
+    const authorization = {
+      invoice: 'ln-target',
+      fundingAssetId: PAYOUT.assetId,
+      maxFeeMsat: 1_000,
+      maxTotalRoutingFeeMsat: 2_000
+    }
+    await expect(lsp.verifyExternalQuote(quote, authorization)).resolves.toStrictEqual(quote)
+    const paid = await lsp.payExternalQuote(quote, authorization)
     expect(wallet.decodeInvoice).toHaveBeenCalledTimes(6)
     expect(wallet.sendPayment).toHaveBeenCalledWith({
       invoice: 'ln-hodl',
@@ -809,6 +926,26 @@ describe('external BOLT11 relay', () => {
       paymentHash: HASH,
       status: 'settled'
     })
+  })
+
+  it('rejects a restored quote whose exact funding channel lost carrier liquidity', async () => {
+    const { lsp, wallet } = makeLsp(account({
+      listChannels: jest.fn(async () => [paymentChannel(PAYOUT.assetId, 500_000, 3_000_000)])
+    }))
+    const quote = await lsp.quoteExternalPayment({
+      invoice: 'ln-target',
+      payWith: PAYOUT.assetId,
+      maxFeeMsat: 1_000,
+      maxTotalRoutingFeeMsat: 2_000
+    })
+
+    await expect(lsp.payExternalQuote(quote, {
+      invoice: 'ln-target',
+      fundingAssetId: PAYOUT.assetId,
+      maxFeeMsat: 1_000,
+      maxTotalRoutingFeeMsat: 2_000
+    })).rejects.toThrow(/same usable channel/)
+    expect(wallet.sendPayment).not.toHaveBeenCalled()
   })
 
   it('does not submit a payment when the LSP changes the signed funding hash', async () => {
@@ -840,7 +977,35 @@ describe('external BOLT11 relay', () => {
     })
 
     const restored = JSON.parse(JSON.stringify(quote))
-    await expect(lsp.verifyExternalQuote(restored)).resolves.toStrictEqual(restored)
+    await expect(lsp.verifyExternalQuote(restored, {
+      invoice: 'ln-target',
+      fundingAssetId: PAYOUT.assetId,
+      maxFeeMsat: 1_000
+    })).resolves.toStrictEqual(restored)
+    expect(wallet.sendPayment).not.toHaveBeenCalled()
+  })
+
+  it('requires an automatically selected funding representation to be authorized exactly', async () => {
+    const { lsp, wallet } = makeLsp()
+    const quote = await lsp.quoteExternalPayment({
+      invoice: 'ln-target',
+      maxFeeMsat: 1_000
+    })
+
+    await expect(lsp.verifyExternalQuote(quote, {
+      invoice: 'ln-target',
+      fundingAssetId: PAYOUT.assetId,
+      maxFeeMsat: 1_000
+    })).resolves.toStrictEqual(quote)
+    await expect(lsp.verifyExternalQuote(quote, {
+      invoice: 'ln-target',
+      fundingAssetId: CANONICAL.assetId,
+      maxFeeMsat: 1_000
+    })).rejects.toThrow(/funding asset differs/)
+    await expect(lsp.verifyExternalQuote(quote, {
+      invoice: 'ln-target',
+      maxFeeMsat: 1_000
+    })).rejects.toThrow(/fundingAssetId/)
     expect(wallet.sendPayment).not.toHaveBeenCalled()
   })
 
@@ -857,7 +1022,11 @@ describe('external BOLT11 relay', () => {
       supported_assets: []
     })
 
-    await expect(lsp.payExternalQuote(quote))
+    await expect(lsp.payExternalQuote(quote, {
+      invoice: 'ln-target',
+      fundingAssetId: PAYOUT.assetId,
+      maxFeeMsat: 1_000
+    }))
       .rejects.toThrow(/no longer advertised/)
     expect(wallet.sendPayment).not.toHaveBeenCalled()
   })
@@ -939,8 +1108,68 @@ describe('external BOLT11 relay', () => {
       maxTotalRoutingFeeMsat: 2_000
     })
 
-    await expect(lsp.payExternalQuote(quote, { maxTotalRoutingFeeMsat: 2_001 }))
-      .rejects.toThrow(/differs from the reviewed quote/)
+    await expect(lsp.payExternalQuote(quote, {
+      invoice: 'ln-target',
+      fundingAssetId: PAYOUT.assetId,
+      maxFeeMsat: 1_000,
+      maxTotalRoutingFeeMsat: 2_001
+    })).rejects.toThrow(/differs from the authorized payment intent/)
+    expect(wallet.sendPayment).not.toHaveBeenCalled()
+  })
+
+  it('requires restored quotes to match the original trusted payment intent', async () => {
+    const { lsp, wallet } = makeLsp()
+    const quote = await lsp.quoteExternalPayment({
+      invoice: 'ln-target',
+      payWith: PAYOUT.assetId,
+      maxFeeMsat: 1_000,
+      maxTotalRoutingFeeMsat: 2_000
+    })
+
+    await expect(lsp.verifyExternalQuote(quote, {}))
+      .rejects.toThrow(/authorized invoice/)
+    await expect(lsp.verifyExternalQuote(quote, {
+      invoice: 'ln-other',
+      fundingAssetId: PAYOUT.assetId,
+      maxFeeMsat: 1_000,
+      maxTotalRoutingFeeMsat: 2_000
+    })).rejects.toThrow(/target invoice differs/)
+    await expect(lsp.verifyExternalQuote(quote, {
+      invoice: 'ln-target',
+      fundingAssetId: PAYOUT.assetId,
+      maxFeeMsat: 1_001,
+      maxTotalRoutingFeeMsat: 2_000
+    })).rejects.toThrow(/LSP fee ceiling differs/)
+    await expect(lsp.verifyExternalQuote(quote, {
+      invoice: 'ln-target',
+      fundingAssetId: CANONICAL.assetId,
+      maxFeeMsat: 1_000,
+      maxTotalRoutingFeeMsat: 2_000
+    })).rejects.toThrow(/funding asset differs/)
+    expect(wallet.sendPayment).not.toHaveBeenCalled()
+  })
+
+  it('rejects fee-policy fields altered inside a restored quote', async () => {
+    const { lsp, wallet } = makeLsp()
+    const quote = await lsp.quoteExternalPayment({
+      invoice: 'ln-target',
+      payWith: PAYOUT.assetId,
+      maxFeeMsat: 1_000,
+      maxTotalRoutingFeeMsat: 2_000
+    })
+    const authorization = {
+      invoice: 'ln-target',
+      fundingAssetId: PAYOUT.assetId,
+      maxFeeMsat: 1_000,
+      maxTotalRoutingFeeMsat: 2_000
+    }
+
+    await expect(lsp.payExternalQuote({ ...quote, maxFeeMsat: 10_000 }, authorization))
+      .rejects.toThrow(/LSP fee ceiling differs/)
+    await expect(lsp.payExternalQuote({
+      ...quote,
+      maxTotalRoutingFeeMsat: 20_000
+    }, authorization)).rejects.toThrow(/routing fee ceiling differs/)
     expect(wallet.sendPayment).not.toHaveBeenCalled()
   })
 

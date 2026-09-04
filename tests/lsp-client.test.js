@@ -207,19 +207,24 @@ describe('LspClient constructor', () => {
     expect(client.baseUrl).toBe('http://staging.local')
   })
 
-  it('clamps a non-finite maxRetries to the default', () => {
-    const { client } = makeClient({ maxRetries: Number.NaN })
-    expect(client._maxRetries).toBe(3)
+  it('rejects a non-finite maxRetries', () => {
+    expect(() => makeClient({ maxRetries: Number.NaN })).toThrow(/maxRetries must be an integer/)
+    expect(() => makeClient({ maxRetries: Number.POSITIVE_INFINITY })).toThrow(/maxRetries must be an integer/)
   })
 
-  it('floors a negative maxRetries to 0 and truncates fractions', () => {
-    expect(makeClient({ maxRetries: -5 }).client._maxRetries).toBe(0)
-    expect(makeClient({ maxRetries: 2.9 }).client._maxRetries).toBe(2)
+  it('rejects negative, fractional, oversized, and non-number retry counts', () => {
+    expect(() => makeClient({ maxRetries: -1 })).toThrow(/maxRetries must be an integer/)
+    expect(() => makeClient({ maxRetries: 2.9 })).toThrow(/maxRetries must be an integer/)
+    expect(() => makeClient({ maxRetries: 11 })).toThrow(/maxRetries must be an integer/)
+    expect(() => makeClient({ maxRetries: '3' })).toThrow(/maxRetries must be an integer/)
   })
 
-  it('clamps a bogus timeoutMs to the default', () => {
-    expect(makeClient({ timeoutMs: 0 }).client._timeoutMs).toBe(15000)
-    expect(makeClient({ timeoutMs: 'x' }).client._timeoutMs).toBe(15000)
+  it('rejects invalid timeout values instead of silently changing policy', () => {
+    expect(() => makeClient({ timeoutMs: 0 })).toThrow(/timeoutMs must be an integer/)
+    expect(() => makeClient({ timeoutMs: 1.5 })).toThrow(/timeoutMs must be an integer/)
+    expect(() => makeClient({ timeoutMs: Number.POSITIVE_INFINITY })).toThrow(/timeoutMs must be an integer/)
+    expect(() => makeClient({ timeoutMs: 2_147_483_648 })).toThrow(/timeoutMs must be an integer/)
+    expect(() => makeClient({ timeoutMs: '15000' })).toThrow(/timeoutMs must be an integer/)
   })
 
   it('copies defaultHeaders defensively', () => {
@@ -283,6 +288,12 @@ describe('GET endpoint methods', () => {
     const response = lspInfo({ max_channel_asset_amount: 1 })
     const { client } = makeClient({ fetch: fetchReturning(makeRes({ json: response })) })
     await expect(client.getInfo()).rejects.toThrow(/max_channel_asset_amount/)
+  })
+
+  it('rejects discovery policy outside the server uint64 contract', async () => {
+    const response = lspInfo({ max_payment_size_msat: '18446744073709551616' })
+    const { client } = makeClient({ fetch: fetchReturning(makeRes({ json: response })) })
+    await expect(client.getInfo()).rejects.toThrow(/max_payment_size_msat/)
   })
 
   it('rejects duplicate supported asset identities', async () => {
@@ -650,6 +661,52 @@ describe('_req error and edge handling', () => {
     await expect(client.health()).rejects.toThrow(/response too large/)
   })
 
+  it('rejects an oversized declared response before buffering a non-streaming body', async () => {
+    const text = jest.fn(async () => 'must not be buffered')
+    const response = {
+      ok: true,
+      status: 200,
+      headers: { get: jest.fn(() => String((1 << 20) + 1)) },
+      text
+    }
+    const { client } = makeClient({ fetch: fetchReturning(response) })
+
+    await expect(client.health()).rejects.toThrow(/response too large/)
+    expect(response.headers.get).toHaveBeenCalledWith('content-length')
+    expect(text).not.toHaveBeenCalled()
+  })
+
+  it.each(['-1', '1.5', '1e9', ' 10', 'not-a-length'])(
+    'rejects malformed declared response length %s before buffering',
+    async (declaredLength) => {
+      const text = jest.fn(async () => '{}')
+      const response = {
+        ok: true,
+        status: 200,
+        headers: { get: jest.fn(() => declaredLength) },
+        text
+      }
+      const { client } = makeClient({ fetch: fetchReturning(response) })
+
+      await expect(client.health()).rejects.toThrow(/invalid Content-Length/)
+      expect(text).not.toHaveBeenCalled()
+    }
+  )
+
+  it('rejects an oversized Content-Length that cannot be represented as a number', async () => {
+    const text = jest.fn(async () => '{}')
+    const response = {
+      ok: true,
+      status: 200,
+      headers: { get: jest.fn(() => '999999999999999999999999999999999999') },
+      text
+    }
+    const { client } = makeClient({ fetch: fetchReturning(response) })
+
+    await expect(client.health()).rejects.toThrow(/response too large/)
+    expect(text).not.toHaveBeenCalled()
+  })
+
   it('accepts a streamed response of exactly 1 MiB', async () => {
     const MAX = 1 << 20
     const wrapper = '{"a":"' + '"}' // {"a":"...." }
@@ -712,6 +769,13 @@ describe('_req error and edge handling', () => {
     expect(sigSpy).toHaveBeenCalledWith(2000)
     expect(sigSpy).not.toHaveBeenCalledWith(15000)
     sigSpy.mockRestore()
+  })
+
+  it('rejects an invalid per-call timeout instead of using the constructor default', async () => {
+    const { client, fetchImpl } = makeClient({ timeoutMs: 5000 })
+    await expect(client.getInfo({ timeoutMs: 0 })).rejects.toThrow(/request timeoutMs must be an integer/)
+    await expect(client.getInfo({ timeoutMs: '2000' })).rejects.toThrow(/request timeoutMs must be an integer/)
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('falls back to the constructor timeout when no per-call override is given', async () => {
@@ -828,13 +892,24 @@ describe('_rewriteCallbackToPath', () => {
 })
 
 describe('numeric coercion edge cases (via public API)', () => {
-  it('accepts a large bigint amount as a string in the LN body', async () => {
+  it('rejects an LN amount that the Go JSON-number contract cannot represent exactly', async () => {
     const fetchImpl = fetchReturning(makeRes({ json: {} }))
     const { client } = makeClient({ fetch: fetchImpl })
     const big = BigInt(Number.MAX_SAFE_INTEGER) + 10n
-    await client.onchainSend({ rgbInvoice: 'rgb:x', ln: { amtMsat: big } })
+
+    await expect(client.onchainSend({ rgbInvoice: 'rgb:x', ln: { amtMsat: big } }))
+      .rejects.toThrow(/exact integer range/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('normalizes an exact numeric-string LN amount to the server JSON-number shape', async () => {
+    const fetchImpl = fetchReturning(makeRes({ json: {} }))
+    const { client } = makeClient({ fetch: fetchImpl })
+
+    await client.onchainSend({ rgbInvoice: 'rgb:x', ln: { amtMsat: '1234' } })
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
-    expect(body.lninvoice.amt_msat).toBe(big.toString())
+    expect(body.lninvoice.amt_msat).toBe(1234)
+    expect(typeof body.lninvoice.amt_msat).toBe('number')
   })
 
   it('emits a bigint of exactly MAX_SAFE_INTEGER as a JSON number, not a string', async () => {
@@ -898,12 +973,12 @@ describe('numeric coercion edge cases (via public API)', () => {
     expect(body.lninvoice.expiry_sec).toBe(60)
   })
 
-  it('passes a numeric-string amtMsat through unchanged (uint64 string path)', async () => {
+  it('normalizes a numeric-string amtMsat to the LSP JSON-number contract', async () => {
     const fetchImpl = fetchReturning(makeRes({ json: {} }))
     const { client } = makeClient({ fetch: fetchImpl })
     await client.onchainSend({ rgbInvoice: 'rgb:x', ln: { amtMsat: '987654321' } })
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
-    expect(body.lninvoice.amt_msat).toBe('987654321')
+    expect(body.lninvoice.amt_msat).toBe(987654321)
   })
 
   it('rejects a non-numeric-string amtMsat', async () => {
@@ -932,10 +1007,9 @@ describe('_timeoutSignal', () => {
     }
   })
 
-  it('uses the constructor timeout when given a non-positive override', () => {
+  it('rejects a non-positive override', () => {
     const { client } = makeClient({ timeoutMs: 5000 })
-    const sig = client._timeoutSignal(0)
-    expect(sig).toBeInstanceOf(AbortSignal)
+    expect(() => client._timeoutSignal(0)).toThrow(/request timeoutMs must be an integer/)
   })
 })
 

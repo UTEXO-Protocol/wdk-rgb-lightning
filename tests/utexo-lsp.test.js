@@ -233,6 +233,7 @@ describe('waitForChannel', () => {
   it('returns ChannelReadyInfo for a usable RGB channel (camelCase fields)', async () => {
     const channel = {
       assetId: 'assetX',
+      peerPubkey: PEER.peerPubkey,
       isUsable: true,
       channelId: 'chan-1',
       capacitySat: 100000,
@@ -254,10 +255,11 @@ describe('waitForChannel', () => {
     expect(onProgress).toHaveBeenCalledWith('channels: 1 — RGB usable: yes')
   })
 
-  it('reads snake_case channel fields and the ready/localBalance fallbacks', async () => {
+  it('reads snake_case channel fields and the localBalance fallback', async () => {
     const channel = {
       asset_id: 'assetSnake',
-      ready: true,
+      peer_pubkey: PEER.peerPubkey,
+      is_usable: true,
       channel_id: 'chan-2',
       capacity_sat: 7,
       local_balance_msat: 999
@@ -273,11 +275,41 @@ describe('waitForChannel', () => {
 
   it('runs onEachPoll before checking channels', async () => {
     const onEachPoll = jest.fn(async () => {})
-    const channel = { assetId: 'a', isUsable: true }
+    const channel = { assetId: 'a', peerPubkey: PEER.peerPubkey, isUsable: true }
     const account = makeAccount({ listChannels: jest.fn(async () => [channel]) })
     const lsp = makeLsp(account)
     await lsp.waitForChannel('a', { timeoutMs: 1000, onEachPoll })
     expect(onEachPoll).toHaveBeenCalled()
+  })
+
+  it.each([
+    ['asset id', ' asset', { timeoutMs: 1000 }, /whitespace-free/],
+    ['timeout', 'asset', { timeoutMs: 0 }, /must be positive/],
+    ['poll interval', 'asset', { timeoutMs: 1000, pollIntervalMs: 1.5 }, /safe integer/]
+  ])('rejects an invalid %s before touching the native account', async (_field, assetId, opts, error) => {
+    const account = makeAccount()
+    const lsp = makeLsp(account)
+
+    await expect(lsp.waitForChannel(assetId, opts)).rejects.toThrow(error)
+    expect(account.sync).not.toHaveBeenCalled()
+    expect(account.listChannels).not.toHaveBeenCalled()
+  })
+
+  it('rejects unsafe native channel balances instead of rounding wallet state', async () => {
+    const account = makeAccount({
+      listChannels: jest.fn(async () => [{
+        assetId: 'asset',
+        peerPubkey: PEER.peerPubkey,
+        isUsable: true,
+        capacitySat: '9007199254740992',
+        outboundBalanceMsat: 1,
+        inboundBalanceMsat: 1
+      }])
+    })
+    const lsp = makeLsp(account)
+
+    await expect(lsp.waitForChannel('asset', { timeoutMs: 1000 }))
+      .rejects.toThrow(/native capacity must be a non-negative safe integer/)
   })
 
   it('throws LspChannelTimeoutError when no usable channel appears before the deadline', async () => {
@@ -297,14 +329,26 @@ describe('waitForChannel', () => {
   })
 
   it('does not treat a non-matching-asset usable channel as ready', async () => {
-    const account = makeAccount({ listChannels: jest.fn(async () => [{ assetId: 'other', isUsable: true }]) })
+    const account = makeAccount({
+      listChannels: jest.fn(async () => [{
+        assetId: 'other',
+        peerPubkey: PEER.peerPubkey,
+        isUsable: true
+      }])
+    })
     const lsp = makeLsp(account)
     await expect(lsp.waitForChannel('wanted', { timeoutMs: 5, pollIntervalMs: 1 }))
       .rejects.toBeInstanceOf(LspChannelTimeoutError)
   })
 
   it("reports the no-match progress message ('RGB usable: no') when nothing matches", async () => {
-    const account = makeAccount({ listChannels: jest.fn(async () => [{ assetId: 'other', isUsable: true }, { assetId: 'x' }]) })
+    const account = makeAccount({
+      listChannels: jest.fn(async () => [{
+        assetId: 'other',
+        peerPubkey: PEER.peerPubkey,
+        isUsable: true
+      }, { assetId: 'x' }])
+    })
     const lsp = makeLsp(account)
     const onProgress = jest.fn()
     await expect(lsp.waitForChannel('wanted', { timeoutMs: 5, pollIntervalMs: 1, onProgress }))
@@ -315,18 +359,72 @@ describe('waitForChannel', () => {
 
   it('treats isUsable:false as unusable even when ready is true', async () => {
     // Explicit isUsable values take precedence over the legacy ready field.
-    const channel = { assetId: 'wanted', isUsable: false, ready: true, channelId: 'c-false' }
+    const channel = {
+      assetId: 'wanted',
+      peerPubkey: PEER.peerPubkey,
+      isUsable: false,
+      ready: true,
+      channelId: 'c-false'
+    }
     const account = makeAccount({ listChannels: jest.fn(async () => [channel]) })
     const lsp = makeLsp(account)
     await expect(lsp.waitForChannel('wanted', { timeoutMs: 5, pollIntervalMs: 1 }))
       .rejects.toBeInstanceOf(LspChannelTimeoutError)
   })
 
+  it('does not infer usability from ready when the native usable flag is absent', async () => {
+    const channel = {
+      assetId: 'wanted',
+      peerPubkey: PEER.peerPubkey,
+      ready: true,
+      channelId: 'c-ready-only'
+    }
+    const account = makeAccount({ listChannels: jest.fn(async () => [channel]) })
+    const lsp = makeLsp(account)
+
+    await expect(lsp.waitForChannel('wanted', { timeoutMs: 5, pollIntervalMs: 1 }))
+      .rejects.toBeInstanceOf(LspChannelTimeoutError)
+  })
+
+  it('does not accept a matching asset channel owned by another peer', async () => {
+    const channel = {
+      assetId: 'wanted',
+      peerPubkey: `03${'f'.repeat(64)}`,
+      isUsable: true,
+      channelId: 'c-other-peer'
+    }
+    const account = makeAccount({ listChannels: jest.fn(async () => [channel]) })
+    const lsp = makeLsp(account)
+
+    await expect(lsp.waitForChannel('wanted', { timeoutMs: 5, pollIntervalMs: 1 }))
+      .rejects.toBeInstanceOf(LspChannelTimeoutError)
+  })
+
+  it('matches the configured peer public key case-insensitively', async () => {
+    const channel = {
+      assetId: 'wanted',
+      peerPubkey: PEER.peerPubkey.toUpperCase(),
+      isUsable: true,
+      channelId: 'c-upper-peer'
+    }
+    const account = makeAccount({ listChannels: jest.fn(async () => [channel]) })
+    const lsp = makeLsp(account)
+
+    await expect(lsp.waitForChannel('wanted', { timeoutMs: 1000 }))
+      .resolves.toMatchObject({ channelId: 'c-upper-peer' })
+  })
+
   it('reads the localBalanceMsat (camelCase) middle rung and defaults inbound to 0', async () => {
     // _outboundMsat: outboundBalanceMsat is absent, so the camelCase
     // localBalanceMsat fallback rung supplies the value; inbound is absent so
     // the `?? 0` default applies.
-    const channel = { assetId: 'wanted', isUsable: true, channelId: 'c-local', localBalanceMsat: 4242 }
+    const channel = {
+      assetId: 'wanted',
+      peerPubkey: PEER.peerPubkey,
+      isUsable: true,
+      channelId: 'c-local',
+      localBalanceMsat: 4242
+    }
     const account = makeAccount({ listChannels: jest.fn(async () => [channel]) })
     const lsp = makeLsp(account)
     const info = await lsp.waitForChannel('wanted', { timeoutMs: 1000 })
@@ -530,6 +628,27 @@ describe('awaitReceiveSettlement', () => {
     expect(onProgress).not.toHaveBeenCalledWith('timeout')
   })
 
+  it('runs onEachPoll before every settlement sync', async () => {
+    const events = []
+    const onEachPoll = jest.fn(async () => { events.push('hook') })
+    const sync = jest.fn(async () => { events.push('sync') })
+    const getInvoiceStatus = jest.fn()
+      .mockResolvedValueOnce({ status: 'Pending' })
+      .mockResolvedValueOnce({ status: 'Succeeded' })
+    const account = makeAccount({ sync, getInvoiceStatus })
+    const lsp = makeLsp(account)
+
+    await expect(lsp.awaitReceiveSettlement('ln', {
+      timeoutMs: 1000,
+      pollIntervalMs: 1,
+      onEachPoll
+    })).resolves.toBe('settled')
+
+    expect(onEachPoll).toHaveBeenCalledTimes(2)
+    expect(sync).toHaveBeenCalledTimes(2)
+    expect(events).toEqual(['hook', 'sync', 'hook', 'sync'])
+  })
+
   it('throws LspSettlementError on an Expired status', async () => {
     const account = makeAccount({ getInvoiceStatus: jest.fn(async () => ({ status: 'Expired' })) })
     const lsp = makeLsp(account)
@@ -554,6 +673,19 @@ describe('awaitReceiveSettlement', () => {
     await expect(lsp.awaitReceiveSettlement('ln', { timeoutMs: 1000, signal: controller.signal }))
       .rejects.toThrow('operation aborted')
   })
+
+  it.each([
+    ['invoice', ' ln', { timeoutMs: 1000 }, /required/],
+    ['timeout', 'ln', { timeoutMs: 0 }, /must be positive/],
+    ['poll interval', 'ln', { timeoutMs: 1000, pollIntervalMs: -1 }, /non-negative/]
+  ])('rejects an invalid %s before settlement polling', async (_field, invoice, opts, error) => {
+    const account = makeAccount()
+    const lsp = makeLsp(account)
+
+    await expect(lsp.awaitReceiveSettlement(invoice, opts)).rejects.toThrow(error)
+    expect(account.sync).not.toHaveBeenCalled()
+    expect(account.getInvoiceStatus).not.toHaveBeenCalled()
+  })
 })
 
 // ── waitForOutboundLiquidity ───────────────────────────────────────────────
@@ -576,6 +708,44 @@ describe('waitForOutboundLiquidity', () => {
     await expect(lsp.waitForOutboundLiquidity(1, { timeoutMs: 1000, onProgress })).resolves.toBeUndefined()
     expect(onProgress).toHaveBeenCalledTimes(1)
     expect(onProgress).toHaveBeenCalledWith('outbound: 9000 msat (need 1)')
+  })
+
+  it('matches outbound-liquidity peer keys case-insensitively', async () => {
+    const channel = {
+      peerPubkey: PEER.peerPubkey.toUpperCase(),
+      isUsable: true,
+      outboundBalanceMsat: 5000
+    }
+    const account = makeAccount({ listChannels: jest.fn(async () => [channel]) })
+    const lsp = makeLsp(account)
+
+    await expect(lsp.waitForOutboundLiquidity(5000, { timeoutMs: 1000 }))
+      .resolves.toBeUndefined()
+  })
+
+  it('runs onEachPoll before every outbound-liquidity sync', async () => {
+    const events = []
+    const onEachPoll = jest.fn(async () => { events.push('hook') })
+    const sync = jest.fn(async () => { events.push('sync') })
+    const listChannels = jest.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{
+        peerPubkey: PEER.peerPubkey,
+        isUsable: true,
+        outboundBalanceMsat: 5000
+      }])
+    const account = makeAccount({ sync, listChannels })
+    const lsp = makeLsp(account)
+
+    await expect(lsp.waitForOutboundLiquidity(5000, {
+      timeoutMs: 1000,
+      pollIntervalMs: 1,
+      onEachPoll
+    })).resolves.toBeUndefined()
+
+    expect(onEachPoll).toHaveBeenCalledTimes(2)
+    expect(sync).toHaveBeenCalledTimes(2)
+    expect(events).toEqual(['hook', 'sync', 'hook', 'sync'])
   })
 
   it('throws a typed timeout when liquidity never arrives', async () => {
@@ -615,6 +785,33 @@ describe('waitForOutboundLiquidity', () => {
     controller.abort()
     await expect(lsp.waitForOutboundLiquidity(1, { timeoutMs: 1000, signal: controller.signal }))
       .rejects.toThrow('operation aborted')
+  })
+
+  it.each([
+    ['minimum', 0, { timeoutMs: 1000 }, /must be positive/],
+    ['timeout', 1, { timeoutMs: Number.MAX_SAFE_INTEGER }, /timestamp range/],
+    ['poll interval', 1, { timeoutMs: 1000, pollIntervalMs: '1.5' }, /safe integer/]
+  ])('rejects an invalid %s before liquidity polling', async (_field, minMsat, opts, error) => {
+    const account = makeAccount()
+    const lsp = makeLsp(account)
+
+    await expect(lsp.waitForOutboundLiquidity(minMsat, opts)).rejects.toThrow(error)
+    expect(account.sync).not.toHaveBeenCalled()
+    expect(account.listChannels).not.toHaveBeenCalled()
+  })
+
+  it('rejects malformed native liquidity instead of coercing it to zero', async () => {
+    const account = makeAccount({
+      listChannels: jest.fn(async () => [{
+        peerPubkey: PEER.peerPubkey,
+        isUsable: true,
+        outboundBalanceMsat: 'not-a-balance'
+      }])
+    })
+    const lsp = makeLsp(account)
+
+    await expect(lsp.waitForOutboundLiquidity(1, { timeoutMs: 1000 }))
+      .rejects.toThrow(/native outbound balance must be a non-negative safe integer/)
   })
 })
 
@@ -666,7 +863,15 @@ describe('payAddress', () => {
   })
 
   it('resolves via the LSP and pays the returned invoice', async () => {
-    const account = makeAccount({ sendPayment: jest.fn(async () => ({ payment_hash: 'paid' })) })
+    const account = makeAccount({
+      listChannels: jest.fn(async () => [{
+        assetId: 'assetX',
+        assetLocalAmount: 7,
+        outboundBalanceMsat: 2000,
+        isUsable: true
+      }]),
+      sendPayment: jest.fn(async () => ({ payment_hash: 'paid' }))
+    })
     const lsp = makeLsp(account)
     const out = await lsp.payAddress({
       address: 'alice@lsp.example.io',
@@ -707,7 +912,15 @@ describe('payAddress', () => {
   })
 
   it('uses the shared LNURL resolver directly for an external address', async () => {
-    const account = makeAccount({ sendPayment: jest.fn(async () => ({ payment_hash: 'fb' })) })
+    const account = makeAccount({
+      listChannels: jest.fn(async () => [{
+        assetId: 'assetY',
+        assetLocalAmount: 9,
+        outboundBalanceMsat: 3000,
+        isUsable: true
+      }]),
+      sendPayment: jest.fn(async () => ({ payment_hash: 'fb' }))
+    })
     const lsp = makeLsp(account)
     globalThis.fetch = jest.fn()
       .mockResolvedValueOnce(lnurlResponse(lnurlDiscovery('https://other.test/cb?x=1')))
@@ -863,6 +1076,19 @@ describe('enableLightningAddress', () => {
     const account = makeAccount({ getNodeInfo: jest.fn(async () => ({})) })
     const lsp = makeLsp(account)
     await expect(lsp.enableLightningAddress()).rejects.toThrow('wallet not unlocked')
+    expect(account.apayNewWithAddress).not.toHaveBeenCalled()
+  })
+
+  it('honors cancellation before address discovery touches the native account', async () => {
+    const account = makeAccount({ getNodeInfo: jest.fn(async () => ({ pubkey: 'wallet-pk' })) })
+    const lsp = makeLsp(account)
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(lsp.enableLightningAddress({ signal: controller.signal }))
+      .rejects.toThrow(/operation aborted/)
+    expect(account.getNodeInfo).not.toHaveBeenCalled()
+    expect(lsp.http.getInfo).not.toHaveBeenCalled()
     expect(account.apayNewWithAddress).not.toHaveBeenCalled()
   })
 
@@ -1041,11 +1267,21 @@ describe('claimPendingPayments', () => {
 // ── private helpers via observable behaviour ───────────────────────────────
 
 describe('list normalization helpers', () => {
-  it('_listChannels yields [] for a non-array, non-{channels} response (timeout path)', async () => {
+  it('_listChannels rejects a non-array, non-{channels} native response', async () => {
     const account = makeAccount({ listChannels: jest.fn(async () => ({ foo: 'bar' })) })
     const lsp = makeLsp(account)
     await expect(lsp.waitForChannel('a', { timeoutMs: 5, pollIntervalMs: 1 }))
-      .rejects.toBeInstanceOf(LspChannelTimeoutError)
+      .rejects.toThrow(/listChannels returned a malformed response/)
+  })
+
+  it('_listChannels rejects an unexpectedly large native response', async () => {
+    const account = makeAccount({
+      listChannels: jest.fn(async () => Array.from({ length: 513 }, () => ({})))
+    })
+    const lsp = makeLsp(account)
+
+    await expect(lsp.waitForChannel('a', { timeoutMs: 1000 }))
+      .rejects.toThrow(/listChannels exceeds 512 entries/)
   })
 
   it('_sleep rejects when the signal aborts mid-wait', async () => {

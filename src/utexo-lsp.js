@@ -23,6 +23,7 @@ import { fetchDiscovery, parseLightningAddress, resolveAddressToInvoice } from '
 import { canonicalAssetId, canonicalInvoice, snakeCaseLnParams } from './lsp-utils.js'
 import {
   LspQuoteMismatchError,
+  assertLiquidPaymentAsset,
   assertAddressQuote,
   assertAddressRequest,
   assertRelayQuote,
@@ -137,6 +138,7 @@ const DEFAULT_POLL_INTERVAL_MS = 2_000
 const DEFAULT_EXPIRY_SECONDS = 3_600
 const LIGHTNING_ADDRESS_LOOKUP_ATTEMPTS = 8
 const LIGHTNING_ADDRESS_LOOKUP_DELAY_MS = 2_000
+const MAX_NATIVE_CHANNELS = 512
 
 // ── UtexoLsp ─────────────────────────────────────────────────────────────────
 
@@ -198,21 +200,28 @@ export class UtexoLsp {
    *   fails.
    */
   async waitForChannel (assetId, opts = {}) {
-    const timeoutMs = opts.timeoutMs ?? DEFAULT_CHANNEL_TIMEOUT_MS
-    const pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
-    const deadline = Date.now() + timeoutMs
+    const expectedAssetId = canonicalAssetId(assetId, 'UtexoLsp.waitForChannel: assetId')
+    const timeoutMs = positiveSafeNumber(
+      opts.timeoutMs ?? DEFAULT_CHANNEL_TIMEOUT_MS,
+      'UtexoLsp.waitForChannel: timeoutMs'
+    )
+    const pollIntervalMs = positiveSafeNumber(
+      opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
+      'UtexoLsp.waitForChannel: pollIntervalMs'
+    )
+    const deadline = futureDeadline(timeoutMs, 'UtexoLsp.waitForChannel: timeoutMs')
 
     while (Date.now() < deadline) {
       this._checkAbort(opts.signal)
       if (opts.onEachPoll) await opts.onEachPoll()
       await this.account.sync()
       const channels = await this._listChannels()
-      const match = channels.find((c) => this._isUsableRgbChannel(c, assetId))
+      const match = channels.find((c) => this._isUsableRgbChannel(c, expectedAssetId))
       opts.onProgress?.(`channels: ${channels.length} — RGB usable: ${match ? 'yes' : 'no'}`)
       if (match) return this._toChannelReadyInfo(match)
       await this._sleep(pollIntervalMs, opts.signal)
     }
-    throw new LspChannelTimeoutError(assetId, timeoutMs)
+    throw new LspChannelTimeoutError(expectedAssetId, timeoutMs)
   }
 
   // ── 3. Receive RGB over Lightning (POST /lightning_receive) ───────────────────
@@ -364,14 +373,28 @@ export class UtexoLsp {
    *   fails.
    */
   async awaitReceiveSettlement (lnInvoice, opts = {}) {
-    const timeoutMs = opts.timeoutMs ?? DEFAULT_SETTLEMENT_TIMEOUT_MS
-    const pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
-    const deadline = Date.now() + timeoutMs
+    const invoice = canonicalInvoice(
+      lnInvoice,
+      'UtexoLsp.awaitReceiveSettlement: lnInvoice'
+    )
+    const timeoutMs = positiveSafeNumber(
+      opts.timeoutMs ?? DEFAULT_SETTLEMENT_TIMEOUT_MS,
+      'UtexoLsp.awaitReceiveSettlement: timeoutMs'
+    )
+    const pollIntervalMs = positiveSafeNumber(
+      opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
+      'UtexoLsp.awaitReceiveSettlement: pollIntervalMs'
+    )
+    const deadline = futureDeadline(
+      timeoutMs,
+      'UtexoLsp.awaitReceiveSettlement: timeoutMs'
+    )
 
     while (Date.now() < deadline) {
       this._checkAbort(opts.signal)
+      if (opts.onEachPoll) await opts.onEachPoll()
       await this.account.sync()
-      const raw = await this.account.getInvoiceStatus(lnInvoice)
+      const raw = await this.account.getInvoiceStatus(invoice)
       const status = normalizeReceiveStatus(raw)
       opts.onProgress?.(status)
       if (status === 'Succeeded') return 'settled'
@@ -398,24 +421,40 @@ export class UtexoLsp {
    *   fails.
    */
   async waitForOutboundLiquidity (minMsat, opts = {}) {
-    const timeoutMs = opts.timeoutMs ?? DEFAULT_CHANNEL_TIMEOUT_MS
-    const pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
-    const deadline = Date.now() + timeoutMs
+    const requiredMsat = positiveSafeNumber(
+      minMsat,
+      'UtexoLsp.waitForOutboundLiquidity: minMsat'
+    )
+    const timeoutMs = positiveSafeNumber(
+      opts.timeoutMs ?? DEFAULT_CHANNEL_TIMEOUT_MS,
+      'UtexoLsp.waitForOutboundLiquidity: timeoutMs'
+    )
+    const pollIntervalMs = positiveSafeNumber(
+      opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
+      'UtexoLsp.waitForOutboundLiquidity: pollIntervalMs'
+    )
+    const deadline = futureDeadline(
+      timeoutMs,
+      'UtexoLsp.waitForOutboundLiquidity: timeoutMs'
+    )
 
     while (Date.now() < deadline) {
       this._checkAbort(opts.signal)
+      if (opts.onEachPoll) await opts.onEachPoll()
       await this.account.sync()
       const channels = await this._listChannels()
       const lspChan = channels.find((c) =>
-        this._raw(c, 'peerPubkey', 'peer_pubkey') === this.peer.peerPubkey &&
-        Boolean(this._raw(c, 'isUsable', 'is_usable'))
+        this._isConfiguredPeer(c) && this._isExplicitlyUsable(c)
       )
-      const outbound = Number(this._outboundMsat(lspChan))
-      opts.onProgress?.(`outbound: ${outbound} msat (need ${minMsat})`)
-      if (outbound >= minMsat) return
+      const outbound = nonNegativeSafeNumber(
+        this._outboundMsat(lspChan),
+        'UtexoLsp.waitForOutboundLiquidity: native outbound balance'
+      )
+      opts.onProgress?.(`outbound: ${outbound} msat (need ${requiredMsat})`)
+      if (outbound >= requiredMsat) return
       await this._sleep(pollIntervalMs, opts.signal)
     }
-    throw new LspLiquidityTimeoutError(minMsat, timeoutMs, this.peer.peerPubkey)
+    throw new LspLiquidityTimeoutError(requiredMsat, timeoutMs, this.peer.peerPubkey)
   }
 
   // ── 6. Send RGB via LSP (POST /onchain_send) ──────────────────────────────────
@@ -476,7 +515,18 @@ export class UtexoLsp {
       throw new LspQuoteMismatchError('the on-chain mapping refers to a different RGB invoice')
     }
     if (canVerifyInvoices) {
-      await this._verifyOnchainSendInvoice(issued, opts, decodedRgb, supportedAssets)
+      const decodedLn = await this._verifyOnchainSendInvoice(
+        issued,
+        opts,
+        decodedRgb,
+        supportedAssets
+      )
+      this._checkAbort(opts.signal)
+      await this._assertRgbPaymentLiquidity(
+        decodedLn.assetId,
+        decodedLn.assetAmount,
+        decodedLn.amtMsat
+      )
     }
     this._checkAbort(opts.signal)
     const sendResult = await this.account.sendPayment({
@@ -517,6 +567,14 @@ export class UtexoLsp {
   async payAddress (opts = {}) {
     const quote = await this.quoteAddress(opts)
     this._checkAbort(opts.signal)
+    if (quote.assetId !== undefined) {
+      await this._assertRgbPaymentLiquidity(
+        quote.assetId,
+        quote.assetAmount,
+        quote.amtMsat
+      )
+    }
+    this._checkAbort(opts.signal)
     const sendResult = await this.account.sendPayment({
       invoice: quote.invoice,
       ...(quote.maxTotalRoutingFeeMsat === undefined
@@ -548,7 +606,7 @@ export class UtexoLsp {
     try {
       parsed = parseLightningAddress(address, { allowHttp: this.peer.allowHttp === true })
     } catch {
-      throw new TypeError(`UtexoLsp.payAddress: invalid Lightning Address "${address}"`)
+      throw new TypeError(`UtexoLsp.quoteAddress: invalid Lightning Address "${address}"`)
     }
 
     const amtMsat = positiveSafeNumber(opts.amtMsat, 'UtexoLsp.quoteAddress: amtMsat')
@@ -588,6 +646,7 @@ export class UtexoLsp {
       assetSelection = await this.selectPaymentAsset({
         address: parsed.address,
         assetAmount,
+        amtMsat,
         signal: opts.signal
       })
       assetId = assetSelection.assetId
@@ -715,9 +774,12 @@ export class UtexoLsp {
       throw new TypeError('UtexoLsp.selectPaymentAsset: address required')
     }
     const assetAmount = positiveSafeNumber(opts.assetAmount, 'UtexoLsp.selectPaymentAsset: assetAmount')
+    const amtMsat = opts.amtMsat === undefined
+      ? 0
+      : positiveSafeNumber(opts.amtMsat, 'UtexoLsp.selectPaymentAsset: amtMsat')
     const discovery = opts.discovery ?? await this.discoverAddress(opts.address, opts)
     const channels = opts.channels ?? await this._listChannels()
-    return selectLiquidPaymentAsset(discovery, channels, assetAmount)
+    return selectLiquidPaymentAsset(discovery, channels, assetAmount, amtMsat)
   }
 
   /**
@@ -822,7 +884,12 @@ export class UtexoLsp {
       target.network
     )
     const channels = requested === '' ? (opts.channels ?? await this._listChannels()) : []
-    const payWithAssetId = resolveRelayFundingAsset(target, channels, opts.payWith, supportedAssets)
+    const payWithAssetId = resolveRelayFundingAsset(
+      target,
+      channels,
+      opts.payWith,
+      supportedAssets
+    )
     this._checkAbort(opts.signal)
     const response = await this.http.lightningSend({
       invoice: targetInvoice,
@@ -883,6 +950,39 @@ export class UtexoLsp {
     if (targetInvoice !== quote.targetInvoice || invoice !== quote.invoice) {
       throw new TypeError('UtexoLsp.verifyExternalQuote: invoice strings must be canonical')
     }
+    const authorizedTargetInvoice = canonicalInvoice(
+      opts.invoice,
+      'UtexoLsp.verifyExternalQuote: authorized invoice'
+    )
+    if (authorizedTargetInvoice !== targetInvoice) {
+      throw new LspQuoteMismatchError('the target invoice differs from the authorized payment intent')
+    }
+    const authorizedMaxFeeMsat = opts.maxFeeMsat === undefined
+      ? 0
+      : nonNegativeSafeNumber(
+        opts.maxFeeMsat,
+        'UtexoLsp.verifyExternalQuote: maxFeeMsat'
+      )
+    const quotedMaxFeeMsat = nonNegativeSafeNumber(
+      quote.maxFeeMsat,
+      'UtexoLsp.verifyExternalQuote: quoted maxFeeMsat'
+    )
+    if (authorizedMaxFeeMsat !== quotedMaxFeeMsat) {
+      throw new LspQuoteMismatchError('the LSP fee ceiling differs from the authorized payment intent')
+    }
+    const authorizedRoutingFeeMsat = opts.maxTotalRoutingFeeMsat === undefined
+      ? 0
+      : nonNegativeSafeNumber(
+        opts.maxTotalRoutingFeeMsat,
+        'UtexoLsp.verifyExternalQuote: maxTotalRoutingFeeMsat'
+      )
+    const quotedRoutingFeeMsat = nonNegativeSafeNumber(
+      quote.maxTotalRoutingFeeMsat,
+      'UtexoLsp.verifyExternalQuote: quoted maxTotalRoutingFeeMsat'
+    )
+    if (authorizedRoutingFeeMsat !== quotedRoutingFeeMsat) {
+      throw new LspQuoteMismatchError('the routing fee ceiling differs from the authorized payment intent')
+    }
     const target = decodedInvoice(
       await this.account.decodeInvoice(targetInvoice),
       'external target invoice'
@@ -892,13 +992,9 @@ export class UtexoLsp {
       'LSP funding invoice'
     )
     assertRelayQuote(target, hodl, quote, {
-      maxFeeMsat: quote.maxFeeMsat,
+      maxFeeMsat: authorizedMaxFeeMsat,
       lspPubkey: this.peer.peerPubkey
     })
-    nonNegativeSafeNumber(
-      quote.maxTotalRoutingFeeMsat,
-      'UtexoLsp.verifyExternalQuote: maxTotalRoutingFeeMsat'
-    )
     const supportedAssets = this._supportedAssets(
       await this.http.getInfo({ signal: opts.signal }),
       target.network
@@ -908,6 +1004,15 @@ export class UtexoLsp {
       !supportedAssets.some((asset) => asset.assetId === quote.inbound.assetId)
     ) {
       throw new LspQuoteMismatchError('the restored funding asset is no longer advertised by this LSP')
+    }
+    const authorizedFundingAssetId = opts.fundingAssetId === null
+      ? undefined
+      : canonicalAssetId(
+        opts.fundingAssetId,
+        'UtexoLsp.verifyExternalQuote: fundingAssetId'
+      )
+    if (quote.inbound?.assetId !== authorizedFundingAssetId) {
+      throw new LspQuoteMismatchError('the funding asset differs from the authorized payment intent')
     }
     this._checkAbort(opts.signal)
     return Object.freeze({ ...quote, targetInvoice, invoice })
@@ -920,14 +1025,13 @@ export class UtexoLsp {
    */
   async payExternalQuote (quote, opts = {}) {
     const verifiedQuote = await this.verifyExternalQuote(quote, opts)
-    if (opts.maxTotalRoutingFeeMsat !== undefined) {
-      const requestedCap = nonNegativeSafeNumber(
-        opts.maxTotalRoutingFeeMsat,
-        'UtexoLsp.payExternalQuote: maxTotalRoutingFeeMsat'
+    this._checkAbort(opts.signal)
+    if (verifiedQuote.inbound?.assetId !== undefined) {
+      await this._assertRgbPaymentLiquidity(
+        verifiedQuote.inbound.assetId,
+        verifiedQuote.inbound.assetAmount,
+        verifiedQuote.inbound.amtMsat
       )
-      if (requestedCap !== verifiedQuote.maxTotalRoutingFeeMsat) {
-        throw new LspQuoteMismatchError('the routing fee ceiling differs from the reviewed quote')
-      }
     }
     this._checkAbort(opts.signal)
     const sendResult = await this.account.sendPayment({
@@ -940,7 +1044,13 @@ export class UtexoLsp {
   /** Quote and immediately submit an external cross-asset payment. */
   async payExternalInvoice (opts = {}) {
     const quote = await this.quoteExternalPayment(opts)
-    return this.payExternalQuote(quote, opts)
+    return this.payExternalQuote(quote, {
+      invoice: opts.invoice,
+      fundingAssetId: quote.inbound?.assetId ?? null,
+      maxFeeMsat: opts.maxFeeMsat,
+      maxTotalRoutingFeeMsat: opts.maxTotalRoutingFeeMsat,
+      signal: opts.signal
+    })
   }
 
   /** Read the LSP's durable relay state without touching the native queue. */
@@ -970,14 +1080,18 @@ export class UtexoLsp {
    * @throws {Error} - If the wallet is locked, the LSP response is malformed,
    *   or APay registration fails.
    */
-  async enableLightningAddress ({ requireAddressAttestation = true } = {}) {
-    const addr = await this._ownLightningAddress('UtexoLsp.enableLightningAddress')
-    const lspInfo = await this.http.getInfo()
+  async enableLightningAddress ({ requireAddressAttestation = true, signal } = {}) {
+    const addr = await this._ownLightningAddress(
+      'UtexoLsp.enableLightningAddress',
+      { signal }
+    )
+    const lspInfo = await this.http.getInfo({ signal })
     const lspPubkey = lspInfo?.pubkey
     if (typeof lspPubkey !== 'string' || lspPubkey.length === 0) {
       throw new Error('UtexoLsp.enableLightningAddress: LSP /get_info returned no pubkey')
     }
     this._supportedAssets(lspInfo)
+    this._checkAbort(signal)
 
     if (requireAddressAttestation) {
       if (typeof this.account.apayNewWithAddress !== 'function') {
@@ -1052,9 +1166,27 @@ export class UtexoLsp {
 
   async _listChannels () {
     const resp = await this.account.listChannels()
-    if (Array.isArray(resp)) return resp
-    if (resp && Array.isArray(resp.channels)) return resp.channels
-    return []
+    const channels = Array.isArray(resp)
+      ? resp
+      : resp && Array.isArray(resp.channels)
+        ? resp.channels
+        : null
+    if (channels === null) {
+      throw new TypeError('UtexoLsp: native listChannels returned a malformed response')
+    }
+    if (channels.length > MAX_NATIVE_CHANNELS) {
+      throw new TypeError(`UtexoLsp: native listChannels exceeds ${MAX_NATIVE_CHANNELS} entries`)
+    }
+    return channels
+  }
+
+  async _assertRgbPaymentLiquidity (assetId, assetAmount, requiredMsat) {
+    return assertLiquidPaymentAsset(
+      await this._listChannels(),
+      assetId,
+      assetAmount,
+      requiredMsat
+    )
   }
 
   async _listPayments () {
@@ -1203,6 +1335,21 @@ export class UtexoLsp {
     if (requested.paymentHash !== undefined && decodedLn.paymentHash !== String(requested.paymentHash).toLowerCase()) {
       throw new LspQuoteMismatchError('the bridge Lightning invoice carries a different requested payment hash')
     }
+    if (
+      requested.descriptionHash !== undefined &&
+      decodedLn.descriptionHash !== String(requested.descriptionHash).toLowerCase()
+    ) {
+      throw new LspQuoteMismatchError('the bridge Lightning invoice carries a different requested description hash')
+    }
+    if (requested.minFinalCltvExpiryDelta !== undefined) {
+      const minFinalCltvExpiryDelta = nonNegativeSafeNumber(
+        requested.minFinalCltvExpiryDelta,
+        'UtexoLsp.sendAsset: ln.minFinalCltvExpiryDelta'
+      )
+      if (decodedLn.minFinalCltvExpiryDelta !== minFinalCltvExpiryDelta) {
+        throw new LspQuoteMismatchError('the bridge Lightning invoice carries a different requested minimum final CLTV delta')
+      }
+    }
     if (requested.expirySec !== undefined) {
       const expirySeconds = positiveSafeNumber(
         requested.expirySec,
@@ -1212,22 +1359,45 @@ export class UtexoLsp {
         throw new LspQuoteMismatchError('the bridge Lightning invoice carries a different requested expiry')
       }
     }
+    return decodedLn
   }
 
   _isUsableRgbChannel (c, assetId) {
     return (
       this._raw(c, 'assetId', 'asset_id') === assetId &&
-      Boolean(this._raw(c, 'isUsable', 'is_usable') ?? this._raw(c, 'ready', 'ready'))
+      this._isConfiguredPeer(c) &&
+      this._isExplicitlyUsable(c)
     )
+  }
+
+  _isConfiguredPeer (c) {
+    const actual = this._raw(c, 'peerPubkey', 'peer_pubkey')
+    return (
+      typeof actual === 'string' &&
+      actual.toLowerCase() === String(this.peer.peerPubkey).toLowerCase()
+    )
+  }
+
+  _isExplicitlyUsable (c) {
+    return this._raw(c, 'isUsable', 'is_usable') === true
   }
 
   _toChannelReadyInfo (c) {
     return {
       channelId: String(this._raw(c, 'channelId', 'channel_id') ?? ''),
       peerPubkey: this.peer.peerPubkey,
-      capacitySat: Number(this._raw(c, 'capacitySat', 'capacity_sat') ?? 0),
-      outboundBalanceMsat: Number(this._outboundMsat(c)),
-      inboundBalanceMsat: Number(this._raw(c, 'inboundBalanceMsat', 'inbound_balance_msat') ?? 0)
+      capacitySat: nonNegativeSafeNumber(
+        this._raw(c, 'capacitySat', 'capacity_sat') ?? 0,
+        'UtexoLsp.waitForChannel: native capacity'
+      ),
+      outboundBalanceMsat: nonNegativeSafeNumber(
+        this._outboundMsat(c),
+        'UtexoLsp.waitForChannel: native outbound balance'
+      ),
+      inboundBalanceMsat: nonNegativeSafeNumber(
+        this._raw(c, 'inboundBalanceMsat', 'inbound_balance_msat') ?? 0,
+        'UtexoLsp.waitForChannel: native inbound balance'
+      )
     }
   }
 
@@ -1369,4 +1539,12 @@ function positiveSafeNumber (value, field) {
   const number = nonNegativeSafeNumber(value, field)
   if (number === 0) throw new TypeError(`${field} must be positive`)
   return number
+}
+
+function futureDeadline (timeoutMs, field) {
+  const now = Date.now()
+  if (timeoutMs > Number.MAX_SAFE_INTEGER - now) {
+    throw new TypeError(`${field} exceeds JavaScript's exact timestamp range`)
+  }
+  return now + timeoutMs
 }

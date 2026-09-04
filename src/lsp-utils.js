@@ -53,6 +53,27 @@ export function toUint64String (value, field = 'value') {
 }
 
 /**
+ * Normalize a uint64 for a JSON field owned by the current Go LSP API.
+ * Those request structs use plain `uint64` fields rather than `,string`, so
+ * quoted decimal strings are not valid wire values. Values above JavaScript's
+ * exact integer range must fail closed until the server accepts decimal text.
+ *
+ * @param {number|bigint|string} value
+ * @param {string} field
+ * @returns {number}
+ */
+function toLspJsonUint64 (value, field) {
+  const normalized = toUint64(value, field)
+  const exact = BigInt(normalized)
+  if (exact > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new TypeError(
+      `${field} must fit in JavaScript's exact integer range for the LSP JSON API`
+    )
+  }
+  return Number(exact)
+}
+
+/**
  * Convert a JS integer to an unsigned 32-bit number.
  *
  * @param {number|bigint|string} value - Unsigned integer to normalize.
@@ -97,7 +118,8 @@ export function camelCaseLspResponse (raw) {
  *
  * @param {object} ln - Public camelCase Lightning parameters.
  * @returns {object} - LSP snake_case Lightning parameters.
- * @throws {TypeError} - If an integer field is outside its uint range.
+ * @throws {TypeError} - If an integer field is outside its uint range or cannot
+ *   be represented exactly by the LSP's JSON-number request contract.
  */
 export function snakeCaseLnParams (ln) {
   if (ln === null || typeof ln !== 'object' || Array.isArray(ln)) {
@@ -106,7 +128,7 @@ export function snakeCaseLnParams (ln) {
 
   const out = {}
   if (ln.amtMsat !== undefined) {
-    out.amt_msat = toUint64(ln.amtMsat, 'ln.amtMsat')
+    out.amt_msat = toLspJsonUint64(ln.amtMsat, 'ln.amtMsat')
     if (BigInt(out.amt_msat) === 0n) throw new TypeError('ln.amtMsat must be positive')
   }
   if (ln.expirySec !== undefined) out.expiry_sec = toUint32(ln.expirySec, 'ln.expirySec')
@@ -114,7 +136,7 @@ export function snakeCaseLnParams (ln) {
     out.asset_id = canonicalAssetId(ln.assetId, 'ln.assetId')
   }
   if (ln.assetAmount !== undefined) {
-    out.asset_amount = toUint64(ln.assetAmount, 'ln.assetAmount')
+    out.asset_amount = toLspJsonUint64(ln.assetAmount, 'ln.assetAmount')
     if (BigInt(out.asset_amount) === 0n) throw new TypeError('ln.assetAmount must be positive')
   }
   if (ln.descriptionHash !== undefined) {
