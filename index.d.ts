@@ -19,6 +19,74 @@ import WalletManager, { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 // Shared primitives
 // ───────────────────────────────────────────────────────────────────
 
+export type DecimalString = `${bigint}`
+export type LspAssetSchema = 'Nia' | 'Uda' | 'Cfa' | 'Ifa'
+export interface LspSupportedAsset {
+  asset_id: string
+  schema: LspAssetSchema
+  ticker?: string
+  name: string
+  precision: number
+}
+export interface LspInfo {
+  api_version: 1
+  pubkey: string
+  network: Network
+  host?: string
+  port?: number
+  supported_assets: readonly LspSupportedAsset[]
+  min_payment_size_msat: DecimalString
+  max_payment_size_msat: DecimalString
+  min_channel_balance_sat: DecimalString
+  max_channel_balance_sat: DecimalString
+  min_initial_client_balance_msat: DecimalString
+  max_initial_client_balance_msat: DecimalString
+  min_channel_asset_amount: DecimalString
+  max_channel_asset_amount: DecimalString
+  virtual_channel_mode?: string
+  lightning_address_min_sendable_msat: DecimalString
+  lightning_address_max_sendable_msat: DecimalString
+}
+export function parseLspInfo(value: unknown): LspInfo
+
+export interface BitcoindChainConfig {
+  bitcoind_rpc_username: string
+  bitcoind_rpc_password: string
+  bitcoind_rpc_host: string
+  bitcoind_rpc_port: number
+}
+export type LdkChainSync =
+  | { mode: 'TransactionSync'; config: { indexer_url: string } }
+  | { mode: 'BlockSync'; config: BitcoindChainConfig }
+export interface ExternalUnlockRequest {
+  ldk_chain_sync: LdkChainSync
+  /** Independent RGB indexer, also valid alongside BlockSync. */
+  indexer_url?: string
+  proxy_endpoint?: string
+  announce_addresses?: string[]
+  announce_alias?: string
+}
+export type LegacyExternalUnlockRequest =
+  Omit<ExternalUnlockRequest, 'ldk_chain_sync'> &
+  (BitcoindChainConfig | { indexer_url: string })
+export type RgbTransferStatus = 'Initiated' | 'WaitingCounterparty' | 'WaitingSafeHeight' | 'WaitingConfirmations' | 'WaitingBroadcast' | 'Settled' | 'Failed'
+export interface RefreshTransfersResult {
+  transfers: Record<string, {
+    updated_status: RgbTransferStatus | null
+    failure: { name: string; message: string } | null
+  }>
+}
+export interface RgbUnspent {
+  utxo: { outpoint: string; btc_amount: number; colorable: boolean; exists: boolean }
+  rgb_allocations: Array<{ asset_id: string | null; assignment: string; settled: boolean }>
+}
+export interface SendPaymentRequest {
+  invoice: string
+  amt_msat?: number
+  asset_id?: string
+  asset_amount?: number
+}
+
 export type Network = 'mainnet' | 'testnet' | 'regtest' | 'signet'
 
 export interface Transaction {
@@ -57,6 +125,17 @@ export interface TransferOptions {
   /** sat/vB override for on-chain flows. */
   feeRate?: number
   confirmationTarget?: number
+  /**
+   * Bitcoin witness output carried by an on-chain RGB transfer.
+   * Required when the decoded RGB invoice recipient type is `Witness` and
+   * rejected for blinded recipients.
+   */
+  witnessData?: {
+    /** Positive safe integer in satoshis. This is an output value, not a fee. */
+    amountSats: number
+    /** Optional non-negative safe-integer RGB witness blinding value. */
+    blinding?: number
+  }
 }
 
 export interface TransferResult {
@@ -100,6 +179,39 @@ export interface CreateLightningInvoiceRequest {
    * minimum, 42). Passthrough; RLN default applies when omitted.
    */
   minFinalCltvExpiryDelta?: number
+}
+
+/** Native BOLT11 decode result exposed by both supported RLN bindings. */
+export interface DecodedLightningInvoice {
+  amt_msat: number | null
+  expiry_sec: number
+  timestamp: number
+  asset_id: string | null
+  asset_amount: number | null
+  payment_hash: string
+  payment_secret: string
+  description: string | null
+  description_hash: string | null
+  payee_pubkey: string | null
+  min_final_cltv_expiry_delta: number
+  network: string
+}
+
+export type DecodedRgbAssignment =
+  | { type: 'Fungible'; value: number }
+  | { type: 'NonFungible' }
+  | { type: 'InflationRight'; value: number }
+  | { type: 'Any' }
+
+export interface DecodedRgbInvoice {
+  recipient_id: string
+  recipient_type: 'Blind' | 'Witness'
+  asset_schema: string | null
+  asset_id: string | null
+  assignment: DecodedRgbAssignment
+  network: string
+  expiration_timestamp: number | null
+  transport_endpoints: string[]
 }
 
 export interface CreateHodlInvoiceParams {
@@ -197,9 +309,8 @@ export interface RgbLightningBindingConfig {
   ldkPeerListeningPort?: number
   maxMediaUploadSizeMb?: number
   /**
-   * Enable virtual-channels-v0. REQUIRED (with `virtualPeerPubkeys`)
-   * for async-payments against a production LSP — mobile clients reject
-   * standard channels and must use `trusted_no_broadcast` virtual channels.
+   * Explicitly opt into virtual channels. Default is false; standard channels
+   * remain supported. Configure trusted peer identities separately.
    */
   enableVirtualChannelsV0?: boolean
   /**
@@ -208,6 +319,7 @@ export interface RgbLightningBindingConfig {
    * set to `[lspNodeId]`. Forwarded as `virtual_peer_pubkeys`.
    */
   virtualPeerPubkeys?: string[]
+  /** Strict by default. Permissive mainnet signing is rejected natively. */
   permissiveSignerPolicy?: boolean
   /** Enables VSS cloud backup. Only https:// (or loopback http) unless `vssAllowHttp`. */
   vssUrl?: string
@@ -225,6 +337,7 @@ export interface RgbLightningWalletConfig extends RgbLightningBindingConfig {
    * the legacy beta derivation only for an existing signer-identity mismatch.
    */
   nodeSeedDerivation?: 'auto' | 'wdk-seed-v2' | 'legacy-v1'
+  autoUnlockRequest?: ExternalUnlockRequest | LegacyExternalUnlockRequest
   bitcoindRpcUsername?: string
   bitcoindRpcPassword?: string
   bitcoindRpcHost?: string
@@ -242,12 +355,13 @@ export interface RgbLightningWalletConfig extends RgbLightningBindingConfig {
 export interface IRgbLightningBinding {
   ensureNode(): unknown
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
-  unlock(unlockRequest: object): void
+  unlock(unlockRequest: ExternalUnlockRequest | LegacyExternalUnlockRequest): void
   bootstrap(): object
   clearVssFence(password: string): void
   vssBackup(): { version: number }
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
+  apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   shutdown(): void
 }
 
@@ -255,12 +369,13 @@ export class NodeRgbLightningBinding implements IRgbLightningBinding {
   constructor(config: RgbLightningBindingConfig)
   ensureNode(): unknown
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
-  unlock(unlockRequest: object): void
+  unlock(unlockRequest: ExternalUnlockRequest | LegacyExternalUnlockRequest): void
   bootstrap(): object
   clearVssFence(password: string): void
   vssBackup(): { version: number }
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
+  apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   shutdown(): void
   static healthcheck(): string
   static isInitialized(): boolean
@@ -272,12 +387,13 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
   constructor(config: RgbLightningBindingConfig)
   ensureNode(): unknown
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
-  unlock(unlockRequest: object): void
+  unlock(unlockRequest: ExternalUnlockRequest | LegacyExternalUnlockRequest): void
   bootstrap(): object
   clearVssFence(password: string): void
   vssBackup(): { version: number }
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
+  apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   shutdown(): void
   static healthcheck(): string
   static isInitialized(): boolean
@@ -330,7 +446,7 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
   listPeers(): Promise<object>
 
   /** Decodes a BOLT11 Lightning invoice without paying it. */
-  decodeInvoice(invoice: string): Promise<object>
+  decodeInvoice(invoice: string): Promise<DecodedLightningInvoice>
 
   /** Returns the node's current status for a Lightning invoice. */
   getInvoiceStatus(invoice: string): Promise<object>
@@ -355,13 +471,13 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
    *
    * @throws {TypeError} If the asset ID is empty.
    */
-  listTransfers(assetId: string): Promise<object>
+  listTransfers(assetId?: string, txid?: string): Promise<object>
 
   /** Returns RGB transfers associated with an on-chain transaction ID. */
   listTransfersByTxid(txid: string): Promise<object>
 
   /** Decodes an RGB invoice without creating a transfer. */
-  decodeRgbInvoice(invoice: string): Promise<object>
+  decodeRgbInvoice(invoice: string): Promise<DecodedRgbInvoice>
 
   /** Returns RGB asset media identified by its content digest. */
   getAssetMedia(digest: string): Promise<object>
@@ -382,7 +498,7 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
   getTransactionsByTxid(txid: string, skipSync?: boolean): Promise<object>
 
   /** Returns the account's unspent Bitcoin outputs. */
-  listUnspents(skipSync?: boolean): Promise<object>
+  listUnspents(skipSync?: boolean): Promise<RgbUnspent[]>
 
   /** Estimates the Bitcoin fee rate for a confirmation target. */
   estimateFee(blocks: number): Promise<object>
@@ -411,14 +527,14 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
 }
 
 export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning {
-  constructor(bindings: { binding: IRgbLightningBinding })
+  constructor(bindings: { binding: IRgbLightningBinding; autoUnlockRequest?: ExternalUnlockRequest | LegacyExternalUnlockRequest })
 
   readonly index: 0
   readonly path: 'm'
   readonly keyPair: KeyPair
 
   // Lifecycle
-  unlock(unlockRequest: object): Promise<{ ok: true }>
+  unlock(unlockRequest: ExternalUnlockRequest | LegacyExternalUnlockRequest): Promise<{ ok: true }>
   getBootstrap(): Promise<object>
   shutdown(): Promise<{ ok: true }>
 
@@ -433,6 +549,7 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   // APay / LSP bootstrap
   /** @throws {ApayError} on LSP failure. */
   apayNew(hostNodeId: string): Promise<object>
+  apayNewWithAddress(hostNodeId: string, username: string, domain: string): Promise<object>
   bootstrapLsp(opts: {
     peerPubkeyAndAddr: string
     hostNodeId?: string
@@ -441,6 +558,7 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   }): Promise<BootstrapLspResult>
   /** The lspBaseUrl / lspBearerToken this node was constructed with. */
   getLspConfig(): { baseUrl: string | null; bearerToken: string | null }
+  getLspInfo(opts?: { timeoutMs?: number }): Promise<LspInfo>
   /**
    * Build the composed {@link UtexoLsp} flow object. No-arg form
    * auto-discovers the peer from the wallet's lspBaseUrl.
@@ -470,11 +588,11 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   claimHodlInvoice(request: object): Promise<object>
 
   // Payments
-  sendPayment(request: object): Promise<object>
+  sendPayment(request: SendPaymentRequest): Promise<object>
   keysend(request: object): Promise<object>
 
   // RGB assets
-  refreshTransfers(request: object): Promise<{ ok: true }>
+  refreshTransfers(request: { skip_sync: boolean }): Promise<RefreshTransfersResult>
   failTransfers(request: object): Promise<object>
   createRgbInvoice(request: CreateRgbInvoiceRequest | object): Promise<object>
   sendRgbAsset(request: SendRgbAssetRequest | object): Promise<object>
@@ -551,13 +669,86 @@ export interface LspClientOptions {
   maxRetries?: number
 }
 
+export interface LspRequestOptions {
+  timeoutMs?: number
+  signal?: AbortSignal
+}
+
+/** Normalized RGB asset metadata returned by strict LSP/LNURL methods. */
+export interface LspAssetMetadata {
+  assetId: string
+  schema: LspAssetSchema
+  ticker?: string
+  name: string
+  precision: number
+}
+
+/** Raw LSP discovery asset metadata. */
+export interface LspAssetMetadataWire {
+  asset_id: string
+  schema: LspAssetSchema
+  ticker?: string
+  name: string
+  precision: number
+}
+
+export interface ApayMerkleProofElement {
+  sibling: string
+  side: 'left' | 'right'
+}
+
+/** Parsed APay evidence returned by a strict LSP/LNURL method. */
+export interface ApayInvoiceProof {
+  version: number
+  recipientPubkey: string
+  hostPubkey: string
+  batchId: string
+  hashIndex: number
+  paymentHash: string
+  batchRoot: string
+  batchSize: number
+  merkleProof: readonly ApayMerkleProofElement[]
+  batchSig: string
+  createdAt: number
+  expiresAt: number
+}
+
 export interface LnurlPayDiscovery {
   tag: 'payRequest'
   callback: string
   minSendable: number | string
   maxSendable: number | string
   metadata: string
+  commentAllowed?: number
+  recipientPubkey?: string
+  addressSig?: string
+  payoutAsset?: LspAssetMetadata
+  acceptedAssets?: readonly LspAssetMetadata[]
+}
+
+export interface LnurlPayDiscoveryWire {
+  tag: 'payRequest'
+  callback: string
+  minSendable: number | string
+  maxSendable: number | string
+  metadata: string
   commentAllowed?: number | string
+  recipient_pubkey?: string
+  address_sig?: string
+  payout_asset?: LspAssetMetadataWire
+  accepted_assets?: readonly LspAssetMetadataWire[]
+}
+
+export interface LnurlPayCallback {
+  pr: string
+  routes: readonly unknown[]
+  status?: string
+  reason?: string
+  proof?: ApayInvoiceProof
+}
+
+export interface LnurlPayResolution extends LnurlPayCallback {
+  discovery: LnurlPayDiscovery
 }
 
 export interface LspBridgeResult {
@@ -571,26 +762,93 @@ export interface LspBridgeResult {
   mappingId: string | number
 }
 
+export interface LspLightningReceiveResult extends LspBridgeResult {
+  rgbAssetId?: string
+  converted: boolean
+}
+
+export interface LspLightningSendLeg {
+  assetId?: string
+  assetAmount?: number
+  amtMsat: number
+  payeePubkey?: string
+}
+
+export type LspLightningSendStatus =
+  | 'quoted'
+  | 'claimable'
+  | 'outbound_pending'
+  | 'outbound_paid'
+  | 'outbound_claimed'
+  | 'settled'
+  | 'cancelled'
+  | 'failed'
+
+export interface LspLightningSendQuote {
+  lnInvoice: string
+  paymentHash: string
+  inbound: LspLightningSendLeg
+  outbound: LspLightningSendLeg
+  converted: boolean
+  feeMsat: number
+  expiresAt: number
+}
+
+export interface LspLightningSendStatusResult {
+  paymentHash: string
+  status: LspLightningSendStatus
+  reason?: string
+}
+
+export interface LspInvoiceParams {
+  amtMsat?: bigint | number | string
+  expirySec?: number | string
+  assetId?: string
+  assetAmount?: bigint | number | string
+  descriptionHash?: string
+  paymentHash?: string
+  minFinalCltvExpiryDelta?: number
+}
+
+export interface LspRgbInvoiceParams {
+  assetId?: string
+  assignment?: 'Any' | 'Value'
+  durationSeconds?: number
+  minConfirmations?: number
+  witness?: boolean
+}
+
 export class LspClient {
   constructor(opts: LspClientOptions)
-  health(opts?: { timeoutMs?: number }): Promise<object | null>
-  getInfo(opts?: { timeoutMs?: number }): Promise<object | null>
-  lnurlDiscovery(username: string, opts?: { timeoutMs?: number }): Promise<LnurlPayDiscovery>
-  lnurlCallback(username: string, amountMsat: bigint | number | string, opts?: { assetId?: string; assetAmount?: bigint | number | string; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[] }>
+  readonly baseUrl: string
+  health(opts?: LspRequestOptions): Promise<object | null>
+  getInfo(opts?: LspRequestOptions): Promise<LspInfo>
+  /** Compatibility transport method; returns the server's raw discovery keys. */
+  lnurlDiscovery(username: string, opts?: LspRequestOptions): Promise<LnurlPayDiscoveryWire>
+  discoverAddress(username: string, opts?: LspRequestOptions): Promise<LnurlPayDiscovery>
+  lnurlCallback(username: string, amountMsat: bigint | number | string, opts?: LspRequestOptions & { assetId?: string; assetAmount?: bigint | number | string }): Promise<{ pr: string; routes?: unknown[]; proof?: unknown }>
   /** Full LUD-06 resolution routed through this LSP's baseUrl (discovery + callback). */
-  resolveAddress(username: string, amountMsat: bigint | number | string, opts?: { assetId?: string; assetAmount?: bigint | number | string; timeoutMs?: number }): Promise<{ pr: string; routes?: unknown[]; status?: string; reason?: string }>
-  /** Resolve the auto-assigned Lightning Address for a node pubkey (post-apayNew). */
-  getLightningAddressByPubkey(peerPubkey: string, opts?: { timeoutMs?: number }): Promise<{ username: string; domain: string }>
+  resolveAddress(username: string, amountMsat: bigint | number | string, opts?: LspRequestOptions & { assetId?: string; assetAmount?: bigint | number | string }): Promise<{ pr: string; routes?: unknown[]; status?: string; reason?: string; proof?: unknown }>
+  resolveAddressVerified(username: string, amountMsat: bigint | number | string, opts?: LspRequestOptions & { assetId?: string; assetAmount?: bigint | number | string }): Promise<LnurlPayResolution>
+  /** Resolve the LSP-provisioned Lightning Address for a node pubkey before attested APay registration. */
+  getLightningAddressByPubkey(peerPubkey: string, opts?: LspRequestOptions): Promise<{ username: string; domain: string; recipient_pubkey?: string; address_sig?: string }>
+  getLightningAddressByPubkeyVerified(peerPubkey: string, opts?: LspRequestOptions): Promise<{ username: string; domain: string; recipientPubkey?: string; addressSig?: string }>
   onchainSend(params: {
     rgbInvoice: string
-    ln: { amtMsat: bigint | number | string; expirySec: number; assetId?: string; assetAmount?: bigint | number | string; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
+    ln?: LspInvoiceParams
     timeoutMs?: number
+    signal?: AbortSignal
   }): Promise<LspBridgeResult>
+  onchainSendVerified(params: { rgbInvoice: string; ln?: LspInvoiceParams; timeoutMs?: number; signal?: AbortSignal }): Promise<LspBridgeResult>
   lightningReceive(params: {
     lnInvoice: string
-    rgb: { assetId: string; assignment?: string; durationSeconds?: number; minConfirmations?: number; witness?: boolean }
+    rgb: LspRgbInvoiceParams
     timeoutMs?: number
+    signal?: AbortSignal
   }): Promise<LspBridgeResult>
+  lightningReceiveVerified(params: { lnInvoice: string; rgb: LspRgbInvoiceParams; timeoutMs?: number; signal?: AbortSignal }): Promise<LspLightningReceiveResult>
+  lightningSend(params: { invoice: string; payWithAssetId?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<LspLightningSendQuote>
+  lightningSendStatus(paymentHash: string, opts?: LspRequestOptions): Promise<LspLightningSendStatusResult>
 }
 
 export class LspError extends Error {
@@ -630,6 +888,7 @@ export function isUmaAddress(address: unknown): boolean
 export function normalizeLightningAddress(address: string): string
 export function parseLightningAddress(addr: string, opts?: { allowHttp?: boolean }): ParsedLightningAddress
 export interface LnurlPayOptions {
+  signal?: AbortSignal
   fetch?: typeof fetch
   timeoutMs?: number
   allowHttp?: boolean
@@ -640,7 +899,7 @@ export interface LnurlPayOptions {
   assetAmount?: bigint | number | string
 }
 
-export function fetchDiscovery(addr: string, opts?: Pick<LnurlPayOptions, 'fetch' | 'timeoutMs' | 'allowHttp'>): Promise<LnurlPayDiscovery>
+export function fetchDiscovery(addr: string, opts?: Pick<LnurlPayOptions, 'fetch' | 'timeoutMs' | 'signal' | 'allowHttp'>): Promise<LnurlPayDiscovery>
 export function resolveAddressToInvoice(addr: string, amountMsat: bigint | number | string, opts?: LnurlPayOptions): Promise<{ pr: string; routes?: unknown[]; discovery: LnurlPayDiscovery; callbackUrl: string }>
 
 export class LnurlPayError extends Error {
@@ -696,10 +955,11 @@ export function payRgbViaLsp(account: WalletAccountRgbLightning, args: PayRgbVia
 // ───────────────────────────────────────────────────────────────────
 
 /** Canonical receive state (4 terminal-or-pending values). */
-export type ReceiveStatus = 'Pending' | 'Succeeded' | 'Failed' | 'Expired'
+export type ReceiveStatus = 'Pending' | 'Succeeded' | 'Failed' | 'Expired' | 'Cancelled'
 
 /** Single config object describing the LSP peer for composed flows. */
 export interface LspPeer {
+  network?: Network
   baseUrl: string
   peerPubkey: string
   peerHost: string
@@ -742,7 +1002,7 @@ export interface ReceiveAssetResult {
 
 export interface SendAssetOptions {
   rgbInvoice: string
-  ln?: { amtMsat?: bigint | number | string; expirySec?: number; assetId?: string; assetAmount?: bigint | number | string; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
+  ln: { amtMsat: bigint | number | string; expirySec?: number; assetId?: string; assetAmount?: bigint | number | string; descriptionHash?: string; paymentHash?: string; minFinalCltvExpiryDelta?: number }
 }
 
 export interface SendAssetResult extends LspBridgeResult {
@@ -750,6 +1010,9 @@ export interface SendAssetResult extends LspBridgeResult {
 }
 
 export interface PayAddressOptions {
+  signal?: AbortSignal
+  /** Require hosted APay proof by default. False is an explicit legacy downgrade; local invoice verification is always required. */
+  requireAddressProof?: boolean
   /** Lightning Address or UMA address in `$user@host` form. */
   address: string
   amtMsat: bigint | number | string
@@ -781,8 +1044,9 @@ export class UtexoLsp {
   awaitReceiveSettlement(lnInvoice: string, opts?: WaitOptions): Promise<'settled' | 'timed_out'>
   waitForOutboundLiquidity(minMsat: number, opts?: WaitOptions): Promise<void>
   sendAsset(opts: SendAssetOptions): Promise<SendAssetResult>
+  quoteAddress(opts: PayAddressOptions): Promise<{ invoice: string; amtMsat: number; assetId?: string; assetAmount?: number; proof?: ApayInvoiceProof }>
   payAddress(opts: PayAddressOptions): Promise<{ invoice: string; sendResult: object }>
-  enableLightningAddress(): Promise<LightningAddressInfo>
+  enableLightningAddress(opts?: { requireAddressAttestation?: boolean }): Promise<LightningAddressInfo>
   claimPendingPayments(): Promise<ClaimResult[]>
 }
 
@@ -803,8 +1067,8 @@ export class LspLiquidityTimeoutError extends Error {
 }
 
 export class LspSettlementError extends Error {
-  constructor(step: 'ln_invoice', status: 'Failed' | 'Expired')
+  constructor(step: 'ln_invoice', status: 'Failed' | 'Expired' | 'Cancelled')
   step: 'ln_invoice'
   /** Only the terminal-failure states ever reach this error. */
-  status: 'Failed' | 'Expired'
+  status: 'Failed' | 'Expired' | 'Cancelled'
 }

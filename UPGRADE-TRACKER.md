@@ -16,13 +16,13 @@ Status: implementation in progress. Draft PR, not release approval.
 | Work | Status | Required Evidence |
 | --- | --- | --- |
 | Dedicated upgrade branch | Done | `codex/rln-0.13.0-beta.3` |
-| Canonical unlock, persistent signer and strict policy | Pending | Reviewed source, focused regression tests |
-| Released refresh/invoice/UTXO response contract | Pending | No silent fallbacks; fail before mutation |
-| Selected discovery, APay, multi-channel and validation ports | Pending | Clean consumers and negative tests |
-| Unit/type/lint/package checks | Pending | Exact commands and results below |
-| Linked native/runtime conformance | Pending | Real artifacts, not only mocks |
-| Independent final diff review | Pending | Every plan item classified |
-| Cross-repository draft PR links | Pending | Add after creation |
+| Canonical unlock, persistent signer and strict policy | Implemented | Single-flight activation, shutdown retry, failed creation cleanup and disposal tests |
+| Released refresh/invoice/UTXO response contract | Implemented | Fail-before-mutation input checks; preserve per-batch failures and exists=false |
+| Selected discovery, APay, multi-channel and validation ports | Implemented | Discovery/proof/invoice/credential tests; no unmerged native execution APIs |
+| Unit/type/lint/package checks | Verified locally | 679 tests passed before final null-address rejection test; types/lint/pack passed |
+| Linked native/runtime conformance | Pending | Candidate packed Node consumer next; mobile and network remain gates |
+| Final diff review | In progress | Boundary/lifecycle/LSP review found and fixed additional cases; external maintainer review required |
+| Cross-repository draft PR links | Done | Links below |
 
 ## Explicit Release Gates
 
@@ -51,3 +51,21 @@ a weaker implementation.
 - Results below will distinguish mocked tests, linked host smoke, compile-only
   cross-builds, device tests and funded/network qualification.
 - No funded transaction or production wallet has been used.
+- Unit tests use mocked native modules, not proof of native or network behavior.
+  Ran `npm test -- --runInBand --watchman=false`, types, lint and package verification.
+- Packed package: 33 files; parser-only discovery entry does not load native peers.
+- Targeted within-range updates fixed four transitive audit findings; audit now zero.
+- Additional review fixes: terminal Cancelled invoices; LSP peer matching; exact
+  sats-to-msats conversion; failed account creation retains retryable native state;
+  convenience payment helpers verify signed invoice amount/asset/metadata locally.
+- Low-level `LspClient` quote methods are HTTP DTOs, not payment authorization.
+  Bridge verification does not prove the LSP completed the on-chain RGB leg;
+  settlement must be observed independently. No native fee cap is promised.
+- Retain existing WDK staged/OIDC/manual release flow. Exact native peers are
+  unpublished, so registry smoke/provenance is intentionally not bypassed.
+
+## Coordinated Drafts
+
+- [Node #22](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/pull/22)
+- [Bare #20](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/pull/20)
+- [WDK #43](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/pull/43)

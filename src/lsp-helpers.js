@@ -17,6 +17,8 @@
 import { LspClient } from './lsp-client.js'
 import { resolveAddressToInvoice } from './lnurl-pay.js'
 import { toUint64 } from './lsp-utils.js'
+import { assertAddressRequest } from './lsp-linked-assets.js'
+import { rejectRoutingFeeCap, paymentExpectation, requireInvoiceDecoder, verifyPaymentInvoice } from './lsp-payment-verification.js'
 
 /** @typedef {import('./lnurl-pay.js').LnurlPayError} LnurlPayError */
 /** @typedef {import('./lsp-client.js').LspError} LspError */
@@ -61,8 +63,14 @@ export async function payLightningAddress (account, addr, amountMsat, opts = {})
   if (account == null || typeof account.sendPayment !== 'function') {
     throw new TypeError('payLightningAddress: account.sendPayment(request) required')
   }
+  rejectRoutingFeeCap(opts)
+  const expected = paymentExpectation({ amtMsat: amountMsat, assetId: opts.assetId, assetAmount: opts.assetAmount })
+  requireInvoiceDecoder(account)
   const { pr, discovery, callbackUrl } = await resolveAddressToInvoice(addr, amountMsat, opts)
+  assertAddressRequest(discovery, expected)
+  await verifyPaymentInvoice(account, pr, { ...expected, metadata: discovery.metadata })
   if (typeof opts.beforePay === 'function') await opts.beforePay(pr, discovery)
+  if (opts.signal?.aborted) throw new Error('operation aborted')
   const req = opts.skipAmount ? { invoice: pr } : { invoice: pr, amt_msat: toUint64(amountMsat) }
   const sendResult = await account.sendPayment(req)
   return { invoice: pr, sendResult, discovery, callbackUrl }
@@ -161,12 +169,15 @@ export async function payRgbViaLsp (account, { lsp, rgbInvoice, ln, lspOpts } = 
     throw new TypeError('payRgbViaLsp: rgbInvoice required')
   }
   if (ln == null) throw new TypeError('payRgbViaLsp: ln params required')
+  const expected = paymentExpectation(ln)
+  requireInvoiceDecoder(account)
 
   const client = asLspClient(lsp, lspOpts)
   // LspClient.onchainSend() now returns the response normalized to
   // camelCase; raw snake_case fields are preserved for backward compat.
   const issued = await client.onchainSend({ rgbInvoice, ln })
   const lnInvoice = issued.lnInvoice ?? issued.ln_invoice
+  await verifyPaymentInvoice(account, lnInvoice, expected)
   const sendResult = await account.sendPayment({ invoice: lnInvoice })
 
   return {

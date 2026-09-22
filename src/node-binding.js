@@ -12,6 +12,9 @@
 
 import rln from '@utexo/rgb-lightning-node-nodejs'
 import { retainSecret, revealSecret, secretMatches, wipeSecret } from './secret-buffer.js'
+import { signerStoragePath } from './signer-storage-path.js'
+import { normalizeUnlockRequest } from './node-unlock-request.js'
+import { assertNativeRuntime } from './native-runtime-contract.js'
 
 const {
   SdkNode,
@@ -48,7 +51,9 @@ export class NodeRgbLightningBinding {
    *   configuration.
    */
   constructor (config) {
-    this._config = config
+    assertNativeRuntime(rln)
+    this._config = { ...config }
+    this._closed = false
     this._initRequest = {
       storage_dir_path: config.dataDir,
       daemon_listening_port: config.daemonListeningPort ?? 0,
@@ -94,6 +99,7 @@ export class NodeRgbLightningBinding {
    * @returns {SdkNodeHandle} - The cached or newly created native node.
    */
   ensureNode () {
+    if (this._closed) throw new Error('RGB Lightning binding is closed')
     if (!this._node) {
       this._node = SdkNode.create(this._initRequest)
     }
@@ -113,6 +119,7 @@ export class NodeRgbLightningBinding {
    *   signer construction fails.
    */
   attachExternalSigner (seedHex, fallbackSeedHex) {
+    if (this._closed) throw new Error('RGB Lightning binding is closed')
     if (this._signer) {
       if (this._seedHex && !secretMatches(this._seedHex, seedHex)) {
         throw new Error(
@@ -126,10 +133,11 @@ export class NodeRgbLightningBinding {
       }
       return
     }
-    this._signer = NativeExternalSigner.create(
+    this._signer = NativeExternalSigner.createWithStorage(
       seedHex,
       this._config.network,
-      this._config.permissiveSignerPolicy ?? true
+      signerStoragePath(this._config.dataDir, this._config.signerStorageIdentity ?? 'primary'),
+      this._config.permissiveSignerPolicy ?? false
     )
     wipeSecret(this._seedHex)
     wipeSecret(this._fallbackSeedHex)
@@ -148,6 +156,7 @@ export class NodeRgbLightningBinding {
    *   unlock fails.
    */
   unlock (unlockRequest) {
+    unlockRequest = normalizeUnlockRequest(unlockRequest)
     const node = this.ensureNode()
     if (!this._signer) {
       throw new Error('attachExternalSigner(seedHex) must be called before unlock()')
@@ -172,10 +181,11 @@ export class NodeRgbLightningBinding {
       }
 
       const fallbackSeed = this._fallbackSeedHex
-      const fallbackSigner = NativeExternalSigner.create(
+      const fallbackSigner = NativeExternalSigner.createWithStorage(
         revealSecret(fallbackSeed),
         this._config.network,
-        this._config.permissiveSignerPolicy ?? true
+        signerStoragePath(this._config.dataDir, 'legacy'),
+        this._config.permissiveSignerPolicy ?? false
       )
       try {
         this._signer.destroy()
@@ -278,36 +288,47 @@ export class NodeRgbLightningBinding {
   }
 
   /**
+   * Register an APay hash batch with a signed Lightning Address attestation.
+   *
+   * @param {string} hostNodeId - LSP node ID.
+   * @param {string} username - LSP-provisioned Lightning Address username.
+   * @param {string} domain - LSP-provisioned Lightning Address domain.
+   * @returns {object} - Native `AsyncOrderNewResponse`.
+   * @throws {Error} - If the installed native wrapper predates this generated
+   *   method or native APay registration fails.
+   */
+  apayNewWithAddress (hostNodeId, username, domain) {
+    const node = this.ensureNode()
+    if (typeof node.apayNewWithAddress !== 'function') {
+      throw new Error(
+        'Address-attested APay requires @utexo/rgb-lightning-node-nodejs ' +
+        'with apayNewWithAddress support'
+      )
+    }
+    return node.apayNewWithAddress(hostNodeId, username, domain)
+  }
+
+  /**
    * Stop the node and destroy the signer. The operation is idempotent.
    *
    * @throws {Error} - If native node shutdown or signer destruction fails.
    */
   shutdown () {
-    let failure
+    this._closed = true
     if (this._node) {
-      try {
-        this._node.shutdown()
-      } catch (error) {
-        failure = error
-      } finally {
-        this._node = null
-      }
-    }
-    if (this._signer) {
-      try {
-        this._signer.destroy()
-      } catch (error) {
-        failure ??= error
-      } finally {
-        this._signer = null
-      }
+      // Keep both handles available for an explicit retry after failed shutdown.
+      this._node.shutdown()
+      this._node = null
     }
     this._sdkInitDone = false
+    if (this._signer) {
+      this._signer.destroy()
+      this._signer = null
+    }
     wipeSecret(this._seedHex)
     wipeSecret(this._fallbackSeedHex)
     this._seedHex = undefined
     this._fallbackSeedHex = undefined
-    if (failure) throw failure
   }
 
   /** @returns {string} - Native module health status. */

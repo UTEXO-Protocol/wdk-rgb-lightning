@@ -1,6 +1,6 @@
 {
   "name": "@utexo/wdk-rgb-lightning",
-  "version": "0.1.0-beta.15",
+  "version": "0.2.0-beta.1",
   "description": "WDK module for RGB Lightning (rgb-lightning-node) — channels, invoices, payments, hodl, RGB-over-LN.",
   "keywords": [
     "wdk",
@@ -29,14 +29,15 @@
     "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage"
   },
   "dependencies": {
+    "@noble/secp256k1": "2.3.0",
     "@tetherto/wdk-wallet": "1.0.0-beta.14",
     "bare-node-runtime": "^1.5.0",
     "bip39": "3.1.0",
     "sodium-universal": "5.0.1"
   },
   "peerDependencies": {
-    "@utexo/rgb-lightning-node-bare": ">=0.1.0-beta.14 <0.2.0",
-    "@utexo/rgb-lightning-node-nodejs": ">=0.1.0-beta.10 <0.2.0"
+    "@utexo/rgb-lightning-node-bare": "0.2.0-beta.1",
+    "@utexo/rgb-lightning-node-nodejs": "0.2.0-beta.1"
   },
   "peerDependenciesMeta": {
     "@utexo/rgb-lightning-node-bare": {
@@ -62,6 +63,10 @@
     }
   },
   "exports": {
+    "./lsp-info": {
+      "types": "./lsp-info.d.ts",
+      "default": "./src/lsp-info.js"
+    },
     ".": {
       "types": "./index.d.ts",
       "bare": "./bare.js",

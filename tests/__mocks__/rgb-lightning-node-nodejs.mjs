@@ -1,3 +1,4 @@
+import { REQUIRED_NATIVE_RUNTIME } from '../../src/native-runtime-contract.js'
 // Copyright 2026 UTEXO.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +20,10 @@ const NativeExternalSigner = {
   create: () => ({
     bootstrap: () => ({}),
     destroy: () => {}
+  }),
+  createWithStorage: () => ({
+    bootstrap: () => ({}),
+    destroy: () => {}
   })
 }
 
@@ -28,6 +33,7 @@ const sdkInitialize = () => {}
 const sdkShutdown = () => {}
 
 export default {
+  getRuntimeInfo: () => ({ ...REQUIRED_NATIVE_RUNTIME, capabilities: ['canonical-unlock-v1', 'persistent-native-signer', 'refresh-transfers-v1', 'apay-address', 'decoded-invoice-cltv', 'tagged-rgb-assignment'] }),
   SdkNode,
   NativeExternalSigner,
   uniffiHealthcheck,

@@ -6,6 +6,7 @@
 
 import WalletManager from '@tetherto/wdk-wallet'
 import { mnemonicToSeedSync } from 'bip39'
+import { normalizeAutoUnlockRequest } from './node-unlock-request.js'
 import WalletAccountRgbLightning from './wallet-account-rgb-lightning.js'
 
 const MEMPOOL_SPACE_URL = 'https://mempool.space'
@@ -24,6 +25,7 @@ const MEMPOOL_SPACE_URL = 'https://mempool.space'
  *   proxyEndpoint?: string,
  *   announceAddresses?: string[],
  *   announceAlias?: string,
+ *   autoUnlockRequest?: object,
  *   nodeSeedDerivation?: 'auto'|'wdk-seed-v2'|'legacy-v1'
  * }} RgbLightningWalletConfig
  */
@@ -71,8 +73,9 @@ export function legacyWdkSeedToNodeSeedHex (seed) {
  *   the mnemonic ourselves — we derive a 32-byte VLS node entropy
  *   from it on demand and hand it to RLN's `NativeExternalSigner`,
  *   which runs the VLS signer entirely in-process. RLN's on-disk
- *   state only contains identifying public data (xpubs, node id,
- *   master fingerprint via the key-source file), never the seed.
+ *   state contains identifying public data plus the VLS commitment-state
+ *   database. It never contains the seed; the same mnemonic is still required
+ *   to reopen the signer after a restart.
  */
 export default class WalletManagerRgbLightning extends WalletManager {
   /**
@@ -98,7 +101,8 @@ export default class WalletManagerRgbLightning extends WalletManager {
    * @param {RgbLightningWalletConfig} config
    */
   constructor (seed, config = {}) {
-    super(seed, config)
+    const { autoUnlockRequest, ...managerConfig } = config
+    super(seed, managerConfig)
 
     if (!config.network) throw new Error('network configuration is required.')
     if (!config.dataDir) {
@@ -109,6 +113,8 @@ export default class WalletManagerRgbLightning extends WalletManager {
     }
 
     /** @private */ this._network = config.network
+    /** @private */ this._autoUnlockRequest = normalizeAutoUnlockRequest(autoUnlockRequest)
+    /** @private */ this._disposed = false
     /** @private @type {IRgbLightningBinding | null} */
     this._binding = null
   }
@@ -125,6 +131,7 @@ export default class WalletManagerRgbLightning extends WalletManager {
    * @returns {Promise<WalletAccountRgbLightning>}
    */
   async getAccount (indexOrSignerName = 0, options = {}) {
+    if (this._disposed) throw new Error('RGB Lightning manager is disposed')
     if (typeof indexOrSignerName === 'string' || options.signerName !== undefined) {
       throw new Error(
         'RGB Lightning accounts require the manager seed; registered WDK signers are not supported.'
@@ -136,6 +143,18 @@ export default class WalletManagerRgbLightning extends WalletManager {
       throw new Error('RGB Lightning wallets only support account index 0.')
     }
     if (!this._accounts[index]) {
+      const currentSeedHex = wdkSeedToNodeSeedHex(this.seed)
+      const legacySeedHex = legacyWdkSeedToNodeSeedHex(this.seed)
+      const derivation = this._config.nodeSeedDerivation ?? 'auto'
+      if (!['auto', 'wdk-seed-v2', 'legacy-v1'].includes(derivation)) {
+        throw new Error("nodeSeedDerivation must be 'auto', 'wdk-seed-v2', or 'legacy-v1'")
+      }
+      // A failed creation may have retained a handle after cleanup failed.
+      // Do not replace it until its explicit shutdown succeeds.
+      if (this._binding) {
+        this._binding.shutdown()
+        this._binding = null
+      }
       const Binding = this.constructor.Binding
       const binding = new Binding({
         network: this._network,
@@ -146,6 +165,7 @@ export default class WalletManagerRgbLightning extends WalletManager {
         enableVirtualChannelsV0: this._config.enableVirtualChannelsV0,
         virtualPeerPubkeys: this._config.virtualPeerPubkeys,
         permissiveSignerPolicy: this._config.permissiveSignerPolicy,
+        signerStorageIdentity: this._config.nodeSeedDerivation === 'legacy-v1' ? 'legacy' : 'primary',
         vssUrl: this._config.vssUrl,
         vssAllowHttp: this._config.vssAllowHttp,
         vssAllowEmptyRestore: this._config.vssAllowEmptyRestore,
@@ -159,22 +179,29 @@ export default class WalletManagerRgbLightning extends WalletManager {
       // RN-side `unlock()` call then brings LDK + bitcoind online
       // using the bootstrap that's already on disk (or writes it if
       // this is a fresh dataDir).
-      const currentSeedHex = wdkSeedToNodeSeedHex(this.seed)
-      const legacySeedHex = legacyWdkSeedToNodeSeedHex(this.seed)
-      const derivation = this._config.nodeSeedDerivation ?? 'auto'
-      if (!['auto', 'wdk-seed-v2', 'legacy-v1'].includes(derivation)) {
-        throw new Error("nodeSeedDerivation must be 'auto', 'wdk-seed-v2', or 'legacy-v1'")
-      }
-      if (derivation === 'legacy-v1') {
-        binding.attachExternalSigner(legacySeedHex)
-      } else {
-        binding.attachExternalSigner(
-          currentSeedHex,
-          derivation === 'auto' && legacySeedHex !== currentSeedHex ? legacySeedHex : undefined
-        )
-      }
+      try {
+        if (derivation === 'legacy-v1') {
+          binding.attachExternalSigner(legacySeedHex)
+        } else {
+          binding.attachExternalSigner(
+            currentSeedHex,
+            derivation === 'auto' && legacySeedHex !== currentSeedHex ? legacySeedHex : undefined
+          )
+        }
 
-      this._accounts[index] = new WalletAccountRgbLightning({ binding })
+        this._accounts[index] = new WalletAccountRgbLightning({
+          binding,
+          autoUnlockRequest: this._autoUnlockRequest
+        })
+      } catch (error) {
+        try {
+          binding.shutdown()
+          this._binding = null
+        } catch (cleanupError) {
+          throw new AggregateError([error, cleanupError], 'Account creation and native cleanup failed')
+        }
+        throw error
+      }
     }
     return this._accounts[index]
   }
@@ -210,10 +237,57 @@ export default class WalletManagerRgbLightning extends WalletManager {
   }
 
   dispose () {
-    if (this._binding) {
-      this._binding.shutdown()
-      this._binding = null
+    if (Object.values(this._accounts).some(account => account._unlockInFlight || account._shutdownInFlight || account._addressInFlight)) {
+      throw new Error('Await account activation and shutdown before synchronous manager disposal')
     }
-    super.dispose()
+    this._disposed = true
+    const failures = []
+
+    // WalletManager.dispose() probes account.keyPair before deciding whether
+    // to call account.dispose(). That is not valid for this manager after the
+    // app has explicitly shut down its external signer at the lock boundary.
+    // RGB Lightning owns every account in this cache, so dispose them directly
+    // without touching native identity state.
+    for (const account of Object.values(this._accounts)) {
+      try {
+        account.dispose()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    this._accounts = {}
+
+    if (this._defaultSigner) {
+      try {
+        this._defaultSigner.dispose()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    this._defaultSigner = undefined
+
+    for (const signer of Object.values(this._signers)) {
+      try {
+        signer.dispose()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    this._signers = {}
+
+    try {
+      this._binding?.shutdown()
+      this._binding = null
+    } catch (error) {
+      failures.push(error)
+    }
+
+    if (failures.length === 1) throw failures[0]
+    if (failures.length > 1) {
+      throw new AggregateError(
+        failures,
+        'Failed to dispose RGB Lightning accounts, signers, and binding'
+      )
+    }
   }
 }

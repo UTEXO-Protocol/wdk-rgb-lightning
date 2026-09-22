@@ -11,8 +11,8 @@ client for the UTEXO Lightning Service Provider.
 
 The node runs in **external-signer** mode: the BIP-39 mnemonic stays in the
 WDK secret manager, and all channel-state cryptography happens in-process
-through a VLS signer. RLN's on-disk state holds only public identifying
-material.
+through a VLS signer. Node and persistent VLS commitment state must both be
+retained in app-private storage; the mnemonic alone is not channel recovery.
 
 Complements [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], the on-chain RGB
 wallet module. The two are independent: each owns its own `rgb-lib` SQLite
@@ -28,7 +28,34 @@ on-chain RGB wallet module. The node-level issuance calls are also forwarded
 on the account (see the Account API table), but `wdk-wallet-rgb` is the
 supported path for issuance flows.
 
-> Status: pre-1.0 beta (`0.1.0-beta` line).
+> Status: unpublished `0.2.0-beta.1` candidate for RLN `0.13.0-beta.3`.
+> Not approved for production rollout. See [UPGRADE-TRACKER.md](./UPGRADE-TRACKER.md).
+
+## Upgrade Restrictions
+
+This breaking line requires both runtime and package identity to match RLN
+`af03c7f1a65135a429f05a5820600338215954dc`. Install the exact native candidate
+`0.2.0-beta.1` for your runtime. These versions are not yet published.
+
+Existing colored channels and old password-encrypted mnemonic records have
+unresolved migration gates. WDK external-signer records are a different format,
+but still require channel and signer durability qualification. Never delete or
+recreate state to bypass refusal, or roll back stale channel state after activity.
+
+There is no snapshot/FullSync overlay, prepared-send/UTXO inventory, native
+operation control, address receipt, RLN import or VSS delete-all API. Native
+routing fee caps are unavailable and are rejected before payment submission.
+Current overlay-dependent app versions cannot adopt this line unchanged.
+
+Native JSON integers must fit `Number.MAX_SAFE_INTEGER`; larger values fail
+explicitly, including native responses. A BigInt conversion after JSON rounding
+is not exact. Refresh preserves per-batch status/failure details, and unspents
+preserve `utxo.exists`, including false. No spendability is inferred from absence.
+
+Mobile/device tests, two-node RGB/Lightning flows, signed APay roundtrips, failure
+recovery and exact old-wallet migration are separate open release gates. The
+version upgrade does not establish a root cause for the integrator's zero-channel
+report. `waitForChannel` polls; LSP provisioning requires server-side evidence.
 
 ## Contents
 
@@ -77,19 +104,21 @@ module-load differs.
 ## Installation
 
 ```sh
-npm install @utexo/wdk-rgb-lightning
+npm install @utexo/wdk-rgb-lightning@0.2.0-beta.1
 
 # Plus the native binding matching your runtime (optional peer deps):
-npm install @utexo/rgb-lightning-node-nodejs   # Node host
+npm install @utexo/rgb-lightning-node-nodejs@0.2.0-beta.1   # Node host
 # or
-npm install @utexo/rgb-lightning-node-bare     # Bare / React Native host
+npm install @utexo/rgb-lightning-node-bare@0.2.0-beta.1     # Bare / React Native host
 ```
 
 Both bindings are declared as **optional** peer dependencies — install only
-the one for your runtime. Each binding's `postinstall` downloads the
-platform-specific prebuilt native artifact from its GitHub Release (no Rust
-toolchain required on the consumer machine). See the binding READMEs for the
-supported platform matrix.
+the one for your runtime after publication. Candidate `postinstall` builds the
+exact locked native source and requires Rust 1.94.0, Git, CMake and the relevant
+native SDK/toolchain. There is no no-Rust prebuilt-install promise. Bare mobile
+builds must be performed before bundling the worklet. See each binding's README
+for target selection and prerequisites. With scripts disabled, native imports
+are not usable; the parser-only `@utexo/wdk-rgb-lightning/lsp-info` entry is pure JS.
 
 ## Quick start
 
@@ -110,10 +139,15 @@ const manager = new WalletManagerRgbLightning(seedPhrase, {
 const account = await manager.getAccount(0) // RGB Lightning is single-account
 
 await account.unlock({
-  bitcoind_rpc_username: 'user',
-  bitcoind_rpc_password: 'pass',
-  bitcoind_rpc_host: '127.0.0.1',
-  bitcoind_rpc_port: 18443,
+  ldk_chain_sync: {
+    mode: 'BlockSync',
+    config: {
+      bitcoind_rpc_username: 'user',
+      bitcoind_rpc_password: 'pass',
+      bitcoind_rpc_host: '127.0.0.1',
+      bitcoind_rpc_port: 18443
+    }
+  },
   indexer_url: 'tcp://localhost:50001',
   proxy_endpoint: 'rpc://localhost:3000/json-rpc',
   announce_addresses: [],
@@ -140,7 +174,8 @@ const invoice = await account.createInvoice({
 
 await account.sendPayment({ invoice: '<bolt11>' })
 
-await manager.dispose()
+await account.shutdown()
+manager.dispose()
 ```
 
 A complete end-to-end example — LSP wiring, RGB-over-Lightning transfers,
@@ -155,9 +190,10 @@ and a regtest stack via Docker Compose — lives in
 |-------|---------|---------|
 | `daemonListeningPort` / `ldkPeerListeningPort` | `0` | RLN listening ports; `0` = ephemeral. |
 | `maxMediaUploadSizeMb` | `5` | Cap on RGB media uploads. |
-| `enableVirtualChannelsV0` | `false` | Enable virtual-channels-v0 (required for APay against a production LSP). |
+| `enableVirtualChannelsV0` | `false` | Explicit opt-in to virtual-channels-v0; not inferred from LSP discovery. |
 | `virtualPeerPubkeys` | — | Trust list of peer node_ids allowed to open `trusted_no_broadcast` virtual channels (the LSP's node_id for APay). |
-| `permissiveSignerPolicy` | `true` | Loosen the VLS policy filter for in-process single-user use. |
+| `permissiveSignerPolicy` | `false` | Strict policy by default; permissive mode is an explicit non-mainnet option. |
+| `autoUnlockRequest` | absent | Opt into address-triggered activation with a canonical or supported legacy unlock request. |
 | `nodeSeedDerivation` | `auto` | New nodes use WDK's normalized BIP-39 seed directly; existing beta nodes retry the legacy identity only on an exact persisted-identity mismatch. Use `wdk-seed-v2` or `legacy-v1` to disable auto-detection. |
 | `vssUrl` / `vssAllowHttp` / `vssAllowEmptyRestore` | — | VSS cloud backup; see [below](#vss-cloud-backup). |
 | `lspBaseUrl` / `lspBearerToken` | — | LSP wiring for APay and the LSP client; see [below](#lsp-integration). |
@@ -201,7 +237,7 @@ Notes:
   contract. `getTokenBalance(assetId)` returns the spendable RGB amount as a
   `bigint` and falls back to the settled amount when needed.
 - **`getAddress()` never returns a fabricated spend address.** Before unlock
-  it rejects with `AccountLockedError`; UI loaders can call
+  it rejects with `AccountLockedError` unless `autoUnlockRequest` is configured; UI loaders can call
   `getAddressState()` for `{ status: 'locked', address: null }`. The WDK
   bindings initialize RLN with address reuse enabled so reads stay stable;
   `rotateAddress()` is the explicit mutating operation for advancing it.
@@ -380,15 +416,16 @@ the wallet's behalf. Against a production LSP this requires
 
 - **Seed never leaves the host.** The mnemonic is owned by the WDK secret
   manager. The binding derives a 32-byte BIP-32 entropy, passes it once to
-  `NativeExternalSigner.create`, and RLN persists only public identifying
-  material (xpubs, node id, master fingerprint). Re-deriving from the same
-  mnemonic reproduces the same entropy, matches the on-disk key-source, and
-  keeps the LDK node identity stable across restarts.
+  `NativeExternalSigner.createWithStorage`, and preserves the signer's commitment
+  database below `dataDir/vls-signer` (or `vls-signer-legacy` for the legacy identity).
+  Re-deriving entropy preserves identity, not all safety-critical channel state.
+  Local signer persistence is not proof of fresh-device VSS recovery.
 - **All channel-state crypto runs in-process** through
   [`vls-protocol-signer`][vls]. The signer's lifecycle is tied to the
   binding and is destroyed on `manager.dispose()`. Retained seed copies use
   zeroizable buffers and are erased with `sodium_memzero` on successful
-  fallback resolution and shutdown, including cleanup failure paths.
+  fallback resolution and successful shutdown. Failed shutdown retains handles
+  and required state for explicit retry; errors must not be ignored.
 - **VSS payloads are client-side encrypted** (see above); the server only
   ever holds ciphertext.
 - **Plain `http://` is rejected by default** for VSS and LSP endpoints; opt
