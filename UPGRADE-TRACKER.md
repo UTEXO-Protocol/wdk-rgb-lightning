@@ -20,7 +20,7 @@ Status: implementation in progress. Draft PR, not release approval.
 | Released refresh/invoice/UTXO response contract | Implemented | Fail-before-mutation input checks; preserve per-batch failures and exists=false |
 | Selected discovery, APay, multi-channel and validation ports | Implemented | Discovery/proof/invoice/credential tests; no unmerged native execution APIs |
 | Unit/type/lint/package checks | Verified locally | 693 tests in 20 suites; types/lint/33-file pack passed |
-| Linked native/runtime conformance | Partial | Clean packed Node and Bare consumers passed; final Node tarball rerun underway; mobile and network remain gates |
+| Linked native/runtime conformance | Partial | Final clean packed Node and Bare consumers passed; mobile and network remain gates |
 | Final diff review | In progress | Boundary/lifecycle/LSP review found and fixed additional cases; external maintainer review required |
 | Cross-repository draft PR links | Done | Links below |
 
@@ -81,8 +81,8 @@ a weaker implementation.
   exports, native identity, persistent signer and offline lifecycle on 1.32.0.
   Source/dependency caches assisted installation. Embedded mobile qualification
   remains separate, as does the native-only 1.30.3 canary.
-- GitHub build check passed for review commit ba38656 (693 unit tests). Later
-  engine metadata/documentation changes require their own CI check.
+- GitHub build checks passed for ba38656 and engine-metadata commit aa25faa.
+  Final Node tarball consumer retest passed (92 packages, nine-minute install).
 
 ## Coordinated Drafts
 
