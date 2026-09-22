@@ -321,6 +321,12 @@ Higher-level linked-asset payment execution remains excluded from this candidate
 For bridge helpers, a verified Lightning payment is not proof that the RGB delivery
 leg settled; monitor that leg independently.
 
+The WDK Bare entry requires Bare >= 1.32.0 with the current dependency graph
+(`bare-type` 1.3.0 requires that engine). Its packed desktop canary pins 1.32.0.
+The standalone native binding's 1.30.3 canary does not qualify the complete WDK
+dependency graph or a React Native worklet. Qualify the app's embedded runtime
+and dependency lock separately before adoption.
+
 The package ships a pure-`fetch` LSP client and a composed high-level flow
 object, both exported from the root. They work unchanged in Bare (via the
 `bare-fetch` global installed by `bare.js`) and Node >= 18 (native `fetch`).

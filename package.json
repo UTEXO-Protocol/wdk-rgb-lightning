@@ -19,6 +19,9 @@
   "main": "index.js",
   "types": "./index.d.ts",
   "type": "module",
+  "engines": {
+    "bare": ">=1.32.0"
+  },
   "scripts": {
     "lint": "standard --env jest",
     "lint:fix": "standard --fix --env jest",

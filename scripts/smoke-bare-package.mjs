@@ -34,7 +34,7 @@ try {
     process.env.RLN_BARE_PACKAGE_TARBALL
       ? path.resolve(process.env.RLN_BARE_PACKAGE_TARBALL)
       : `${nativePackage}@${nativeVersion}`,
-    'bare-runtime@1.30.3'], {
+    'bare-runtime@1.32.0'], {
     cwd: temporaryRoot,
     env: { ...process.env, RLN_BARE_TARGETS: 'darwin-arm64' }
   })

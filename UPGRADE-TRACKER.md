@@ -20,7 +20,7 @@ Status: implementation in progress. Draft PR, not release approval.
 | Released refresh/invoice/UTXO response contract | Implemented | Fail-before-mutation input checks; preserve per-batch failures and exists=false |
 | Selected discovery, APay, multi-channel and validation ports | Implemented | Discovery/proof/invoice/credential tests; no unmerged native execution APIs |
 | Unit/type/lint/package checks | Verified locally | 693 tests in 20 suites; types/lint/33-file pack passed |
-| Linked native/runtime conformance | Partial | Clean packed Node consumer passed; final Node rerun and isolated Bare consumer build underway; mobile and network remain gates |
+| Linked native/runtime conformance | Partial | Clean packed Node and Bare consumers passed; final Node tarball rerun underway; mobile and network remain gates |
 | Final diff review | In progress | Boundary/lifecycle/LSP review found and fixed additional cases; external maintainer review required |
 | Cross-repository draft PR links | Done | Links below |
 
@@ -36,7 +36,8 @@ Status: implementation in progress. Draft PR, not release approval.
 | G6 | Current app depends on excluded overlay features | Separate adoption gate; do not change app pins |
 | G7 | Candidate publication, promotion and merge | Not authorized by this draft-PR task |
 | G8 | Native implementation pushes | Blocked: current GitHub OAuth credential lacks workflow scope; Node/Bare remote drafts still contain only their initial trackers |
-| G9 | Packed Bare native build with shared Node Cargo cache | Type mismatches reproduced; isolated-cache retry running. Do not claim the Bare consumer passed yet |
+| G9 | Packed Bare native build with shared Node Cargo cache | Type mismatches reproduced; identical source built with dedicated cache. Keep Node/Bare caches separate; no upstream graph workaround |
+| G10 | Fresh Bare dependency graph requires newer engine | WDK entry declares Bare >=1.32.0. Packed consumer passed on pinned 1.32.0 after bare-type 1.3.0 rejected the former 1.30.3 canary. No app embedded-runtime pin changed |
 
 Excluded capabilities: coherent wallet snapshot/FullSync, native operation registry,
 prepared-send plans and inventories, address receipts, RLN import APIs, VSS delete-all
@@ -76,6 +77,12 @@ a weaker implementation.
   passed. Packed consumer tests are separate from the mocked unit suite.
 - Docker, iOS SDK and the pinned Android NDK are locally available. Their
   existence is not evidence that regtest, mobile builds or device tests passed.
+- Packed Bare/WDK consumer passed normal source-build install, conditional
+  exports, native identity, persistent signer and offline lifecycle on 1.32.0.
+  Source/dependency caches assisted installation. Embedded mobile qualification
+  remains separate, as does the native-only 1.30.3 canary.
+- GitHub build check passed for review commit ba38656 (693 unit tests). Later
+  engine metadata/documentation changes require their own CI check.
 
 ## Coordinated Drafts
 
