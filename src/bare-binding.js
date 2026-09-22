@@ -192,7 +192,7 @@ export class BareRgbLightningBinding {
         // Rln(Conflict) on init is the "already-initialised on disk"
         // signal — expected on every relaunch after the first wallet
         // create. Anything else is a real failure.
-        if (!msg.includes('Conflict')) throw e
+        if (!msg.startsWith('Rln(Conflict):')) throw e
       }
       this._sdkInitDone = true
     }

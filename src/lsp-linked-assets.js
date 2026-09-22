@@ -432,6 +432,15 @@ export function assertAddressQuote (decoded, expected) {
   if (expected.paymentHash !== undefined) {
     assertEqual(decoded.paymentHash, String(expected.paymentHash).toLowerCase(), 'the APay proof does not commit to the signed invoice hash')
   }
+  if (expected.descriptionHash !== undefined) {
+    assertEqual(decoded.descriptionHash, expected.descriptionHash, 'the signed invoice changed the requested description hash')
+  }
+  if (expected.minFinalCltvExpiryDelta !== undefined) {
+    assertEqual(decoded.minFinalCltvExpiryDelta, expected.minFinalCltvExpiryDelta, 'the signed invoice changed the requested minimum final CLTV delta')
+  }
+  if (expected.expirySeconds !== undefined) {
+    assertEqual(decoded.expirySeconds, expected.expirySeconds, 'the signed invoice changed the requested expiry duration')
+  }
   if (expected.metadata !== undefined) {
     assertEqual(
       decoded.descriptionHash,

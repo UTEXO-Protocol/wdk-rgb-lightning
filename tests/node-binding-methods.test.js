@@ -219,7 +219,7 @@ describe('unlock', () => {
   it('swallows a Conflict init error and still proceeds to unlock', () => {
     const b = makeBinding()
     const node = fakeNode()
-    node.initWithNativeExternalSigner.mockImplementation(() => { throw new Error('Conflict: already initialized') })
+    node.initWithNativeExternalSigner.mockImplementation(() => { throw new Error('Rln(Conflict): already initialized') })
     b._node = node
     b._signer = fakeSigner()
     expect(() => b.unlock(UNLOCK)).not.toThrow()
@@ -386,11 +386,11 @@ describe('unlock', () => {
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
   })
 
-  it('swallows a thrown string containing Conflict (no .message) and proceeds', () => {
+  it('accepts a thrown string with the exact released Conflict tag', () => {
     const b = makeBinding()
     const node = fakeNode()
     // eslint-disable-next-line no-throw-literal
-    node.initWithNativeExternalSigner.mockImplementation(() => { throw 'Conflict: already initialized' })
+    node.initWithNativeExternalSigner.mockImplementation(() => { throw 'Rln(Conflict): already initialized' })
     b._node = node
     b._signer = fakeSigner()
     expect(() => b.unlock(UNLOCK)).not.toThrow()

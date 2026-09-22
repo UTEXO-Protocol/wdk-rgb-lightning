@@ -128,7 +128,7 @@ describe('BareRgbLightningBinding', () => {
     const existing = makeBinding()
     const existingNode = fakeNode()
     existingNode.initWithNativeExternalSigner.mockImplementation(() => {
-      throw new Error('Conflict: already initialized')
+      throw new Error('Rln(Conflict): already initialized')
     })
     existing._node = existingNode
     existing._signer = fakeSigner()

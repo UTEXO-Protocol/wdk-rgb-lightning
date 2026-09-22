@@ -160,11 +160,11 @@ describe('payLightningAddress', () => {
     expect(typeof req.amt_msat).toBe('number')
   })
 
-  it('passes through a numeric-string amount unchanged for amt_msat', async () => {
+  it('converts an exact numeric-string amount to the released numeric DTO', async () => {
     const fetch = makeLnurlFetch()
     const account = { decodeInvoice: decodeInvoice(4096), sendPayment: jest.fn(async () => ({})) }
     await payLightningAddress(account, 'f@host.example', '4096', { fetch })
-    expect(account.sendPayment).toHaveBeenCalledWith({ invoice: BOLT11, amt_msat: '4096' })
+    expect(account.sendPayment).toHaveBeenCalledWith({ invoice: BOLT11, amt_msat: 4096 })
   })
 
   it('rejects an amount that is not a non-negative integer', async () => {

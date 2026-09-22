@@ -25,6 +25,7 @@
     "check:types": "tsc -p tsconfig.types.json",
     "check:package": "node scripts/verify-package.mjs",
     "smoke:package:node": "node scripts/smoke-node-package.mjs",
+    "smoke:package:bare": "node scripts/smoke-bare-package.mjs",
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
     "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage"
   },

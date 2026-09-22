@@ -16,7 +16,6 @@
 
 import { LspClient } from './lsp-client.js'
 import { resolveAddressToInvoice } from './lnurl-pay.js'
-import { toUint64 } from './lsp-utils.js'
 import { assertAddressRequest } from './lsp-linked-assets.js'
 import { rejectRoutingFeeCap, paymentExpectation, requireInvoiceDecoder, verifyPaymentInvoice } from './lsp-payment-verification.js'
 
@@ -71,7 +70,7 @@ export async function payLightningAddress (account, addr, amountMsat, opts = {})
   await verifyPaymentInvoice(account, pr, { ...expected, metadata: discovery.metadata })
   if (typeof opts.beforePay === 'function') await opts.beforePay(pr, discovery)
   if (opts.signal?.aborted) throw new Error('operation aborted')
-  const req = opts.skipAmount ? { invoice: pr } : { invoice: pr, amt_msat: toUint64(amountMsat) }
+  const req = opts.skipAmount ? { invoice: pr } : { invoice: pr, amt_msat: expected.amtMsat }
   const sendResult = await account.sendPayment(req)
   return { invoice: pr, sendResult, discovery, callbackUrl }
 }

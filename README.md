@@ -314,6 +314,13 @@ try {
 
 ## LSP integration
 
+Low-level `LspClient` methods do not authorize local payments. In particular,
+`lightningSend` can create a server-side HODL quote; it is not a read-only query
+or a fee-capped wallet payment. The endpoint must be enabled by the LSP operator.
+Higher-level linked-asset payment execution remains excluded from this candidate.
+For bridge helpers, a verified Lightning payment is not proof that the RGB delivery
+leg settled; monitor that leg independently.
+
 The package ships a pure-`fetch` LSP client and a composed high-level flow
 object, both exported from the root. They work unchanged in Bare (via the
 `bare-fetch` global installed by `bare.js`) and Node >= 18 (native `fetch`).

@@ -24,9 +24,9 @@ import {
   parseOnchainSend
 } from './lsp-response-contracts.js'
 
-// Thin typed wrapper around utexo-lsp's HTTP API. Side-effect free:
-// methods build URLs, send JSON, validate response status, and return
-// parsed JSON DTOs. Anything that combines an LSP call with a local
+// Thin typed wrapper around utexo-lsp's HTTP API, without native wallet calls.
+// Requests can create server-side invoices/state; parsed DTOs are not payment
+// authorization. Anything that combines an LSP call with a local
 // daemon call (e.g. "pay this LSP-issued invoice via our own RLN")
 // lives in lsp-helpers.js, not here.
 //

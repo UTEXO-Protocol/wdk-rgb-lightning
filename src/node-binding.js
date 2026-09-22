@@ -166,7 +166,7 @@ export class NodeRgbLightningBinding {
         node.initWithNativeExternalSigner(this._signer)
       } catch (e) {
         const msg = String(e && e.message ? e.message : e)
-        if (!msg.includes('Conflict')) throw e
+        if (!msg.startsWith('Rln(Conflict):')) throw e
       }
       this._sdkInitDone = true
     }

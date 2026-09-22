@@ -3,6 +3,7 @@ import { normalizeUnlockRequest, sameUnlockRequest } from '../src/node-unlock-re
 import { validateUnspents, validateRefreshResult, exactUnsignedNumber } from '../src/released-native-contract.js'
 import WalletAccount from '../src/wallet-account-rgb-lightning.js'
 import { NodeRgbLightningBinding } from '../src/node-binding.js'
+import { BareRgbLightningBinding } from '../src/bare-binding.js'
 import rln from '@utexo/rgb-lightning-node-nodejs'
 
 const rpc = { bitcoind_rpc_username: 'user', bitcoind_rpc_password: 'secret-do-not-print', bitcoind_rpc_host: 'localhost', bitcoind_rpc_port: 18443 }
@@ -43,6 +44,16 @@ describe('released unlock contract', () => {
 })
 
 describe('released account boundaries', () => {
+  it.each([NodeRgbLightningBinding, BareRgbLightningBinding])('does not swallow unrelated init errors mentioning Conflict', (Binding) => {
+    const binding = new Binding({ dataDir: '/unused', network: 'regtest' })
+    binding._signer = {}
+    binding._node = {
+      initWithNativeExternalSigner: jest.fn(() => { throw new Error('Rln(Internal): Conflict while opening database') }),
+      unlockWithNativeExternalSigner: jest.fn()
+    }
+    expect(() => binding.unlock(legacy)).toThrow('Internal')
+    expect(binding._node.unlockWithNativeExternalSigner).not.toHaveBeenCalled()
+  })
   it('coalesces address-triggered activation and never activates without opt-in', async () => {
     let unlocked = false
     const node = {

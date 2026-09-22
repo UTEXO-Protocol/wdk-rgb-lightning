@@ -1,5 +1,6 @@
 import { exactUnsignedNumber } from './released-native-contract.js'
 import { assertAddressQuote, decodedInvoice } from './lsp-linked-assets.js'
+import { snakeCaseLnParams } from './lsp-utils.js'
 
 export function rejectRoutingFeeCap (options = {}) {
   if ('maxTotalRoutingFeeMsat' in options || 'max_total_routing_fee_msat' in options) {
@@ -24,7 +25,21 @@ export function paymentExpectation (ln) {
       (assetId !== undefined && (typeof assetId !== 'string' || !assetId.trim() || assetAmount === 0))) {
     throw new TypeError('An explicit assetId and positive assetAmount must be supplied together')
   }
-  return { amtMsat, assetId, assetAmount }
+  const constraints = snakeCaseLnParams({
+    paymentHash: ln.paymentHash,
+    descriptionHash: ln.descriptionHash,
+    minFinalCltvExpiryDelta: ln.minFinalCltvExpiryDelta,
+    expirySec: ln.expirySec
+  })
+  return {
+    amtMsat,
+    assetId,
+    assetAmount,
+    paymentHash: constraints.payment_hash,
+    descriptionHash: constraints.description_hash,
+    minFinalCltvExpiryDelta: constraints.min_final_cltv_expiry_delta,
+    expirySeconds: constraints.expiry_sec
+  }
 }
 
 export function requireInvoiceDecoder (account) {
