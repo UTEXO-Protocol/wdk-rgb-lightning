@@ -35,7 +35,7 @@ Status: implementation in progress. Draft PR, not release approval.
 | G5 | Integrator zero-channel report root cause | Unproven: deployed build IDs and server provisioning logs required |
 | G6 | Current app depends on excluded overlay features | Separate adoption gate; do not change app pins |
 | G7 | Candidate publication, promotion and merge | Not authorized by this draft-PR task |
-| G8 | Native implementation pushes | Blocked: current GitHub OAuth credential lacks workflow scope; Node/Bare remote drafts still contain only their initial trackers |
+| G8 | Native implementation pushes | Resolved on 2026-09-23: Node 875cff3 and Bare 22ce493 pushed after user refreshed workflow authorization; both draft PRs now contain implementation. Native CI qualification is in progress |
 | G9 | Packed Bare native build with shared Node Cargo cache | Type mismatches reproduced; identical source built with dedicated cache. Keep Node/Bare caches separate; no upstream graph workaround |
 | G10 | Fresh Bare dependency graph requires newer engine | WDK entry declares Bare >=1.32.0. Packed consumer passed on pinned 1.32.0 after bare-type 1.3.0 rejected the former 1.30.3 canary. No app embedded-runtime pin changed |
 
