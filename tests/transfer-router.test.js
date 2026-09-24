@@ -111,11 +111,12 @@ describe('WalletAccountRgbLightning.transfer', () => {
 
   it('requires and forwards explicit Bitcoin output data for a Witness RGB invoice', async () => {
     const account = makeAccount()
+    const endpoint = 'rpc://proxy.example/json-rpc?rid_nonce=0123456789abcdef'
     account.decodeRgbInvoice = jest.fn(async () => ({
       recipient_id: 'witness-recipient',
       recipient_type: 'Witness',
       asset_id: 'assetFromInvoice',
-      transport_endpoints: ['rpc://proxy.example/json-rpc']
+      transport_endpoints: [endpoint]
     }))
 
     await expect(account.transfer({
@@ -138,7 +139,7 @@ describe('WalletAccountRgbLightning.transfer', () => {
           recipient_id: 'witness-recipient',
           assignment_kind: 'Fungible',
           assignment_amount: 5,
-          transport_endpoints: ['rpc://proxy.example/json-rpc'],
+          transport_endpoints: [endpoint],
           witness_data: { amount_sat: 1_000, blinding: 7 }
         }]
       }]

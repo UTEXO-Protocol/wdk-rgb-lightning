@@ -326,13 +326,17 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
   async getAssetMetadata (assetId) { return this._reader.assetMetadata(assetId) }
 
   /**
-   * Returns transfers associated with one RGB asset.
+   * Returns transfers associated with an RGB asset, transaction, or both.
    *
-   * @param {string} assetId - The RGB asset ID.
+   * @param {string} [assetId] - The RGB asset ID.
+   * @param {string} [txid] - Transaction ID; required when assetId is omitted.
    * @returns {Promise<object>} The native transfer-list response.
    * @throws {TypeError} If the asset ID is empty or is not a string.
    */
   async listTransfers (assetId, txid) {
+    if (assetId === undefined && txid === undefined) {
+      throw new TypeError('listTransfers requires an assetId or txid')
+    }
     if (assetId !== undefined && (typeof assetId !== 'string' || assetId.length === 0)) {
       throw new TypeError('listTransfers assetId must be a non-empty RGB asset id when supplied')
     }

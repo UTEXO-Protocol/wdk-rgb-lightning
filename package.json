@@ -30,7 +30,12 @@
     "smoke:package:node": "node scripts/smoke-node-package.mjs",
     "smoke:package:bare": "node scripts/smoke-bare-package.mjs",
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
-    "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage"
+    "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage",
+    "regtest:up": "node tests/regtest/setup.mjs",
+    "test:regtest": "node tests/regtest/run.mjs",
+    "test:regtest:assets": "node tests/regtest/assets.mjs",
+    "test:regtest:reopen": "node tests/regtest/reopen.mjs",
+    "test:regtest:lsp": "node tests/regtest/lsp.mjs"
   },
   "dependencies": {
     "@noble/secp256k1": "2.3.0",

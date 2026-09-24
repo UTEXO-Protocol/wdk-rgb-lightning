@@ -20,6 +20,9 @@ import WalletManager, { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 // ───────────────────────────────────────────────────────────────────
 
 export type DecimalString = `${bigint}`
+
+/** Native response integer: number within the safe range, exact decimal text otherwise. */
+export type ExactInteger = number | DecimalString
 export type LspAssetSchema = 'Nia' | 'Uda' | 'Cfa' | 'Ifa'
 export interface LspSupportedAsset {
   asset_id: string
@@ -183,11 +186,11 @@ export interface CreateLightningInvoiceRequest {
 
 /** Native BOLT11 decode result exposed by both supported RLN bindings. */
 export interface DecodedLightningInvoice {
-  amt_msat: number | null
+  amt_msat: ExactInteger | null
   expiry_sec: number
   timestamp: number
   asset_id: string | null
-  asset_amount: number | null
+  asset_amount: ExactInteger | null
   payment_hash: string
   payment_secret: string
   description: string | null
@@ -198,9 +201,9 @@ export interface DecodedLightningInvoice {
 }
 
 export type DecodedRgbAssignment =
-  | { type: 'Fungible'; value: number }
+  | { type: 'Fungible'; value: ExactInteger }
   | { type: 'NonFungible' }
-  | { type: 'InflationRight'; value: number }
+  | { type: 'InflationRight'; value: ExactInteger }
   | { type: 'Any' }
 
 export interface DecodedRgbInvoice {
@@ -471,7 +474,8 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
    *
    * @throws {TypeError} If the asset ID is empty.
    */
-  listTransfers(assetId?: string, txid?: string): Promise<object>
+  listTransfers(assetId: string, txid?: string): Promise<object>
+  listTransfers(assetId: undefined, txid: string): Promise<object>
 
   /** Returns RGB transfers associated with an on-chain transaction ID. */
   listTransfersByTxid(txid: string): Promise<object>

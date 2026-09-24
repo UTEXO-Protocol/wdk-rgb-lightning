@@ -44,6 +44,17 @@ describe('released unlock contract', () => {
 })
 
 describe('released account boundaries', () => {
+  it('requires at least one transfer filter before querying native state', async () => {
+    const node = { listTransfers: jest.fn(() => []) }
+    const account = new WalletAccount({ binding: { ensureNode: () => node } })
+    await expect(account.listTransfers()).rejects.toThrow('requires an assetId or txid')
+    const readOnly = await account.toReadOnlyAccount()
+    await expect(readOnly.listTransfers()).rejects.toThrow('requires an assetId or txid')
+    expect(node.listTransfers).not.toHaveBeenCalled()
+    const txid = 'ab'.repeat(32)
+    await expect(account.listTransfers(undefined, txid)).resolves.toEqual([])
+    expect(node.listTransfers).toHaveBeenCalledWith(undefined, txid)
+  })
   it.each([NodeRgbLightningBinding, BareRgbLightningBinding])('does not swallow unrelated init errors mentioning Conflict', (Binding) => {
     const binding = new Binding({ dataDir: '/unused', network: 'regtest' })
     binding._signer = {}

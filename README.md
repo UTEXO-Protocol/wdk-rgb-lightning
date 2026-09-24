@@ -22,11 +22,10 @@ exclusive lock on a wallet directory, and the Lightning node derives a
 different wallet fingerprint (it signs in-process via VLS from a 32-byte
 entropy) than the on-chain module (standard BIP-32 from the full seed), so
 even a shared `dataDir` resolves to different `<fingerprint>/` subfolders.
-RLN holds and transfers RGB assets for its channels and invoices. For RGB
-asset **issuance**, prefer [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], the
-on-chain RGB wallet module. The node-level issuance calls are also forwarded
-on the account (see the Account API table), but `wdk-wallet-rgb` is the
-supported path for issuance flows.
+RLN holds and transfers RGB assets for its channels and invoices. Released
+RLN rejects **issuance and inflation in external-signer mode**, which this
+module always uses. Issue assets in a separate on-chain wallet, such as
+[`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], then transfer them to this wallet.
 
 > Status: unpublished `0.2.0-beta.1` candidate for RLN `0.13.0-beta.3`.
 > Not approved for production rollout. See [UPGRADE-TRACKER.md](./UPGRADE-TRACKER.md).
@@ -37,25 +36,30 @@ This breaking line requires both runtime and package identity to match RLN
 `af03c7f1a65135a429f05a5820600338215954dc`. Install the exact native candidate
 `0.2.0-beta.1` for your runtime. These versions are not yet published.
 
-Existing colored channels and old password-encrypted mnemonic records have
-unresolved migration gates. WDK external-signer records are a different format,
-but still require channel and signer durability qualification. Never delete or
-recreate state to bypass refusal, or roll back stale channel state after activity.
+This candidate is scoped to fresh wallets: the deployment owner confirmed there
+are no live wallets to migrate. No legacy-wallet migration compatibility is
+promised. Channel and signer durability still matter for newly created wallets.
+Never delete or recreate state to bypass refusal, or roll back stale channel state
+after activity.
 
 There is no snapshot/FullSync overlay, prepared-send/UTXO inventory, native
 operation control, address receipt, RLN import or VSS delete-all API. Native
 routing fee caps are unavailable and are rejected before payment submission.
 Current overlay-dependent app versions cannot adopt this line unchanged.
 
-Native JSON integers must fit `Number.MAX_SAFE_INTEGER`; larger values fail
-explicitly, including native responses. A BigInt conversion after JSON rounding
-is not exact. Refresh preserves per-batch status/failure details, and unspents
+Native JSON integer inputs must fit `Number.MAX_SAFE_INTEGER`; larger input
+numbers fail before submission. Response integers outside the safe range are
+preserved as exact decimal strings, including u64 limits and channel IDs; they
+are never rounded first. This does not enable full-u64 request amounts.
+Refresh preserves per-batch status/failure details, and unspents
 preserve `utxo.exists`, including false. No spendability is inferred from absence.
 
-Mobile/device tests, two-node RGB/Lightning flows, signed APay roundtrips, failure
-recovery and exact old-wallet migration are separate open release gates. The
-version upgrade does not establish a root cause for the integrator's zero-channel
-report. `waitForChannel` polls; LSP provisioning requires server-side evidence.
+Real local BTC/RGB, standard-channel and signed APay tests are recorded in
+[local qualification](./tests/regtest/README.md). Strict outgoing signing and
+same-process reopen remain blockers; permissive regtest diagnostics are not
+production qualification. Mobile runtime and adverse recovery tests remain
+separate gates. The upgrade does not establish the root cause of the integrator's
+zero-channel report. `waitForChannel` polls; provisioning needs server-side evidence.
 
 ## Contents
 
@@ -215,7 +219,7 @@ are async and forward to the active binding.
 | Payments | `sendPayment(request)`, `keysend(request)`, `listPayments()`, `getPayment(hash, type)` |
 | RGB assets | `listAssets(filter?)`, `getAssetBalance(id)`, `getAssetMetadata(id)`, `listTransfers(id)`, `listTransfersByTxid(txid)`, `refreshTransfers(req)`, `failTransfers(req)` |
 | RGB invoices/transfers | `createRgbInvoice(request)`, `decodeRgbInvoice(invoice)`, `sendRgbAsset(request)`, `getAssetMedia(digest)`, `postAssetMedia(request)` |
-| RGB issuance (forwarded) | `issueAssetNia(request)`, `issueAssetUda(request)`, `issueAssetCfa(request)`, `issueAssetIfa(request)`, `inflate(request)` — forward to the binding; `@utexo/wdk-wallet-rgb` is the supported path (see note) |
+| RGB issuance (unsupported in this mode) | `issueAssetNia(request)`, `issueAssetUda(request)`, `issueAssetCfa(request)`, `issueAssetIfa(request)`, `inflate(request)` forward the released `UnsupportedInExternalSignerMode` error; use a separate on-chain wallet |
 | BTC | `getBalance(skipSync?)`, `getBalanceDetails(skipSync?)`, `sendTransaction({ to, value, ... })`, `sendBtc(nativeRequest)`, `getTransactions(skipSync?)`, `getTransactionsByTxid(txid)`, `listUnspents(skipSync?)`, `createUtxos(request)`, `estimateFee(blocks)` |
 | WDK-standard | `index`, `path`, `keyPair`, `sign(message)`, `verify(message, signature)`, `transfer(options)`, `quoteTransfer(options)`, `quoteSendTransaction(tx)`, `getTransactionReceipt(hash)`, `toReadOnlyAccount()` |
 | Diagnostics | `sendOnionMessage(request)`, `checkIndexerUrl(url)`, `checkProxyEndpoint(endpoint)` |
@@ -244,11 +248,11 @@ Notes:
 - **`sendTransaction()` uses WDK's `{ to, value, feeRate?,
   confirmationTarget? }` input and `{ hash, fee }` result.** `sendBtc()` is
   the explicit low-level escape hatch for RLN's native request format.
-- **RGB asset issuance is forwarded, but `@utexo/wdk-wallet-rgb` is the
-  supported path.** The node-level issuance calls (`issueAssetNia` /
+- **RGB asset issuance and inflation are not supported in external-signer mode.**
+  The node-level issuance calls (`issueAssetNia` /
   `issueAssetUda` / `issueAssetCfa` / `issueAssetIfa`, plus `inflate`) are
-  exposed on the account and forward straight to the binding. For
-  issuance-centric flows prefer [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb],
+  exposed for API compatibility and surface the released runtime rejection.
+  For issuance use [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb],
   the on-chain RGB wallet module. This module primarily holds and transfers
   assets that already exist — in channels, invoices, and on-chain — and
   keeps its own separate `rgb-lib` wallet (give each module its own

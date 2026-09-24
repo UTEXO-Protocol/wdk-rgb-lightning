@@ -32,7 +32,8 @@
  *   list, which disables virtual peering. For APay, set this to the LSP node ID.
  *   Forwarded to RLN as `virtual_peer_pubkeys`.
  * @property {boolean} [permissiveSignerPolicy] - Whether the in-process VLS
- *   signer uses its permissive policy filter. Defaults to `true`.
+ *   signer uses its permissive policy filter. Defaults to `false`; the released
+ *   native runtime rejects permissive mode on mainnet.
  * @property {string} [vssUrl] - VSS cloud-backup service URL. Omit to disable
  *   VSS. Only HTTPS and loopback HTTP URLs are accepted unless `vssAllowHttp`
  *   is enabled. Backup encryption is derived from the wallet seed, which is

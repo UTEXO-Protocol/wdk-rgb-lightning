@@ -1,6 +1,8 @@
 # RLN 0.13.0-beta.3 Upgrade Tracker
 
-Status: implementation in progress. Draft PR, not release approval.
+Status: 2026-09-24 local released-runtime qualification completed within the
+recorded scope. Strict outgoing signer and same-process reopen failures remain
+explicit blockers. Draft PR, not release approval.
 
 ## Scope
 
@@ -19,8 +21,8 @@ Status: implementation in progress. Draft PR, not release approval.
 | Canonical unlock, persistent signer and strict policy | Implemented | Single-flight activation, shutdown retry, failed creation cleanup and disposal tests |
 | Released refresh/invoice/UTXO response contract | Implemented | Fail-before-mutation input checks; preserve per-batch failures and exists=false |
 | Selected discovery, APay, multi-channel and validation ports | Implemented | Discovery/proof/invoice/credential tests; no unmerged native execution APIs |
-| Unit/type/lint/package checks | Verified locally | 693 tests in 20 suites; types/lint/33-file pack passed |
-| Linked native/runtime conformance | Partial | Final clean packed Node and Bare consumers passed; mobile and network remain gates |
+| Unit/type/lint/package checks | Verified locally | 694 tests in 20 suites; types/lint/33-file pack passed |
+| Linked native/runtime conformance | Partial | Packed Node/Bare consumers and real regtest scenarios executed; strict outgoing and same-process reopen failures remain; see qualification report |
 | Final diff review | In progress | Boundary/lifecycle/LSP review found and fixed additional cases; external maintainer review required |
 | Cross-repository draft PR links | Done | Links below |
 
@@ -28,10 +30,10 @@ Status: implementation in progress. Draft PR, not release approval.
 
 | ID | Gate | Status |
 | --- | --- | --- |
-| G1 | Existing colored-channel state can be refused by released 0.13; exact old-artifact migration qualification and operational drain/close procedure required | Blocked |
-| G2 | Old password-encrypted mnemonic records are not automatically supported; distinguish WDK external-signer key-source records | Blocked |
-| G3 | Full desktop/mobile build and runtime target matrix | Pending |
-| G4 | Controlled two-node/regtest and operator-coordinated LSP asset flow | Regtest execution pending; operator LSP qualification blocked on coordination and deployed-build evidence |
+| G1 | Existing colored-channel migration | Out of scope: owner confirmed no live wallets on 2026-09-24; fresh wallets only, no migration compatibility promise |
+| G2 | Old password-encrypted mnemonic migration | Out of scope under the same owner decision; no reset or stale-state rollback workaround |
+| G3 | Full desktop/mobile build and runtime target matrix | All seven Bare targets compile and pass artifact checks, including Android 64-bit 16 KiB alignment. Device/emulator/embedded runtime and remaining Node targets still need qualification |
+| G4 | Controlled two-node/regtest and operator-coordinated LSP asset flow | Real local Node/Bare flows executed; strict outgoing signer and same-process reopen blockers remain. Deployed Signet/mainnet LSP qualification is separate |
 | G5 | Integrator zero-channel report root cause | Unproven: deployed build IDs and server provisioning logs required |
 | G6 | Current app depends on excluded overlay features | Separate adoption gate; do not change app pins |
 | G7 | Candidate publication, promotion and merge | Not authorized by this draft-PR task |
@@ -50,10 +52,34 @@ a weaker implementation.
 
 ## Verification Log
 
+### 2026-09-24 Local Qualification
+
+- Complete isolated stack setup passed: Core 31.1, standalone Electrs 0.12.0,
+  mempool Electrs 3.3.0 Esplora, RGB proxy 0.3.0, RLN 0.13.0-beta.3, pinned
+  LSP main b865c88 and a loopback-only explorer. Exact sources/digests in
+  `tests/regtest/`; no upstream behavior modifications.
+- Strict Node/Bare NIA/IFA/CFA/UDA receipt and witness transfers pass. Both
+  TransactionSync and BlockSync are exercised with a separate RGB indexer.
+- Diagnostic permissive Node/Bare runs pass BTC/RGB channels, payments, keysend,
+  HODL claim/cancel, process crash recovery, post-restart payment, cooperative
+  closes and confirmed BTC force-close. Same-process reopen fails in both.
+- Real Node/Bare IFA LSP provisioning, signed APay proof/claim/payment and both
+  bridges pass in the permissive diagnostic; settlement is independently checked.
+  Strict inbound provisioning/payment and proof pass, but outgoing payment stalls.
+  Diagnostic permissive success is not mainnet or strict-policy qualification.
+- Fixed large-response integer handling in both native packages and tightened
+  WDK transfer filter validation/types. Witness nonce preservation regression added.
+- Migration excluded by owner (no live wallets); VSS disabled and upstream VSS
+  repair excluded. Issuance/inflation rejection in external-signer mode documented.
+- Detailed run IDs, reproduced blockers, warnings, fixture corrections and
+  unexecuted surfaces: [qualification report](./tests/regtest/QUALIFICATION.md).
+
+### Earlier Implementation Evidence
+
 - Baseline source/branch audit completed before implementation.
 - Results below will distinguish mocked tests, linked host smoke, compile-only
   cross-builds, device tests and funded/network qualification.
-- No funded transaction or production wallet has been used.
+- Only disposable local regtest wallets were funded. No real-network funds or production wallets were used.
 - Unit tests use mocked native modules, not proof of native or network behavior.
   Ran `npm test -- --runInBand --watchman=false`, types, lint and package verification.
 - Packed package: 33 files; parser-only discovery entry does not load native peers.
