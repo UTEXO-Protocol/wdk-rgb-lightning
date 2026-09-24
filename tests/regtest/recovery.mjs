@@ -115,24 +115,36 @@ try {
   }
 
   if (scenario === 'interrupted') {
+    let interrupted = 0
     for (const delay of [0, 20, 100]) {
-      await step(`kill process during unacknowledged send (${delay}ms after dispatch), reconcile without retry`, async () => {
+      await step(`kill after send dispatch (${delay}ms target delay), reconcile without retry`, async () => {
         const destination = await rpc('getnewaddress', [], 'miner')
         const receivedBefore = await rpc('getreceivedbyaddress', [destination, 0], 'miner')
         assert.equal(receivedBefore, 0)
         const before = (await balance(alice)).vanilla.spendable
         const sent = alice.call('sendBtc', [{ address: destination, amount: 10000, fee_rate: 2, skip_sync: false }]).then(value => ({ acknowledged: true, value }), error => ({ acknowledged: false, error: error.message }))
         const requestId = alice.sequence
-        await until('worker entered requested send', () => {
+        // Normal RPC polling is deliberately slow. It cannot time crash injection:
+        // a completed send would otherwise be mislabelled as an interruption.
+        const deadline = Date.now() + 10000
+        let marker
+        while (Date.now() < deadline) {
           const file = path.join(alice.directory, 'active.json')
-          if (!fs.existsSync(file)) return false
-          const marker = JSON.parse(fs.readFileSync(file, 'utf8'))
-          return marker.id === requestId && marker.method === 'sendBtc'
-        }, 10000)
+          if (fs.existsSync(file)) {
+            const current = JSON.parse(fs.readFileSync(file, 'utf8'))
+            if (current.id === requestId && current.method === 'sendBtc') { marker = current; break }
+          }
+          alice.checkAlive()
+          await sleep(1)
+        }
+        assert.ok(marker, 'worker must enter this exact send request')
         await sleep(delay)
+        const observedDelay = Date.now() - marker.startedAt
+        const responsePersistedBeforeKill = fs.existsSync(path.join(alice.directory, 'response.json'))
         alice.killGroup()
         await alice.exited
         const outcome = await sent
+        if (!outcome.acknowledged && !responsePersistedBeforeKill) interrupted++
         const restart = await alice.crashRestart()
         assert.equal(restart.node.pubkey, alice.pubkey)
         await mine(6)
@@ -142,9 +154,13 @@ try {
         const after = (await balance(alice)).vanilla.spendable
         if (received === 0) assert.equal(after, before)
         else assert.ok(after <= before - 10000 && after > before - 20000)
-        return { delay, outcome, received, before, after, boundary: 'process killed after dispatch marker, not an instrumented database commit boundary' }
+        return { delay, observedDelay, responsePersistedBeforeKill, outcome, received, before, after, boundary: 'process killed after dispatch marker, not an instrumented database commit boundary' }
       })
     }
+    await step('at least one send actually interrupted before native response persistence', async () => {
+      assert.ok(interrupted > 0, 'all sends completed before kill; this run does not qualify interruption recovery')
+      return { interrupted }
+    })
   }
 
   if (scenario === 'cold-copy') {

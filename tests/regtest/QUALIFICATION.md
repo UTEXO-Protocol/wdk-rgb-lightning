@@ -131,7 +131,7 @@ permissions. It is not a seed-only, VSS, stale-state or migration test.
 | RGB force-close | `wdk-rln-force-close-FS5eWb` | `wdk-rln-force-close-nnzwyO` | Both permissive diagnostics fail Core signature verification before broadcast |
 | Strict RGB force-close | `wdk-rln-force-close-HPUcv1` | Not separately run in this follow-up | Same native Core signature rejection, not caused only by permissive policy |
 | ENOSPC and new send after recovery | `wdk-rln-storage-TQJny7` | `wdk-rln-storage-8XPw0F` | Strict pass; bounded 128-MiB HFS+ volume, independently observed write failure, rejected mutation, no broadcast, retained balance and successful new send |
-| Dispatched-send process death at 0/20/100 ms | `wdk-rln-interrupted-b87IA1` | `wdk-rln-interrupted-vHwYXY` | Strict pass; reconcile received amount/balance without automatic retry; not exact database-commit fault injection |
+| Dispatched-send process death at 0/20/100 ms target delay | `wdk-rln-interrupted-cavpn4` | `wdk-rln-interrupted-0ESuJj` | Strict pass with actual pre-response interruptions: early kill prevents broadcast, middle kill leaves a broadcast but unacknowledged transaction, late kill follows an acknowledged send; all reconcile without retry |
 | Longer competing-fork reorg, unconfirmed restart, exactly-once reconfirmation | `wdk-rln-reorg-9EcWkG` | `wdk-rln-reorg-Y8fIK7` | Strict pass; Node TransactionSync and Bare BlockSync; not every reorg depth or RGB-finality scenario |
 | Both peers die with claimable HODL, reconnect and claim once | `wdk-rln-hodl-crash-yvR3uE` | `wdk-rln-hodl-crash-WH3CeG` | Both pass under permissive diagnostics |
 | Relocate latest complete local state, cold-start and confirmed spend | `wdk-rln-cold-copy-jmQVbG` | `wdk-rln-cold-copy-4UIb9n` | Strict pass; same identity/address/balance, permission-preserving copy |
@@ -147,8 +147,16 @@ correctly rejected it, and `cp -pR` corrected the fixture.
 Three focused process-group ownership/idempotence tests also pass and run in WDK
 CI. Dispatch markers now use atomic rename, match the exact request ID and are
 cleared on cold restart; they never contain request arguments or seeds.
-Final marker-hardened interrupted-send reruns also pass on Node
-(`wdk-rln-interrupted-HqBEWm`) and Bare (`wdk-rln-interrupted-RaN1td`).
+Final review found that normal 500-ms mailbox polling missed the interruption
+window: all sends in the older `b87IA1`, `vHwYXY`, `HqBEWm` and `RaN1td` runs
+were acknowledged before kill. Those results establish post-send recovery only,
+despite their earlier step names. The final fixture polls the dispatch marker at
+1 ms, records observed delay/response persistence and fails unless an actual
+unacknowledged interruption occurred. Node observed 3/23/103 ms; Bare observed
+4/21/105 ms. In both, the first kill has no broadcast, the middle kill has a
+10,000-sat broadcast without a returned response, and the last follows success.
+All recover correct balances and exactly one payment without replay. These are
+still not instrumented database-commit boundaries or proof of all crash timings.
 
 Shortening Core's tip before constructing a competing branch caused mempool
 Electrs 3.3.0 to panic in `src/new_index/schema.rs:330`; the RGB Electrum backend

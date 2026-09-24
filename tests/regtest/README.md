@@ -127,6 +127,9 @@ It never fills the host disk and retains the detached evidence image.
 
 `interrupted` kills the entire native process group at three dispatch-relative
 times and reconciles chain/balance state without automatically retrying a send.
+It polls the dispatch marker at 1 ms, records whether the response was persisted
+before killing, and fails if every send finished before the kill. Ordinary
+500-ms RPC polling cannot establish an actual interruption.
 These are not instrumented database-commit boundaries. `reorg` pauses only this
 Compose project's indexers to construct a longer competing fork excluding a
 confirmed payment, then checks unconfirmation, cold restart and reconfirmation.
