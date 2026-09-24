@@ -11,7 +11,7 @@ const permissive = process.argv.includes('--diagnostic-permissive')
 const scenario = process.argv.find(arg => arg.startsWith('--scenario='))?.split('=')[1] ?? 'force-close'
 const blockSync = process.argv.includes('--block-sync')
 const rgb = process.argv.includes('--rgb')
-assert.ok(['force-close', 'reorg', 'interrupted', 'hodl-crash', 'cold-copy'].includes(scenario))
+assert.ok(['force-close', 'reorg', 'rgb-reorg', 'interrupted', 'hodl-crash', 'cold-copy'].includes(scenario))
 assert.ok(!rgb || scenario === 'force-close', '--rgb is only supported for force-close')
 const root = fs.mkdtempSync(path.join(os.tmpdir(), `wdk-rln-${scenario}-`))
 fs.chmodSync(root, 0o700)
@@ -58,6 +58,65 @@ try {
     assert.equal((await balance(alice)).vanilla.spendable, 2000000)
     return { txid, sats: 2000000 }
   })
+
+  if (scenario === 'rgb-reorg') {
+    let disconnected
+    try {
+      const incoming = await step('settle issued RGB transfer with one confirmation', async () => {
+        await prepareIssuer()
+        await alice.call('createUtxos', [{ up_to: false, num: 5, size: 50000, fee_rate: 2, skip_sync: false }])
+        await mine(6)
+        const asset = (await daemon('issueassetnia', { ticker: 'REORG', name: 'Reorg qualification', precision: 0, amounts: [10000] })).asset
+        const invoice = await alice.call('createRgbInvoice', [{ witness: false, min_confirmations: 1 }])
+        const decoded = await alice.call('decodeRgbInvoice', [invoice.invoice])
+        const send = await daemon('sendrgb', { donation: true, fee_rate: 2, min_confirmations: 1, skip_sync: false, recipient_map: { [asset.asset_id]: [{ recipient_id: invoice.recipient_id, assignment: { type: 'Fungible', value: 10000 }, transport_endpoints: decoded.transport_endpoints }] } })
+        await mine(1)
+        disconnected = await rpc('getbestblockhash')
+        await until('RGB transfer settled', async () => {
+          await alice.call('refreshTransfers', [{ skip_sync: false }])
+          await daemon('refreshtransfers', { filter: [], skip_sync: false })
+          return (await alice.call('getAssetBalance', [asset.asset_id])).settled === 10000
+        })
+        assert.equal((await transaction(send.txid)).confirmations, 1)
+        return { asset_id: asset.asset_id, txid: send.txid }
+      })
+      await step('longer fork disconnects RGB witness transaction', async () => {
+        execFileSync('docker', ['compose', '-f', path.join(here, 'compose.yaml'), 'pause', 'indexer', 'electrs'])
+        try {
+          await rpc('invalidateblock', [disconnected])
+          const miner = await rpc('getnewaddress', [], 'miner')
+          await rpc('generateblock', [miner, []])
+          await rpc('generateblock', [miner, []])
+        } finally {
+          execFileSync('docker', ['compose', '-f', path.join(here, 'compose.yaml'), 'unpause', 'indexer', 'electrs'])
+        }
+        await indexed()
+        assert.ok((await rpc('getrawmempool')).includes(incoming.txid))
+        assert.equal((await transaction(incoming.txid)).confirmations ?? 0, 0)
+      })
+      const observed = await step('record RGB state after sync, refresh and cold restart', async () => {
+        await alice.call('sync')
+        await alice.call('refreshTransfers', [{ skip_sync: false }])
+        const beforeRestart = await alice.call('getAssetBalance', [incoming.asset_id])
+        await alice.crashRestart()
+        await alice.call('sync')
+        await alice.call('refreshTransfers', [{ skip_sync: false }])
+        const afterRestart = await alice.call('getAssetBalance', [incoming.asset_id])
+        return { beforeRestart, afterRestart, confirmations: (await transaction(incoming.txid)).confirmations ?? 0, transfers: await alice.call('listTransfers', [incoming.asset_id, incoming.txid]) }
+      })
+      await step('disconnected RGB transfer must not retain settled balance', async () => {
+        assert.equal(observed.confirmations, 0)
+        assert.equal(observed.afterRestart.settled, 0, 'confirmed RGB settlement must not survive a disconnected witness transaction')
+      })
+      await step('RGB reconfirms exactly once', async () => {
+        await mine(2)
+        await alice.call('refreshTransfers', [{ skip_sync: false }])
+        assert.equal((await alice.call('getAssetBalance', [incoming.asset_id])).settled, 10000)
+      })
+    } finally {
+      if (disconnected) { await rpc('reconsiderblock', [disconnected]); await mine(2) }
+    }
+  }
 
   if (scenario === 'reorg') {
     const baseline = (await balance(alice)).vanilla

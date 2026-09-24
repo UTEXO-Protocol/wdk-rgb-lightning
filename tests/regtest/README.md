@@ -112,6 +112,7 @@ Bare run. All tests default to strict signing; diagnostic policy is explicit.
 node tests/regtest/recovery.mjs --scenario=interrupted
 node tests/regtest/recovery.mjs --scenario=reorg
 node tests/regtest/recovery.mjs --scenario=reorg --block-sync
+node tests/regtest/recovery.mjs --scenario=rgb-reorg
 node tests/regtest/recovery.mjs --scenario=cold-copy
 node tests/regtest/storage-fault.mjs
 node tests/regtest/recovery.mjs --scenario=hodl-crash --diagnostic-permissive
@@ -137,6 +138,12 @@ confirmed payment, then checks unconfirmation, cold restart and reconfirmation.
 wallet plus signer after all writers stop; it is not VSS, migration, stale-backup
 or seed-only channel recovery. `hodl-crash` recovers a claimable HTLC after both
 processes die and verifies one terminal payment record.
+
+`rgb-reorg` separately disconnects a settled one-confirmation NIA receipt, proves
+the original transaction is now in Core's mempool, and checks native balance and
+transfer status after sync/refresh/cold restart. The released runtime fails this
+acceptance check: it retains settled/spendable units. This is not a BTC reorg
+test pass, nor evidence of permanent loss or a conflicting-spend scenario.
 
 `force-close` identifies the exact funding spend and delayed principal output,
 restarts while timelocked, matures CSV, verifies its sweep and confirms a new send

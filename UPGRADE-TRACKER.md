@@ -2,7 +2,8 @@
 
 Status: 2026-09-24 local released-runtime qualification completed within the
 recorded scope. Strict outgoing signing, same-process reopen, force-close recovery
-and Android 16-KiB packaging failures remain blockers. Draft PR, not release approval.
+and Android 16-KiB packaging failures remain blockers. RGB settlement also remains
+stale after a tested reorg. Draft PR, not release approval.
 
 ## Scope
 
@@ -74,6 +75,12 @@ a weaker implementation.
   remains permission-blocked; initial install advisory counts are recorded.
 - Exact commands, source attribution, run IDs and limits are in
   [the qualification report](./tests/regtest/QUALIFICATION.md).
+- All five advertised Node platforms now pass optimized native execution in
+  run 35995537629. The report records exact engine versions and offline scope.
+- RGB-specific longer-fork tests fail on strict Node and Bare: the transaction
+  has zero confirmations but balance/transfer state stays settled after restart.
+  Released RGB-lib refresh excludes already-settled transfers. Documented the
+  limitation; no upstream rollback or state-reset workaround introduced.
 
 ### 2026-09-24 Local Qualification
 

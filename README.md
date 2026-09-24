@@ -54,12 +54,24 @@ are never rounded first. This does not enable full-u64 request amounts.
 Refresh preserves per-batch status/failure details, and unspents
 preserve `utxo.exists`, including false. No spendability is inferred from absence.
 
-Real local BTC/RGB, standard-channel and signed APay tests are recorded in
-[local qualification](./tests/regtest/README.md). Strict outgoing signing and
-same-process reopen remain blockers; permissive regtest diagnostics are not
-production qualification. Mobile runtime and adverse recovery tests remain
-separate gates. The upgrade does not establish the root cause of the integrator's
-zero-channel report. `waitForChannel` polls; provisioning needs server-side evidence.
+Real BTC/RGB, channel/APay, mobile and adverse-recovery results are recorded in
+[the qualification report](./tests/regtest/QUALIFICATION.md). All five Node
+platforms pass native offline execution; iOS arm64 simulator and Android arm64
+4-KiB worklets pass their recorded suites. Strict outgoing signing, same-process
+reopen, strict BTC sweeping, RGB force-close and Android 16-KiB packaging remain
+blockers. Permissive regtest diagnostics are not production qualification.
+
+Released RGB-lib does not revisit settled transfers during refresh: after a
+one-confirmation RGB transfer is disconnected by a reorg, `getAssetBalance`
+continues reporting its units as settled/spendable, even after cold restart.
+These fields are **not a reorg-safe current-confirmation guarantee**. This is a
+reproduced upstream limitation, not repaired by this package. The tests do not
+demonstrate permanent asset loss or every reorg/conflicting-spend case.
+
+The upgrade does not establish the integrator's zero-channel root cause.
+`waitForChannel` polls; provisioning needs server-side evidence. Physical-device
+runs, native Rust TLS, prolonged suspension and full justice/commit-boundary fault
+matrices are not implied by the recorded passes.
 
 ## Contents
 

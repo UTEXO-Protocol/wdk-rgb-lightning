@@ -91,7 +91,18 @@ No public Signet or mainnet transaction was submitted.
    not a WDK payment call; no physical-device claim is made. Our missing post-link
    validation is fixed with a CLI, regression cases and a fail-closed candidate
    artifact workflow. `zipalign -P 16` passes this APK and is not sufficient.
-6. **External-signer issuance/inflation.** Released RLN explicitly rejects these
+6. **RGB settlement is not reorg-safe.** With `min_confirmations=1`, a received
+   10,000-unit NIA transfer settles. A longer competing fork removes its block;
+   Core independently reports the original transaction in the mempool with zero
+   confirmations. After sync, refresh and whole-process restart, both bindings
+   still report 10,000 settled/spendable units and a `Settled` transfer. The exact
+   released [RGB-lib refresh implementation](https://github.com/UTEXO-Protocol/rgb-lib/blob/62a8c3a045901147b3b06aed9f1e61f345695dce/src/wallet/online.rs#L2265-L2291)
+   filters to waiting transfers, excluding settled records; RLN forwards to it.
+   This is an upstream finality/recovery limitation, not evidence of permanent
+   loss, a conflicting replacement spend or every reorg depth. WDK now explicitly
+   documents that these fields do not guarantee current chain confirmation.
+   The reorg-safety acceptance check fails; no database rollback/reset was added.
+7. **External-signer issuance/inflation.** Released RLN explicitly rejects these
    operations. They are documented restrictions, not implemented WDK capabilities.
 
 Supporting exact released source:
@@ -133,6 +144,7 @@ permissions. It is not a seed-only, VSS, stale-state or migration test.
 | ENOSPC and new send after recovery | `wdk-rln-storage-TQJny7` | `wdk-rln-storage-8XPw0F` | Strict pass; bounded 128-MiB HFS+ volume, independently observed write failure, rejected mutation, no broadcast, retained balance and successful new send |
 | Dispatched-send process death at 0/20/100 ms target delay | `wdk-rln-interrupted-cavpn4` | `wdk-rln-interrupted-0ESuJj` | Strict pass with actual pre-response interruptions: early kill prevents broadcast, middle kill leaves a broadcast but unacknowledged transaction, late kill follows an acknowledged send; all reconcile without retry |
 | Longer competing-fork reorg, unconfirmed restart, exactly-once reconfirmation | `wdk-rln-reorg-9EcWkG` | `wdk-rln-reorg-Y8fIK7` | Strict pass; Node TransactionSync and Bare BlockSync; not every reorg depth or RGB-finality scenario |
+| Previously settled RGB receipt disconnected by longer fork | `wdk-rln-rgb-reorg-h5f8NG` | `wdk-rln-rgb-reorg-dyLjQ3` | Strict fail: 0 confirmations in Core, but settled/spendable stays 10,000 after refresh and cold restart |
 | Both peers die with claimable HODL, reconnect and claim once | `wdk-rln-hodl-crash-yvR3uE` | `wdk-rln-hodl-crash-WH3CeG` | Both pass under permissive diagnostics |
 | Relocate latest complete local state, cold-start and confirmed spend | `wdk-rln-cold-copy-jmQVbG` | `wdk-rln-cold-copy-4UIb9n` | Strict pass; same identity/address/balance, permission-preserving copy |
 
@@ -163,6 +175,10 @@ Electrs 3.3.0 to panic in `src/new_index/schema.rs:330`; the RGB Electrum backen
 also reported a missing old-height header. Those failed diagnostics are retained
 as `wdk-rln-reorg-gMwASt` and `wdk-rln-reorg-IhrCAW`. The ordinary longer-fork tests
 above pass. The crashed indexer was restarted without deleting its database.
+The first RGB-specific attempt (`wdk-rln-rgb-reorg-O7wPyK`) incorrectly expected
+an explicit zero `confirmations` field from Core for a mempool transaction; Core
+omits it. The corrected fixture independently requires mempool membership and
+normalizes that missing field to zero before testing native settlement state.
 
 ## Mobile Runtime Follow-Up
 
@@ -217,7 +233,7 @@ identity reports match the expected RLN, LDK, adapter and wrapper hashes.
 | Linux x64 GNU | Node 22.23.2 | Passed |
 | Linux arm64 GNU | Node 22.23.2 | Passed |
 | Linux x64 musl, Alpine 3.23 | Node 24.18.1 | Passed |
-| macOS x64 | Node 22 job | Still running; not yet qualified |
+| macOS x64 | Node 22.23.2 | Passed |
 
 These checks cover load/identity, offline init/persistence/lifecycle, invalid
 handles/errors and adapter boundaries. They do not replicate the complete
@@ -253,7 +269,7 @@ is excluded by owner decision, not a remaining release gate. Still unqualified:
 physical-device behavior and unexecuted mobile architectures; Android 16-KiB
 runtime (failed); other Node targets beyond recorded CI/host results; native Rust
 TLS, prolonged suspension/low-memory behavior; full reorg/justice/database-commit
-fault matrices; stale/seed-only channel recovery; strict BTC mature-output sweep
+fault matrices; RGB reorg-safe settlement (failed); stale/seed-only channel recovery; strict BTC mature-output sweep
 and RGB force-close recovery (failed); multi-hop/swap/linked-asset
 and media matrices; exact deployed Signet/mainnet LSP behavior; independent review
 and registry publication/provenance. These are not silently counted as passing.
