@@ -102,3 +102,44 @@ docker compose -f tests/regtest/compose.yaml --profile lsp stop
 
 Do not prune volumes or reset wallet state to get a passing run. Cache cleanup
 must leave source, evidence and the running stack intact.
+
+## Adverse Recovery
+
+Run serially on the same isolated stack. Add `--bare` and set `BARE_BIN` for each
+Bare run. All tests default to strict signing; diagnostic policy is explicit.
+
+```sh
+node tests/regtest/recovery.mjs --scenario=interrupted
+node tests/regtest/recovery.mjs --scenario=reorg
+node tests/regtest/recovery.mjs --scenario=reorg --block-sync
+node tests/regtest/recovery.mjs --scenario=cold-copy
+node tests/regtest/storage-fault.mjs
+node tests/regtest/recovery.mjs --scenario=hodl-crash --diagnostic-permissive
+node tests/regtest/recovery.mjs --scenario=force-close
+node tests/regtest/recovery.mjs --scenario=force-close --diagnostic-permissive
+node tests/regtest/recovery.mjs --scenario=force-close --rgb
+```
+
+`storage-fault.mjs` needs macOS/hdiutil and mount permission. It fills only a
+bounded 128-MiB private HFS+ image, independently checks ENOSPC, captures the
+mutation outcome, restores capacity and cold-restarts without wallet reset.
+It never fills the host disk and retains the detached evidence image.
+
+`interrupted` kills the entire native process group at three dispatch-relative
+times and reconciles chain/balance state without automatically retrying a send.
+These are not instrumented database-commit boundaries. `reorg` pauses only this
+Compose project's indexers to construct a longer competing fork excluding a
+confirmed payment, then checks unconfirmation, cold restart and reconfirmation.
+`cold-copy` preserves permissions while relocating the latest complete local
+wallet plus signer after all writers stop; it is not VSS, migration, stale-backup
+or seed-only channel recovery. `hodl-crash` recovers a claimable HTLC after both
+processes die and verifies one terminal payment record.
+
+`force-close` identifies the exact funding spend and delayed principal output,
+restarts while timelocked, matures CSV, verifies its sweep and confirms a new send
+that consumes that sweep. `--rgb` additionally requires all channel units to
+recover and settle at a second wallet; those later steps are unexecuted if the
+released commitment fails to broadcast. See the report: strict BTC sweeps and
+RGB commitment signatures currently block acceptance. Do not call a diagnostic
+BTC pass complete production recovery. Mobile commands are in
+[the simulator/emulator fixture](../mobile/README.md).

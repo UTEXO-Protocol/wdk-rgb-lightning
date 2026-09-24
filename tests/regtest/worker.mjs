@@ -61,6 +61,8 @@ const timer = setInterval(async () => {
   try {
     request = JSON.parse(fs.readFileSync(requestPath, 'utf8'))
     fs.unlinkSync(requestPath)
+    fs.writeFileSync(path.join(directory, 'active.tmp'), JSON.stringify({ id: request.id, target: request.target, method: request.method }), { mode: 0o600 })
+    fs.renameSync(path.join(directory, 'active.tmp'), path.join(directory, 'active.json'))
     const result = await dispatch(request)
     publish({ id: request.id, ok: true, result: result ?? null })
   } catch (error) {

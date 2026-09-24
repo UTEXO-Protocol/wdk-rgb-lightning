@@ -39,5 +39,8 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Test fault-harness process ownership
+        run: node --test tests/regtest/harness.test.mjs
+
       - name: Check package contents
         run: npm run check:package

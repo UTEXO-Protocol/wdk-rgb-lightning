@@ -1,8 +1,8 @@
 # RLN 0.13.0-beta.3 Upgrade Tracker
 
 Status: 2026-09-24 local released-runtime qualification completed within the
-recorded scope. Strict outgoing signer and same-process reopen failures remain
-explicit blockers. Draft PR, not release approval.
+recorded scope. Strict outgoing signing, same-process reopen, force-close recovery
+and Android 16-KiB packaging failures remain blockers. Draft PR, not release approval.
 
 ## Scope
 
@@ -32,7 +32,7 @@ explicit blockers. Draft PR, not release approval.
 | --- | --- | --- |
 | G1 | Existing colored-channel migration | Out of scope: owner confirmed no live wallets on 2026-09-24; fresh wallets only, no migration compatibility promise |
 | G2 | Old password-encrypted mnemonic migration | Out of scope under the same owner decision; no reset or stale-state rollback workaround |
-| G3 | Full desktop/mobile build and runtime target matrix | All seven Bare targets compile and pass artifact checks, including Android 64-bit 16 KiB alignment. Device/emulator/embedded runtime and remaining Node targets still need qualification |
+| G3 | Full desktop/mobile build and runtime target matrix | All seven Bare targets compile. iOS arm64 simulator and Android arm64 4-KiB emulator worklet suites pass; Android 16-KiB import crashes after upstream ELF relayout. Post-link check added in Bare. Physical devices excluded; unexecuted architectures remain explicit |
 | G4 | Controlled two-node/regtest and operator-coordinated LSP asset flow | Real local Node/Bare flows executed; strict outgoing signer and same-process reopen blockers remain. Deployed Signet/mainnet LSP qualification is separate |
 | G5 | Integrator zero-channel report root cause | Unproven: deployed build IDs and server provisioning logs required |
 | G6 | Current app depends on excluded overlay features | Separate adoption gate; do not change app pins |
@@ -51,6 +51,29 @@ virtual-channel trust change, or replacement of an unsupported safety guarantee 
 a weaker implementation.
 
 ## Verification Log
+
+### 2026-09-24 Adverse-Recovery And Mobile Follow-Up
+
+- Added reproducible regtest recovery scenarios, a bounded macOS disk-full
+  fixture and an isolated Expo 56 / RN 0.85.3 / Bare Kit 0.14.5 test application.
+- Strict Node/Bare disk-full recovery, three interrupted-send timings, longer
+  competing-fork reorgs and complete latest-state relocation pass. HODL recovery
+  after both processes die passes in the explicitly permissive diagnostic.
+- BTC force-close passes through timelock maturity, exact sweep and independently
+  confirmed re-spend under permissive diagnostics. Strict sweep fails natively.
+- RGB force-close commitments fail Core signature verification on Node strict
+  and Node/Bare diagnostics before broadcast. RGB maturity/re-spend is blocked,
+  not silently marked complete. No upstream transaction/signer patch added.
+- iOS 26.5 simulator and Android API 36 4-KiB emulator pass strict native wallet
+  operations, Bare HTTPS certificate +/- tests, foreground/background, cold
+  restart and worklet teardown. Embedded Bare reports 1.29.4; host CLI floor stays
+  1.32.0. Android 16-KiB packaging fails, despite passing APK ZIP alignment.
+- WDK 694 unit tests, declarations, lint and 33-file package check rerun and pass.
+  Simulator tests do not prove same-process signer-lock release, native Rust TLS,
+  long suspension or all persistence/justice scenarios. Mobile toolchain audit
+  remains permission-blocked; initial install advisory counts are recorded.
+- Exact commands, source attribution, run IDs and limits are in
+  [the qualification report](./tests/regtest/QUALIFICATION.md).
 
 ### 2026-09-24 Local Qualification
 

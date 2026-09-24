@@ -63,7 +63,35 @@ No public Signet or mainnet transaction was submitted.
    task retaining channel/peer managers without checking shutdown; this is a
    concrete upstream lifetime defect and leading ownership explanation, not proof
    that it is the only retained reference. Whole-process recovery passes separately.
-3. **External-signer issuance/inflation.** Released RLN explicitly rejects these
+3. **Strict BTC mature-output sweep.** Strict Node and Bare runs recognize the exact
+   delayed output with `to_self_delay=144`, advances LDK's observed tip well past
+   maturity (another 96 blocks), but logs `Error spending outputs: ()` and never
+   spends it. The permissive BTC counterpart passes on Node and Bare, including a
+   confirmed subsequent spend consuming the sweep. This implicates the released
+   strict/native output-spending path; it does not identify the specific rejected
+   policy check. `ExternalSigner` maps several backend/PSBT failures to `()` in
+   [the released implementation](https://github.com/UTEXO-Protocol/rgb-lightning-node/blob/af03c7f1a65135a429f05a5820600338215954dc/src/signer/external.rs#L778-L820).
+   The observed output is unspent, not demonstrated lost.
+4. **RGB force-close commitment rejection.** A fresh confirmed zero-push standard
+   RGB channel reports usable at both peers. Force-close reaches the native
+   broadcaster, but Core returns code -26, `mempool-script-verify-flag-failed
+   (Signature must be zero for failed CHECK(MULTI)SIG operation)`. Reproduced on
+   Node strict and Node/Bare permissive diagnostics. This occurs before CSV
+   maturity; RGB sweep/re-spend steps are unexecuted, not passing. WDK forwards
+   channel ID, peer and force flag; it does not construct this commitment. The
+   shared RLN/LDK/external-signer transaction path needs investigation; the precise
+   signature/RGB integration defect is not yet proven. No upstream fix is included.
+5. **Android 16-KiB post-link crash.** Original arm64 and x64 `.bare` artifacts pass
+   LOAD/RELRO checks. bare-link 3.3.0 with bare-lief 0.2.5 shifts the arm64 RELRO
+   end from `0x7028000` to `0x7029000`; 16-KiB page rounding then protects writable
+   data. The 16-KiB arm64 emulator faults in Rust `LazyKey::lazy_init` during
+   `rln_binding_build_info`, at relative address `0x702ba50`. The same APK passes
+   on a 4-KiB emulator. Published bare-lief 0.2.8 still produces a misaligned
+   RELRO end on arm64 and x64. This localizes the failure to upstream packaging,
+   not a WDK payment call; no physical-device claim is made. Our missing post-link
+   validation is fixed with a CLI, regression cases and a fail-closed candidate
+   artifact workflow. `zipalign -P 16` passes this APK and is not sufficient.
+6. **External-signer issuance/inflation.** Released RLN explicitly rejects these
    operations. They are documented restrictions, not implemented WDK capabilities.
 
 Supporting exact released source:
@@ -77,7 +105,7 @@ Supporting exact released source:
   Unit tests mock native modules; the scenarios above do not.
 - Node: 12 JS/installer tests, declarations, optimized macOS arm64 native canary,
   source-installed packed Node/WDK consumer pass (93 packages, nine-minute install).
-- Bare: 31 JS/installer tests including ELF negatives; declarations and real
+- Bare: 33 JS/installer tests including pre/post-link ELF negatives; declarations and real
   optimized macOS canary pass. Packed WDK/Bare consumer passes on 1.32.0 using
   current provenance-verified artifacts; earlier normal source install also passed.
 - Bare optimized builds and header/symbol/hash checks pass for darwin-arm64,
@@ -89,6 +117,105 @@ Supporting exact released source:
   Native packages remain source-build distributions, not no-Rust/prebuilt promises.
 - npm production dependency audits report zero findings in all three packages.
   This is not a Rust/security audit or an audit of the local explorer.
+
+## Non-Device Recovery Follow-Up
+
+All following runs retain private results and wallet/log evidence. The complete
+state copy includes the signer, stops every writer and preserves 0700 directory
+permissions. It is not a seed-only, VSS, stale-state or migration test.
+
+| Scenario | Node evidence | Bare evidence | Result / boundary |
+| --- | --- | --- | --- |
+| BTC force-close through CSV, exact sweep and independently confirmed re-spend | `wdk-rln-force-close-5JGUdx` | `wdk-rln-force-close-zYyEYY` | Both pass, permissive diagnostic only |
+| Strict BTC force-close maturity | `wdk-rln-force-close-j7gvY4` | `wdk-rln-force-close-S93Z25` | Both fail: commitment confirms; delayed output recognized; sweep fails as described above |
+| RGB force-close | `wdk-rln-force-close-FS5eWb` | `wdk-rln-force-close-nnzwyO` | Both permissive diagnostics fail Core signature verification before broadcast |
+| Strict RGB force-close | `wdk-rln-force-close-HPUcv1` | Not separately run in this follow-up | Same native Core signature rejection, not caused only by permissive policy |
+| ENOSPC and new send after recovery | `wdk-rln-storage-TQJny7` | `wdk-rln-storage-8XPw0F` | Strict pass; bounded 128-MiB HFS+ volume, independently observed write failure, rejected mutation, no broadcast, retained balance and successful new send |
+| Dispatched-send process death at 0/20/100 ms | `wdk-rln-interrupted-b87IA1` | `wdk-rln-interrupted-vHwYXY` | Strict pass; reconcile received amount/balance without automatic retry; not exact database-commit fault injection |
+| Longer competing-fork reorg, unconfirmed restart, exactly-once reconfirmation | `wdk-rln-reorg-9EcWkG` | `wdk-rln-reorg-Y8fIK7` | Strict pass; Node TransactionSync and Bare BlockSync; not every reorg depth or RGB-finality scenario |
+| Both peers die with claimable HODL, reconnect and claim once | `wdk-rln-hodl-crash-yvR3uE` | `wdk-rln-hodl-crash-WH3CeG` | Both pass under permissive diagnostics |
+| Relocate latest complete local state, cold-start and confirmed spend | `wdk-rln-cold-copy-jmQVbG` | `wdk-rln-cold-copy-4UIb9n` | Strict pass; same identity/address/balance, permission-preserving copy |
+
+The first RGB fixture had undersized funding UTXOs and failed before opening a
+channel (`wdk-rln-force-close-YZoeA0`); correcting fixture funding exposed the
+separate commitment failure. No native workaround was added. Bare's first
+disk-full run double-killed an already killed process group; idempotent harness
+cleanup fixes that false failure. Node `fs.cpSync` widened signer directory
+permissions to 0755 in the first cold-copy fixture; the native permission guard
+correctly rejected it, and `cp -pR` corrected the fixture.
+
+Three focused process-group ownership/idempotence tests also pass and run in WDK
+CI. Dispatch markers now use atomic rename, match the exact request ID and are
+cleared on cold restart; they never contain request arguments or seeds.
+Final marker-hardened interrupted-send reruns also pass on Node
+(`wdk-rln-interrupted-HqBEWm`) and Bare (`wdk-rln-interrupted-RaN1td`).
+
+Shortening Core's tip before constructing a competing branch caused mempool
+Electrs 3.3.0 to panic in `src/new_index/schema.rs:330`; the RGB Electrum backend
+also reported a missing old-height header. Those failed diagnostics are retained
+as `wdk-rln-reorg-gMwASt` and `wdk-rln-reorg-IhrCAW`. The ordinary longer-fork tests
+above pass. The crashed indexer was restarted without deleting its database.
+
+## Mobile Runtime Follow-Up
+
+The isolated Expo 56.0.21 / RN 0.85.3 / Bare Kit 0.14.5 Release app uses verified
+candidate artifacts, not the user's real application or an older registry addon.
+The embedded engine reports Bare 1.29.4 / uv 1.52.1 / V8 14.8.178.31. This bundled
+profile is distinct from standalone Bare >=1.32.0; the host floor stays unchanged.
+
+- iOS 26.5 arm64 simulator: `wdk-ios-qualification-IClIoq` passes actual native
+  identity/unlock, funded signed BTC send independently confirmed by Core, valid
+  HTTPS and self-signed certificate rejection, background/foreground events,
+  process termination/cold restart with the same identity/balance/address, native
+  shutdown and worklet teardown returning to React Native.
+- Android API 36 arm64, **4096-byte pages**: `wdk-android-qualification-xinNWJ`
+  passes the same checks. The **16384-byte-page** profile fails at native import,
+  as described above; it is not covered by the 4-KiB pass.
+- Final reruns with simulator/emulator identity recorded also pass:
+  `wdk-ios-qualification-625zc5` and `wdk-android-qualification-naD3Na`.
+- TLS tests exercise Bare HTTPS, not native Rust HTTPS. Five seconds in the
+  background does not prove long suspension, memory-pressure or battery behavior.
+  Successful teardown is not proof of same-process persistent signer reopening.
+- Initial TLS fixture incorrectly used nonexistent `https.get`; corrected to
+  request/end. Android minSdk was corrected from Expo's default 24 to Bare Kit's
+  required 29. A host-ENOSPC build failed, then succeeded after deleting only
+  completed build caches/duplicate archives. These are fixture/environment issues.
+- The fixture's initial npm install reported 14 dependency advisories (10 moderate,
+  four high). Further audit submission was blocked pending permission to send its
+  dependency metadata to npm. No clean mobile-toolchain security audit is claimed.
+
+Commands and scope are in [the mobile fixture](../mobile/README.md). Physical
+devices were deliberately excluded, as requested. Original build outputs, private
+generated lockfile, crash log and ELF metadata remain under
+`/tmp/wdk-mobile-qualification`; wallet/controller evidence remains private.
+The private lockfile was subsequently changed for the 0.2.8 linker diagnostic,
+not retained as an immutable as-built APK lock. The exact tested APK, extracted
+native library and worklet hashes are in [build evidence](../mobile/BUILD-EVIDENCE.json).
+The library extracted from the tested APK independently fails the new ELF check.
+
+## Node Target Execution
+
+[Runtime matrix run 35995537629](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/actions/runs/35995537629)
+checks candidate head `e13fc9b576c2f92f800158d7678e524d7c873102`, checked out as PR
+merge ref `a6a40d65806d1153be6e4860079cec3373025d46`. These are native-architecture
+executions, not cross-build-only results. Each job builds optimized native code,
+runs JS/type and native offline canaries plus the Rust C-FFI adapter tests, packs
+the source distribution and emits compiled identity/provenance. Downloaded
+identity reports match the expected RLN, LDK, adapter and wrapper hashes.
+
+| Target | Runtime | Status |
+| --- | --- | --- |
+| macOS arm64 | Node 22.23.2 | Passed |
+| Linux x64 GNU | Node 22.23.2 | Passed |
+| Linux arm64 GNU | Node 22.23.2 | Passed |
+| Linux x64 musl, Alpine 3.23 | Node 24.18.1 | Passed |
+| macOS x64 | Node 22 job | Still running; not yet qualified |
+
+These checks cover load/identity, offline init/persistence/lifecycle, invalid
+handles/errors and adapter boundaries. They do not replicate the complete
+funded network/adverse suite on every OS/architecture, nor prove every Node
+version allowed by the package engine range. macOS host Node/Bare regtest and
+mobile worklet results are separately recorded above.
 
 ## Harness And Infrastructure Corrections
 
@@ -115,13 +242,17 @@ Supporting exact released source:
 
 VSS is disabled and upstream VSS defects are not patched here. Legacy migration
 is excluded by owner decision, not a remaining release gate. Still unqualified:
-mobile device/emulator/React Native lifecycle and TLS; other advertised Node
-targets beyond recorded CI/host results; full reorg/justice/disk-failure and
-fresh-device recovery; force-close CSV sweep maturity; multi-hop/swap/linked-asset
+physical-device behavior and unexecuted mobile architectures; Android 16-KiB
+runtime (failed); other Node targets beyond recorded CI/host results; native Rust
+TLS, prolonged suspension/low-memory behavior; full reorg/justice/database-commit
+fault matrices; stale/seed-only channel recovery; strict BTC mature-output sweep
+and RGB force-close recovery (failed); multi-hop/swap/linked-asset
 and media matrices; exact deployed Signet/mainnet LSP behavior; independent review
 and registry publication/provenance. These are not silently counted as passing.
 
 The integrator's zero-channel incident remains unproven without its actual client
 and server artifacts/logs. Local provisioning success does not establish that
 incident's root cause. Both Signet rollout and mainnet production remain gated by
-the strict-signer and reopen failures plus their applicable deployment checks.
+the strict-signer, force-close and reopen failures plus applicable deployment
+checks. Mobile Android rollout also requires the packaging defect to be fixed
+and the final APK requalified, not just its input prebuild.

@@ -112,6 +112,7 @@ export class WalletProcess {
     if (!command) throw new Error('BARE_BIN must point to a Bare >=1.32.0 executable')
     this.exit = undefined
     this.spawnError = undefined
+    this.groupKilled = false
     if (process.platform === 'win32') throw new Error('The local qualification harness requires POSIX process groups')
     // Bare's npm launcher spawns another process. Own both for crash tests and cleanup.
     this.child = spawn(command, [path.join(here, 'worker.mjs'), this.directory], { detached: true, stdio: ['ignore', log, log] })
@@ -123,17 +124,18 @@ export class WalletProcess {
   }
 
   killGroup () {
-    if (!this.child.pid) return
+    if (!this.child.pid || this.groupKilled) return
     try { process.kill(-this.child.pid, 'SIGKILL') } catch (error) {
       if (error.code !== 'ESRCH') throw error
     }
+    this.groupKilled = true
   }
 
   async crashRestart () {
     if (this.pending) throw new Error('Cannot restart while a request is active')
     this.killGroup()
     await this.exited
-    for (const name of ['ready', 'request.json', 'request.tmp', 'response.json', 'response.tmp']) {
+    for (const name of ['ready', 'request.json', 'request.tmp', 'response.json', 'response.tmp', 'active.json', 'active.tmp']) {
       fs.rmSync(path.join(this.directory, name), { force: true })
     }
     this.spawn()
