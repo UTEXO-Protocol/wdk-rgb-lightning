@@ -117,7 +117,10 @@ try {
       assert.equal(decoded.asset_id, null)
       assert.equal(decoded.assignment.type, 'Any')
       const sent = await daemon('sendrgb', {
-        donation: true, fee_rate: 2, min_confirmations: 1, skip_sync: false,
+        donation: true,
+        fee_rate: 2,
+        min_confirmations: 1,
+        skip_sync: false,
         recipient_map: {
           [asset.asset_id]: [{
             recipient_id: invoice.recipient_id,
