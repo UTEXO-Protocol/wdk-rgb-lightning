@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { WalletProcess, mine, prepareChain, rpc } from './harness.mjs'
+import { WalletProcess, daemon, mine, prepareChain, prepareIssuer, rpc, until } from './harness.mjs'
 import { REQUIRED_NATIVE_RUNTIME } from '../../src/native-runtime-contract.js'
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wdk-rln-address-policy-'))
@@ -59,7 +59,12 @@ try {
     assert.ok(info.runtime.capabilities.includes('pending-blinded-v1'))
     return info.runtime
   })
-  const witness = async () => fresh.call('createRgbInvoice', [{ witness: true, min_confirmations: 1, duration_seconds: 3600 }])
+  const witnessInvoices = []
+  const witness = async () => {
+    const invoice = await fresh.call('createRgbInvoice', [{ witness: true, min_confirmations: 1, duration_seconds: 3600 }])
+    witnessInvoices.push(invoice)
+    return invoice
+  }
   await step('fund new address, stable reads, invoice before setup', async () => {
     const address = await fresh.call('getNewAddress')
     assert.equal(await fresh.call('getAddress'), address)
@@ -99,6 +104,48 @@ try {
     const outputs = await fresh.call('listUnspents', [false])
     assert.equal(outputs.reduce((total, output) => total + output.pending_blinded, 0), 2)
     return { amountReceivedSats: after - before }
+  })
+  await step('pre-setup and interleaved witness invoices settle after restart', async () => {
+    await prepareIssuer()
+    assert.equal(witnessInvoices.length, 3)
+    const settled = []
+    for (const [index, invoice] of witnessInvoices.entries()) {
+      const asset = (await daemon('issueassetnia', {
+        ticker: `SETUP${index}`, name: `Setup isolation ${index}`, precision: 0, amounts: [100]
+      })).asset
+      const decoded = await fresh.call('decodeRgbInvoice', [invoice.invoice])
+      assert.equal(decoded.asset_id, null)
+      assert.equal(decoded.assignment.type, 'Any')
+      const sent = await daemon('sendrgb', {
+        donation: true, fee_rate: 2, min_confirmations: 1, skip_sync: false,
+        recipient_map: {
+          [asset.asset_id]: [{
+            recipient_id: invoice.recipient_id,
+            assignment: { type: 'Fungible', value: 100 },
+            transport_endpoints: decoded.transport_endpoints,
+            witness_data: { amount_sat: 1000 }
+          }]
+        }
+      })
+      await mine()
+      await until(`interleaved witness ${index} settlement`, async () => {
+        for (const response of [
+          await fresh.call('refreshTransfers', [{ skip_sync: false }]),
+          await daemon('refreshtransfers', { filter: [], skip_sync: false })
+        ]) {
+          for (const change of Object.values(response.transfers)) assert.equal(change.failure, null)
+        }
+        const transfers = await fresh.call('listTransfersByTxid', [sent.txid])
+        return transfers.some(transfer => transfer.status === 'Settled')
+      })
+      assert.equal((await fresh.call('getAssetBalance', [asset.asset_id])).settled, 100)
+      settled.push({ assetId: asset.asset_id, transactionId: sent.txid, received: 100 })
+    }
+    await fresh.crashRestart()
+    for (const transfer of settled) {
+      assert.equal((await fresh.call('getAssetBalance', [transfer.assetId])).settled, transfer.received)
+    }
+    return { invoicesSettled: settled.length, persistedAfterRestart: true }
   })
   const reuse = new WalletProcess(root, 'reuse', runtime)
   wallets.push(reuse)

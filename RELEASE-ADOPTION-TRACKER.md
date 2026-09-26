@@ -9,11 +9,11 @@ No VSS work, upstream behavioral fork, wallet migration or physical device run.
 | ID | Work | Status | Evidence / remaining gate |
 | --- | --- | --- | --- |
 | P01 | Preserve pending_blinded through C-FFI and wrapper types | Node and Bare host native pass | Funded blinded counts 1/2 preserved through process restart; Rust conversion regression passed for 0/3/u32::MAX; Node 13/Bare 34 installer tests |
-| P02 | Normalize released DTOs at Iris boundary | In progress | Strict assignment grammar/u64 boundary and WaitingBroadcast; 64 focused Iris tests pass; sequential portfolio/history adaptation under test |
+| P02 | Normalize released DTOs at Iris boundary | Implemented and unit-tested | Strict assignment grammar/u64 boundary, WaitingBroadcast and sequential portfolio/history reads; full Iris suite and coverage gates pass |
 | P03 | Replace prepared-plan UX with released one-shot sends | Explicit approval required | Automated safety review rejected removal of exact-fee/preauthorized-transaction guarantees; proposed edit was not applied. Approval requested for clearly disclosed fee-rate authorization and durable unknown-outcome handling, or disabled sends |
-| P04 | Explicit non-reuse address policy and safe legacy rotation | WDK implemented; Node and Bare funded pass | Six strict native checks pass on each runtime, including setup/pending-witness script isolation and funded allocated/rotated BTC receipt after restart. Actual RGB settlement interleaving pending |
+| P04 | Explicit non-reuse address policy and safe legacy rotation | WDK implemented; Node and Bare funded pass | Seven strict native checks pass on each runtime: setup/witness script isolation, actual settlement of all three interleaved witness invoices, and balances/reservations/funded BTC addresses persisting after process restart |
 | P05 | Fresh-wallet unknown-asset receive | Planned | Generic invoices must not promise a particular asset; no custom import or mislabeled USDT invoice |
-| P06 | Sequential refresh/history with partial/error states | In progress | Iris contract v4 records sequential/known-scripts reads and null block hash; recovery remains pending; portfolio/history 48 tests pass; receipt dependency removal pending |
+| P06 | Sequential refresh/history with partial/error states | Implemented; app native qualification pending | Iris contract v4 records sequential/known-scripts reads and null block hash; recovery remains pending; BTC requests explicitly untracked without released address receipts |
 | P07 | Native signer lifecycle and runtime containment | Upstream defect; containment pending | Same-process retained DB lock is not fixed by handle disposal |
 | P08 | One-shot failure and interrupted-broadcast recovery | Pending | No duplicate submission; signing/write-failure qualification |
 | P09 | New-wallet restore and address discovery | Pending | FastSync alone is insufficient evidence |
@@ -51,3 +51,18 @@ No VSS work, upstream behavioral fork, wallet migration or physical device run.
   2,341 tests pass on Node 22. Prepared-send adoption is not included. Bare adapter
   milestone pushed as `78d34c4` to existing PR #21. NodeJS PR #23 CI passed;
   native matrix is still running (three platforms passed at last inspection).
+- Extended funded fixture runs `wdk-rln-address-policy-ScQkKP` (Node) and
+  `wdk-rln-address-policy-G85b3k` (Bare) each passed all seven checks, including
+  actual RGB settlement after setup and persistence after another process restart.
+- Iris receive/pin follow-up: 212 suites / 2,340 tests and existing coverage
+  thresholds pass; typecheck and lint pass. Required installed-account API gate
+  still fails on 13 custom on-chain methods and deferred `vssDeleteAll`.
+- macOS arm64, all three iOS targets and Android arm64 rebuilt with the new
+  identity. Android arm32/x64 and updated app mobile qualification remain pending.
+- WDK CI detected the engineering tracker in the npm tarball. Added a specific
+  `.npmignore` exclusion; package allowlist check now passes. No package gate
+  was relaxed. The initial local pack attempt lacked npm cache access; rerun
+  with normal cache access passed.
+- Removed 6.0 GiB of completed iOS compiler caches only after artifact import
+  and provenance verification. Source, binaries, wallet data and active Android
+  compiler output were retained. Read-only stack doctor passes at regtest 3630.
