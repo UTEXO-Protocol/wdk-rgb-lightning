@@ -52,7 +52,9 @@ numbers fail before submission. Response integers outside the safe range are
 preserved as exact decimal strings, including u64 limits and channel IDs; they
 are never rounded first. This does not enable full-u64 request amounts.
 Refresh preserves per-batch status/failure details, and unspents
-preserve `utxo.exists`, including false. No spendability is inferred from absence.
+preserve `utxo.exists`, including false, and `pending_blinded`. Both are required;
+an absent reservation count is not treated as zero. No spendability is inferred
+from absence.
 
 Real BTC/RGB, channel/APay, mobile and adverse-recovery results are recorded in
 [the qualification report](./tests/regtest/QUALIFICATION.md). All five Node
@@ -223,7 +225,7 @@ are async and forward to the active binding.
 | Group | Methods |
 |-------|---------|
 | Lifecycle | `unlock(request)`, `getBootstrap()`, `shutdown()`, `dispose()` |
-| Node info | `getNodeInfo()`, `getNetworkInfo()`, `sync()`, `getAddress()`, `getAddressState()`, `rotateAddress()` |
+| Node info | `getNodeInfo()`, `getNetworkInfo()`, `sync()`, `getAddress()`, `getNewAddress()`, `getAddressState()`, `rotateAddress()` |
 | Peers | `connectPeer(pubkey@host:port)`, `disconnectPeer(request)`, `listPeers()` |
 | Channels | `openChannel(request)`, `closeChannel(request)`, `listChannels()`, `getChannelId(tempIdHex)` |
 | Invoices | `createInvoice(request)`, `createLightningInvoice(request)`, `decodeInvoice(invoice)`, `getInvoiceStatus(invoice)` |
@@ -255,8 +257,14 @@ Notes:
 - **`getAddress()` never returns a fabricated spend address.** Before unlock
   it rejects with `AccountLockedError` unless `autoUnlockRequest` is configured; UI loaders can call
   `getAddressState()` for `{ status: 'locked', address: null }`. The WDK
-  bindings initialize RLN with address reuse enabled so reads stay stable;
-  `rotateAddress()` is the explicit mutating operation for advancing it.
+  bindings default to `reuseAddresses: true`. `rotateAddress()` advances and
+  reveals the next address before returning it. Fresh wallets can explicitly
+  set `reuseAddresses: false`; WDK caches the current receive address within the
+  account session so repeated `getAddress()` calls remain stable. Use
+  `getNewAddress()` to allocate a new receive address under either policy.
+  Allocation calls are serialized across full and read-only accounts, and
+  shutdown waits for in-flight allocation. This policy does not add FullScan
+  recovery or fix released RLN's same-process signer teardown limitation.
 - **`sendTransaction()` uses WDK's `{ to, value, feeRate?,
   confirmationTarget? }` input and `{ hash, fee }` result.** `sendBtc()` is
   the explicit low-level escape hatch for RLN's native request format.

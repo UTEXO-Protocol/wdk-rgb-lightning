@@ -48,6 +48,9 @@ export function validateUnspents (value) {
       throw new TypeError('Invalid native unspent output')
     }
     exactUnsignedNumber(utxo.btc_amount, 'utxo.btc_amount')
+    if (!Number.isInteger(entry.pending_blinded) || entry.pending_blinded < 0 || entry.pending_blinded > 0xffffffff) {
+      throw new TypeError('pending_blinded must be a u32 number')
+    }
     if (!Array.isArray(entry.rgb_allocations) || entry.rgb_allocations.length > 255) throw new TypeError('Invalid native RGB allocations')
     for (const allocation of entry.rgb_allocations) {
       if ((allocation.asset_id !== null && (typeof allocation.asset_id !== 'string' || allocation.asset_id.length === 0 || allocation.asset_id.length > 512)) ||

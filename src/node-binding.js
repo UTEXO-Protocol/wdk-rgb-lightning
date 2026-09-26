@@ -15,6 +15,7 @@ import { retainSecret, revealSecret, secretMatches, wipeSecret } from './secret-
 import { signerStoragePath } from './signer-storage-path.js'
 import { normalizeUnlockRequest } from './node-unlock-request.js'
 import { assertNativeRuntime } from './native-runtime-contract.js'
+import { addressReuse } from './receive-address.js'
 
 const {
   SdkNode,
@@ -61,9 +62,7 @@ export class NodeRgbLightningBinding {
       network: config.network,
       max_media_upload_size_mb: config.maxMediaUploadSizeMb ?? 5,
       enable_virtual_channels_v0: config.enableVirtualChannelsV0 ?? false,
-      // WDK reads reuse the current address; full accounts rotate it
-      // explicitly.
-      reuse_addresses: true
+      reuse_addresses: addressReuse(config)
     }
     // Trusted no-broadcast channels require virtual-channel support and an
     // explicit trust entry for the peer's node ID. Forward the trust list

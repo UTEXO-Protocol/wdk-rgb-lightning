@@ -115,9 +115,13 @@ describe('released account boundaries', () => {
     try { expect(() => new NodeRgbLightningBinding({ dataDir: '/unused', network: 'regtest' })).toThrow('Incompatible') } finally { spy.mockRestore() }
   })
   it('preserves exists=false and validates allocation state', () => {
-    const value = [{ utxo: { outpoint: 'ab'.repeat(32) + ':0', btc_amount: 100, exists: false, colorable: true }, rgb_allocations: [{ asset_id: null, assignment: 'Fungible(1)', settled: false }] }]
+    const value = [{ utxo: { outpoint: 'ab'.repeat(32) + ':0', btc_amount: 100, exists: false, colorable: true }, pending_blinded: 3, rgb_allocations: [{ asset_id: null, assignment: 'Fungible(1)', settled: false }] }]
     expect(validateUnspents(value)).toBe(value)
     expect(value[0].utxo.exists).toBe(false)
+    expect(value[0].pending_blinded).toBe(3)
+    for (const pendingBlinded of [undefined, null, -1, 0.5, 0x100000000, NaN, '3', 'unknown']) {
+      expect(() => validateUnspents([{ ...value[0], pending_blinded: pendingBlinded }])).toThrow()
+    }
     expect(() => validateUnspents([{ ...value[0], utxo: { ...value[0].utxo, exists: undefined } }])).toThrow()
     expect(() => validateUnspents([{ ...value[0], rgb_allocations: [{ assignment: 'Any', settled: 'false' }] }])).toThrow()
   })

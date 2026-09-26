@@ -7,6 +7,7 @@
 import WalletManager from '@tetherto/wdk-wallet'
 import { mnemonicToSeedSync } from 'bip39'
 import { normalizeAutoUnlockRequest } from './node-unlock-request.js'
+import { addressOperationPending } from './receive-address.js'
 import WalletAccountRgbLightning from './wallet-account-rgb-lightning.js'
 
 const MEMPOOL_SPACE_URL = 'https://mempool.space'
@@ -162,6 +163,7 @@ export default class WalletManagerRgbLightning extends WalletManager {
         daemonListeningPort: this._config.daemonListeningPort,
         ldkPeerListeningPort: this._config.ldkPeerListeningPort,
         maxMediaUploadSizeMb: this._config.maxMediaUploadSizeMb,
+        reuseAddresses: this._config.reuseAddresses,
         enableVirtualChannelsV0: this._config.enableVirtualChannelsV0,
         virtualPeerPubkeys: this._config.virtualPeerPubkeys,
         permissiveSignerPolicy: this._config.permissiveSignerPolicy,
@@ -237,7 +239,7 @@ export default class WalletManagerRgbLightning extends WalletManager {
   }
 
   dispose () {
-    if (Object.values(this._accounts).some(account => account._unlockInFlight || account._shutdownInFlight || account._addressInFlight)) {
+    if (addressOperationPending(this._binding) || Object.values(this._accounts).some(account => account._unlockInFlight || account._shutdownInFlight || account._addressInFlight)) {
       throw new Error('Await account activation and shutdown before synchronous manager disposal')
     }
     this._disposed = true

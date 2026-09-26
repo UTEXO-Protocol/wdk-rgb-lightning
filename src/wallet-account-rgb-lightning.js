@@ -21,6 +21,7 @@ import { LspClient } from './lsp-client.js'
 import { UtexoLsp } from './utexo-lsp.js'
 import { normalizeUnlockRequest, normalizeAutoUnlockRequest, sameUnlockRequest } from './node-unlock-request.js'
 import { exactUnsignedNumber, validatePaymentRequest, validateRefreshResult } from './released-native-contract.js'
+import { receiveAddress, joinAddressOperations, stopAddressOperations } from './receive-address.js'
 import WalletAccountReadOnlyRgbLightning, {
   createReadOnlyRgbLightningAdapter,
   PENDING_ADDRESS
@@ -125,9 +126,11 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   /** Idempotent shutdown. */
   async shutdown () {
     if (this._shutdownInFlight) return this._shutdownInFlight
+    stopAddressOperations(this._binding)
     const operation = Promise.resolve().then(async () => {
       // Unlock has no released cancellation API. Join it before teardown.
       if (this._unlockInFlight) await this._unlockInFlight.promise.catch(() => {})
+      await joinAddressOperations(this._binding)
       await this._binding.shutdown()
       this._closed = true
       return { ok: true }
@@ -712,15 +715,14 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
 
   /** Rotate to a new receive address. Read-only accounts expose only the stable current address. */
   async rotateAddress () {
-    if (typeof this._node.rotateAddress !== 'function') {
-      throw new Error('The installed RGB Lightning native binding does not expose rotateAddress()')
-    }
-    const response = await this._node.rotateAddress()
-    const address = typeof response === 'string' ? response : response?.address
-    if (typeof address !== 'string' || address.length === 0) {
-      throw new Error('RGB Lightning node returned an invalid rotated address')
-    }
-    return address
+    if (this._closed || this._shutdownInFlight) throw new AccountLockedError('RGB Lightning account is closed')
+    return receiveAddress(this._binding, true, true)
+  }
+
+  /** Allocate and persist a new receive address under either address policy. */
+  async getNewAddress () {
+    if (this._closed || this._shutdownInFlight) throw new AccountLockedError('RGB Lightning account is closed')
+    return receiveAddress(this._binding, true)
   }
 
   /** @param {Object} request - JsonCreateUtxosRequest */

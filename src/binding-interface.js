@@ -23,6 +23,9 @@
  *   Defaults to `0`, which lets the operating system choose a port.
  * @property {number} [maxMediaUploadSizeMb] - Maximum RGB media upload size
  *   in MiB. Defaults to `5`.
+ * @property {boolean} [reuseAddresses] - Defaults to true. False uses released
+ *   native non-reuse for Bitcoin and colored scripts. Account address reads
+ *   share a session cache; getNewAddress explicitly allocates another address.
  * @property {boolean} [enableVirtualChannelsV0] - Enable the
  *   virtual-channels-v0 protocol. Defaults to `false`. Production APay requires
  *   this together with `virtualPeerPubkeys` because mobile clients open
@@ -49,10 +52,8 @@
  * @property {string} [lspBearerToken] - Bearer token sent to the LSP's
  *   `/internal/*` endpoints. Omit when the LSP does not require authorization.
  *
- * Concrete WDK bindings always send RLN `reuse_addresses: true`. This keeps
- * inherited read-only `getAddress()` calls pinned to the current address;
- * callers use the full account's explicit `rotateAddress()` command when
- * needed.
+ * Address policy is explicit and must remain consistent for a wallet. The
+ * default preserves reuse; new wallets may opt into native non-reuse.
  */
 
 /**

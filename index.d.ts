@@ -82,6 +82,8 @@ export interface RefreshTransfersResult {
 export interface RgbUnspent {
   utxo: { outpoint: string; btc_amount: number; colorable: boolean; exists: boolean }
   rgb_allocations: Array<{ asset_id: string | null; assignment: string; settled: boolean }>
+  /** Number of pending blinded receive reservations, including nonzero counts. */
+  pending_blinded: number
 }
 export interface SendPaymentRequest {
   invoice: string
@@ -311,6 +313,8 @@ export interface RgbLightningBindingConfig {
   daemonListeningPort?: number
   ldkPeerListeningPort?: number
   maxMediaUploadSizeMb?: number
+  /** Defaults to true. False allocates fresh scripts natively; getAddress caches the current session address. Use getNewAddress for an explicit allocation. */
+  reuseAddresses?: boolean
   /**
    * Explicitly opt into virtual channels. Default is false; standard channels
    * remain supported. Configure trusted peer identities separately.
@@ -606,6 +610,8 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   sendBtc(request: object): Promise<object>
   sendTransaction(tx: Transaction | object): Promise<TransactionResult>
   rotateAddress(): Promise<string>
+  /** Explicitly allocate and persist a fresh Bitcoin address under either address policy. */
+  getNewAddress(): Promise<string>
   createUtxos(request: object): Promise<{ ok: true }>
 
   // Onion / signing / diagnostics

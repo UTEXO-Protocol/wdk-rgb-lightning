@@ -5,6 +5,7 @@
 'use strict'
 
 import { exactUnsignedNumber, validateUnspents } from './released-native-contract.js'
+import { receiveAddress } from './receive-address.js'
 
 import { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 
@@ -95,7 +96,7 @@ export function createReadOnlyRgbLightningAdapter (binding) {
     vssStatus: () => binding.vssStatus(),
     nodeInfo: () => callNode('nodeInfo'),
     networkInfo: () => callNode('networkInfo'),
-    address: () => callNode('address'),
+    address: () => receiveAddress(binding),
     listChannels: () => callNode('listChannels'),
     getChannelId: (temporaryChannelIdHex) => callNode('getChannelId', temporaryChannelIdHex),
     listPeers: () => callNode('listPeers'),

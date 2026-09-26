@@ -756,7 +756,7 @@ describe('BTC ops', () => {
   })
 
   it('rotateAddress accepts the native string response form', async () => {
-    const account = makeAccount({ node: makeNode({ rotateAddress: () => 'tb1qstringrotated' }) })
+    const account = makeAccount({ node: makeNode({ rotateAddress: () => 'tb1qstringrotated', address: () => 'tb1qstringrotated' }) })
     await expect(account.rotateAddress()).resolves.toBe('tb1qstringrotated')
   })
 
