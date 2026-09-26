@@ -19,6 +19,9 @@ import {
 } from './lsp-helpers.js'
 import { LspClient } from './lsp-client.js'
 import { UtexoLsp } from './utexo-lsp.js'
+import { normalizeUnlockRequest, normalizeAutoUnlockRequest, sameUnlockRequest } from './node-unlock-request.js'
+import { exactUnsignedNumber, validatePaymentRequest, validateRefreshResult } from './released-native-contract.js'
+import { receiveAddress, joinAddressOperations, stopAddressOperations } from './receive-address.js'
 import WalletAccountReadOnlyRgbLightning, {
   createReadOnlyRgbLightningAdapter,
   PENDING_ADDRESS
@@ -28,6 +31,7 @@ import {
   VssError,
   VssNotConfiguredError,
   ApayError,
+  AccountLockedError,
   NotImplementedError,
   wrapError
 } from './errors.js'
@@ -54,12 +58,18 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     }
     super(createReadOnlyRgbLightningAdapter(bindings.binding))
     /** @private */ this._binding = bindings.binding
+    /** @private */ this._autoUnlockRequest = normalizeAutoUnlockRequest(bindings.autoUnlockRequest)
+    /** @private */ this._unlockInFlight = null
+    /** @private */ this._addressInFlight = null
+    /** @private */ this._shutdownInFlight = null
+    /** @private */ this._closed = false
     /** @private @type {WalletAccountReadOnlyRgbLightning | null} */
     this._readOnlyAccount = null
   }
 
   /** @private */
   get _node () {
+    if (this._closed || this._shutdownInFlight) throw new Error('RGB Lightning account is closed')
     return this._binding.ensureNode()
   }
 
@@ -75,25 +85,60 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * @param {Object} unlockRequest
    */
   async unlock (unlockRequest) {
-    try {
-      this._binding.unlock(unlockRequest)
-    } catch (e) {
-      // Wrap into a typed UnlockError so callers can branch on
-      // `err.name === 'UnlockError'` / `err.code` instead of
-      // substring-matching the RLN message. The original message is
-      // preserved verbatim and attached as `cause`.
-      throw wrapError(e, UnlockError)
+    if (this._closed || this._shutdownInFlight) throw new UnlockError('RGB Lightning account is closed')
+    let request
+    try { request = normalizeUnlockRequest(unlockRequest) } catch (error) { throw wrapError(error, UnlockError) }
+    if (this._unlockInFlight) {
+      if (!sameUnlockRequest(this._unlockInFlight.request, request)) {
+        throw new UnlockError('A different RGB Lightning unlock request is already in progress')
+      }
+      return this._unlockInFlight.promise
     }
-    // Return something non-undefined so the worklet's `safeStringify`
-    // produces a real string. The RN-side response schema rejects
-    // null/undefined results (see wdk-react-native-core schemas).
-    return { ok: true }
+    const operation = Promise.resolve().then(async () => {
+      try { await this._binding.unlock(request) } catch (error) { throw wrapError(error, UnlockError) }
+      return { ok: true }
+    })
+    this._unlockInFlight = { request, promise: operation }
+    try {
+      return await operation
+    } finally {
+      if (this._unlockInFlight?.promise === operation) this._unlockInFlight = null
+    }
+  }
+
+  async getAddress () {
+    if (this._closed || this._shutdownInFlight) throw new AccountLockedError('RGB Lightning account is closed')
+    if (this._addressInFlight) return this._addressInFlight
+    const operation = Promise.resolve().then(async () => {
+      if (this._unlockInFlight) await this._unlockInFlight.promise
+      try { return await super.getAddress() } catch (error) {
+        if (!(error instanceof AccountLockedError) || !this._autoUnlockRequest) throw error
+      }
+      await this.unlock(this._autoUnlockRequest)
+      return super.getAddress()
+    })
+    this._addressInFlight = operation
+    try { return await operation } finally {
+      if (this._addressInFlight === operation) this._addressInFlight = null
+    }
   }
 
   /** Idempotent shutdown. */
   async shutdown () {
-    this._binding.shutdown()
-    return { ok: true }
+    if (this._shutdownInFlight) return this._shutdownInFlight
+    stopAddressOperations(this._binding)
+    const operation = Promise.resolve().then(async () => {
+      // Unlock has no released cancellation API. Join it before teardown.
+      if (this._unlockInFlight) await this._unlockInFlight.promise.catch(() => {})
+      await joinAddressOperations(this._binding)
+      await this._binding.shutdown()
+      this._closed = true
+      return { ok: true }
+    })
+    this._shutdownInFlight = operation
+    try { return await operation } finally {
+      if (this._shutdownInFlight === operation) this._shutdownInFlight = null
+    }
   }
 
   /**
@@ -183,6 +228,23 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   async apayNew (hostNodeId) {
     try {
       return this._binding.apayNew(hostNodeId)
+    } catch (e) {
+      throw wrapError(e, ApayError)
+    }
+  }
+
+  /**
+   * Register an APay hash batch and bind it to an LSP-provisioned Lightning
+   * Address using the wallet node's native signature.
+   *
+   * @param {string} hostNodeId - LSP node ID.
+   * @param {string} username - Lightning Address username assigned by the LSP.
+   * @param {string} domain - Lightning Address domain assigned by the LSP.
+   * @returns {Promise<object>} Native `AsyncOrderNewResponse`.
+   */
+  async apayNewWithAddress (hostNodeId, username, domain) {
+    try {
+      return this._binding.apayNewWithAddress(hostNodeId, username, domain)
     } catch (e) {
       throw wrapError(e, ApayError)
     }
@@ -300,42 +362,55 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   }
 
   /**
+   * Fetch and validate this account's configured LSP discovery document.
+   *
+   * @param {{ timeoutMs?: number }} [opts]
+   * @returns {Promise<import('../index.js').LspInfo>}
+   */
+  async getLspInfo (opts = {}) {
+    const { baseUrl, bearerToken } = this.getLspConfig()
+    if (!baseUrl) {
+      throw new Error('getLspInfo: lspBaseUrl not set')
+    }
+    return new LspClient({
+      baseUrl,
+      defaultHeaders: bearerToken ? { Authorization: `Bearer ${bearerToken}` } : undefined
+    }).getInfo(opts)
+  }
+
+  /**
    * Build a {@link UtexoLsp} — the composed LSP flow object (connect,
    * wait-for-channel, receive/send asset, pay address, enable Lightning
    * Address, claim pending). Mirrors `@utexo/rgb-sdk-rn`'s
    * `wallet.createLsp(peer?)`.
    *
    * No-arg form auto-discovers the peer from the wallet's `lspBaseUrl`:
-   * pubkey via `GET /get_info`, host from the base URL, port from
-   * `peerPort` (default 9735).
+   * pubkey, host, and port via `GET /get_info`. A caller-supplied
+   * `peerPort` overrides the advertised port for legacy deployments.
    *
    * Explicit form takes a full LspPeer
    * (`{ baseUrl, peerPubkey, peerHost, peerPort, bearerToken?, timeoutMs?, allowHttp? }`).
    *
    * @param {object} [peer]
-   * @param {number} [peerPort=9735]  Used only by the auto-discover form.
+   * @param {number} [peerPort]  Used only by the auto-discover form.
    * @returns {Promise<UtexoLsp>}
    */
-  async createLsp (peer, peerPort = 9735) {
+  async createLsp (peer, peerPort) {
     if (peer) return new UtexoLsp(this, peer)
 
     const { baseUrl, bearerToken } = this.getLspConfig()
     if (!baseUrl) {
       throw new Error('createLsp: lspBaseUrl not set — pass a peer explicitly or construct the wallet with lspBaseUrl')
     }
-    const http = new LspClient({
-      baseUrl,
-      defaultHeaders: bearerToken ? { Authorization: `Bearer ${bearerToken}` } : undefined
-    })
-    const info = await http.getInfo()
+    const info = await this.getLspInfo()
     if (!info || typeof info.pubkey !== 'string' || info.pubkey.length === 0) {
       throw new Error('createLsp: LSP /get_info returned no pubkey')
     }
     return new UtexoLsp(this, {
       baseUrl,
       peerPubkey: info.pubkey,
-      peerHost: new URL(baseUrl).hostname,
-      peerPort,
+      peerHost: info.host ?? new URL(baseUrl).hostname,
+      peerPort: peerPort ?? info.port ?? 9735,
       bearerToken: bearerToken ?? undefined
     })
   }
@@ -526,7 +601,10 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   // ==========================================================================
 
   /** @param {Object} request - JsonSendPaymentRequest (invoice, amt_msat?, asset_id?, ...) */
-  async sendPayment (request) { return this._node.sendPayment(request) }
+  async sendPayment (request) {
+    validatePaymentRequest(request)
+    return this._node.sendPayment(request)
+  }
 
   /** @param {Object} request - JsonKeysendRequest (dest_pubkey, amt_msat, asset_id?, ...) */
   async keysend (request) { return this._node.keysend(request) }
@@ -546,8 +624,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
 
   /** @param {Object} request */
   async refreshTransfers (request) {
-    this._node.refreshTransfers(request)
-    return { ok: true }
+    return validateRefreshResult(await this._node.refreshTransfers(request))
   }
 
   /** @param {Object} request */
@@ -638,15 +715,14 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
 
   /** Rotate to a new receive address. Read-only accounts expose only the stable current address. */
   async rotateAddress () {
-    if (typeof this._node.rotateAddress !== 'function') {
-      throw new Error('The installed RGB Lightning native binding does not expose rotateAddress()')
-    }
-    const response = await this._node.rotateAddress()
-    const address = typeof response === 'string' ? response : response?.address
-    if (typeof address !== 'string' || address.length === 0) {
-      throw new Error('RGB Lightning node returned an invalid rotated address')
-    }
-    return address
+    if (this._closed || this._shutdownInFlight) throw new AccountLockedError('RGB Lightning account is closed')
+    return receiveAddress(this._binding, true, true)
+  }
+
+  /** Allocate and persist a new receive address under either address policy. */
+  async getNewAddress () {
+    if (this._closed || this._shutdownInFlight) throw new AccountLockedError('RGB Lightning account is closed')
+    return receiveAddress(this._binding, true)
   }
 
   /** @param {Object} request - JsonCreateUtxosRequest */
@@ -708,7 +784,9 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * `options.amount` is treated as **msats** for LN flows and **sats**
    * for on-chain flows — callers using `transfer()` for on-chain need to
    * pass sats, not msats. For finer control, call the underlying method
-   * directly.
+   * directly. Witness RGB invoices additionally require
+   * `options.witnessData.amountSats`; this is the Bitcoin output value
+   * committed by the transfer, not a routing or miner fee.
    *
    * @param {TransferOptions} options
    * @returns {Promise<TransferResult>}
@@ -719,6 +797,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     }
     const recipient = options.recipient
     const amount = options.amount
+    if (amount !== undefined && amount !== null) exactUnsignedNumber(amount, 'transfer amount')
     const assetId = options.token && options.token.length > 0 ? options.token : null
     const kind = WalletAccountRgbLightning._classifyRecipient(recipient)
 
@@ -781,19 +860,40 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
         if (endpoints.length === 0) {
           throw new Error('transfer(rgb): the RGB invoice carries no transport endpoints and the wallet has no proxyEndpoint configured')
         }
+        const witnessData = options.witnessData
+        if (decoded?.recipient_type === 'Witness') {
+          if (!witnessData || !Number.isSafeInteger(witnessData.amountSats) || witnessData.amountSats <= 0) {
+            throw new Error('transfer(rgb): witnessData.amountSats must be a positive safe integer for a Witness RGB invoice')
+          }
+          if (
+            witnessData.blinding !== undefined &&
+            (!Number.isSafeInteger(witnessData.blinding) || witnessData.blinding < 0)
+          ) {
+            throw new Error('transfer(rgb): witnessData.blinding must be a non-negative safe integer when provided')
+          }
+        } else if (witnessData !== undefined) {
+          throw new Error('transfer(rgb): witnessData is only valid for a Witness RGB invoice')
+        }
         const feeRate = options.feeRate ?? await this._defaultFeeRate(6)
+        const recipientRequest = {
+          recipient_id: recipientId,
+          assignment_kind: 'Fungible',
+          assignment_amount: Number(amount),
+          transport_endpoints: endpoints
+        }
+        if (decoded?.recipient_type === 'Witness') {
+          recipientRequest.witness_data = {
+            amount_sat: witnessData.amountSats,
+            ...(witnessData.blinding === undefined ? {} : { blinding: witnessData.blinding })
+          }
+        }
         const req = {
           donation: false,
           fee_rate: Number(feeRate),
           min_confirmations: 1,
           recipient_groups: [{
             asset_id: contractId,
-            recipients: [{
-              recipient_id: recipientId,
-              assignment_kind: 'Fungible',
-              assignment_amount: Number(amount),
-              transport_endpoints: endpoints
-            }]
+            recipients: [recipientRequest]
           }]
         }
         const r = await this.sendRgbAsset(req)

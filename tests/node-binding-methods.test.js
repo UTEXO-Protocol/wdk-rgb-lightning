@@ -15,6 +15,8 @@ import { jest } from '@jest/globals'
 import rln from '@utexo/rgb-lightning-node-nodejs'
 import { NodeRgbLightningBinding } from '../src/node-binding.js'
 
+const UNLOCK = Object.freeze({ ldk_chain_sync: Object.freeze({ mode: 'TransactionSync', config: Object.freeze({ indexer_url: 'electrum://localhost:50001' }) }), announce_addresses: [] })
+
 function makeBinding (overrides = {}) {
   return new NodeRgbLightningBinding({ network: 'regtest', dataDir: '/d', ...overrides })
 }
@@ -81,6 +83,20 @@ describe('ensureNode', () => {
 })
 
 describe('binding surface', () => {
+  it('forwards address-attested APay to the released native method', () => {
+    const b = makeBinding()
+    const result = realAsyncOrderNewResponse()
+    b._node = { apayNewWithAddress: jest.fn(() => result) }
+    expect(b.apayNewWithAddress('host', 'alice', 'example.com')).toBe(result)
+    expect(b._node.apayNewWithAddress).toHaveBeenCalledWith('host', 'alice', 'example.com')
+  })
+
+  it('never falls back to unsigned registration when the native method is absent', () => {
+    const b = makeBinding()
+    b._node = { apayNew: jest.fn() }
+    expect(() => b.apayNewWithAddress('host', 'alice', 'example.com')).toThrow('apayNewWithAddress')
+    expect(b._node.apayNew).not.toHaveBeenCalled()
+  })
   it('uses ensureNode() as the only node accessor', () => {
     const b = makeBinding()
     expect('node' in b).toBe(false)
@@ -89,7 +105,7 @@ describe('binding surface', () => {
 })
 
 describe('attachExternalSigner', () => {
-  it('creates a signer via NativeExternalSigner.create when none attached', () => {
+  it('creates a persistent signer when none is attached', () => {
     const b = makeBinding()
     expect(b._signer).toBeNull()
     b.attachExternalSigner('seed-a')
@@ -98,27 +114,27 @@ describe('attachExternalSigner', () => {
   })
 
   it('records an optional legacy fallback seed without constructing it eagerly', () => {
-    const spy = jest.spyOn(rln.NativeExternalSigner, 'create')
+    const spy = jest.spyOn(rln.NativeExternalSigner, 'createWithStorage')
       .mockReturnValue({ bootstrap: jest.fn(), destroy: jest.fn() })
     try {
       const b = makeBinding()
       b.attachExternalSigner('seed-v2', 'seed-v1')
       expect(b._fallbackSeedHex.toString()).toBe('seed-v1')
       expect(spy).toHaveBeenCalledTimes(1)
-      expect(spy).toHaveBeenCalledWith('seed-v2', 'regtest', true)
+      expect(spy).toHaveBeenCalledWith('seed-v2', 'regtest', '/d/vls-signer', false)
     } finally {
       spy.mockRestore()
     }
   })
 
-  it('passes the seed, configured network and permissive-policy default to NativeExternalSigner.create', () => {
+  it('passes the seed, network, stable storage and policy to the signer', () => {
     const created = { bootstrap: jest.fn(), destroy: jest.fn() }
-    const spy = jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(created)
+    const spy = jest.spyOn(rln.NativeExternalSigner, 'createWithStorage').mockReturnValue(created)
     try {
       const b = makeBinding()
       b.attachExternalSigner('seed-a')
       expect(spy).toHaveBeenCalledTimes(1)
-      expect(spy).toHaveBeenCalledWith('seed-a', 'regtest', true)
+      expect(spy).toHaveBeenCalledWith('seed-a', 'regtest', '/d/vls-signer', false)
       expect(b._signer).toBe(created)
     } finally {
       spy.mockRestore()
@@ -127,12 +143,12 @@ describe('attachExternalSigner', () => {
 
   // An explicit false value must not be replaced by the default.
   it('forwards an explicit permissiveSignerPolicy=false instead of the default', () => {
-    const spy = jest.spyOn(rln.NativeExternalSigner, 'create')
+    const spy = jest.spyOn(rln.NativeExternalSigner, 'createWithStorage')
       .mockReturnValue({ bootstrap: jest.fn(), destroy: jest.fn() })
     try {
       const b = makeBinding({ permissiveSignerPolicy: false })
       b.attachExternalSigner('seed-a')
-      expect(spy).toHaveBeenCalledWith('seed-a', 'regtest', false)
+      expect(spy).toHaveBeenCalledWith('seed-a', 'regtest', '/d/vls-signer', false)
     } finally {
       spy.mockRestore()
     }
@@ -180,7 +196,7 @@ describe('unlock', () => {
   it('throws when no signer has been attached', () => {
     const b = makeBinding()
     b._node = fakeNode()
-    expect(() => b.unlock({})).toThrow('attachExternalSigner')
+    expect(() => b.unlock(UNLOCK)).toThrow('attachExternalSigner')
   })
 
   it('runs init then unlock on the first call and sets _sdkInitDone', () => {
@@ -191,7 +207,7 @@ describe('unlock', () => {
     b._signer = signer
     const fallbackSeed = Buffer.from('seed-v1')
     b._fallbackSeedHex = fallbackSeed
-    const req = { mnemonic: 'm' }
+    const req = UNLOCK
     b.unlock(req)
     expect(node.initWithNativeExternalSigner).toHaveBeenCalledWith(signer)
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledWith(signer, req)
@@ -203,10 +219,10 @@ describe('unlock', () => {
   it('swallows a Conflict init error and still proceeds to unlock', () => {
     const b = makeBinding()
     const node = fakeNode()
-    node.initWithNativeExternalSigner.mockImplementation(() => { throw new Error('Conflict: already initialized') })
+    node.initWithNativeExternalSigner.mockImplementation(() => { throw new Error('Rln(Conflict): already initialized') })
     b._node = node
     b._signer = fakeSigner()
-    expect(() => b.unlock({})).not.toThrow()
+    expect(() => b.unlock(UNLOCK)).not.toThrow()
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalled()
     expect(b._sdkInitDone).toBe(true)
   })
@@ -217,7 +233,7 @@ describe('unlock', () => {
     node.initWithNativeExternalSigner.mockImplementation(() => { throw new Error('boom') })
     b._node = node
     b._signer = fakeSigner()
-    expect(() => b.unlock({})).toThrow('boom')
+    expect(() => b.unlock(UNLOCK)).toThrow('boom')
     expect(node.unlockWithNativeExternalSigner).not.toHaveBeenCalled()
     expect(b._sdkInitDone).toBe(false)
   })
@@ -227,8 +243,8 @@ describe('unlock', () => {
     const node = fakeNode()
     b._node = node
     b._signer = fakeSigner()
-    b.unlock({})
-    b.unlock({})
+    b.unlock(UNLOCK)
+    b.unlock(UNLOCK)
     expect(node.initWithNativeExternalSigner).toHaveBeenCalledTimes(1)
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(2)
   })
@@ -243,7 +259,8 @@ describe('unlock', () => {
         throw new Error('Rln(ExternalSignerMismatch): External signer identity does not match persisted node identity')
       })
       .mockImplementationOnce(() => undefined)
-    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(fallbackSigner)
+    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'createWithStorage')
+      .mockReturnValue(fallbackSigner)
     b._node = node
     b._signer = primarySigner
     const primarySeed = Buffer.from('seed-v2')
@@ -251,10 +268,15 @@ describe('unlock', () => {
     b._seedHex = primarySeed
     b._fallbackSeedHex = fallbackSeed
     try {
-      expect(() => b.unlock({ rpc: true })).not.toThrow()
+      expect(() => b.unlock(UNLOCK)).not.toThrow()
       expect(primarySigner.destroy).toHaveBeenCalledTimes(1)
-      expect(createSpy).toHaveBeenCalledWith('seed-v1', 'regtest', true)
-      expect(node.unlockWithNativeExternalSigner).toHaveBeenLastCalledWith(fallbackSigner, { rpc: true })
+      expect(createSpy).toHaveBeenCalledWith(
+        'seed-v1',
+        'regtest',
+        '/d/vls-signer-legacy',
+        false
+      )
+      expect(node.unlockWithNativeExternalSigner).toHaveBeenLastCalledWith(fallbackSigner, UNLOCK)
       expect(b._seedHex).toBe(fallbackSeed)
       expect(b._seedHex.toString()).toBe('seed-v1')
       expect(primarySeed.every((byte) => byte === 0)).toBe(true)
@@ -274,7 +296,8 @@ describe('unlock', () => {
     node.unlockWithNativeExternalSigner.mockImplementation(() => {
       throw new Error('Rln(ExternalSignerMismatch): External signer identity does not match persisted node identity')
     })
-    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(fallbackSigner)
+    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'createWithStorage')
+      .mockReturnValue(fallbackSigner)
     const primarySeed = Buffer.from('seed-v2')
     const fallbackSeed = Buffer.from('seed-v1')
     b._node = node
@@ -282,7 +305,7 @@ describe('unlock', () => {
     b._seedHex = primarySeed
     b._fallbackSeedHex = fallbackSeed
     try {
-      expect(() => b.unlock({})).toThrow(destroyError)
+      expect(() => b.unlock(UNLOCK)).toThrow(destroyError)
       expect(fallbackSigner.destroy).toHaveBeenCalledTimes(1)
       expect(b._signer).toBe(primarySigner)
       expect(b._seedHex).toBe(primarySeed)
@@ -305,7 +328,8 @@ describe('unlock', () => {
     node.unlockWithNativeExternalSigner.mockImplementation(() => {
       throw new Error('Rln(ExternalSignerMismatch): External signer identity does not match persisted node identity')
     })
-    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(fallbackSigner)
+    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'createWithStorage')
+      .mockReturnValue(fallbackSigner)
     b._node = node
     b._signer = primarySigner
     b._seedHex = Buffer.from('seed-v2')
@@ -313,7 +337,7 @@ describe('unlock', () => {
     try {
       let thrown
       try {
-        b.unlock({})
+        b.unlock(UNLOCK)
       } catch (error) {
         thrown = error
       }
@@ -334,7 +358,7 @@ describe('unlock', () => {
     b._node = node
     b._signer = fakeSigner()
     b._fallbackSeedHex = Buffer.from('seed-v1')
-    expect(() => b.unlock({})).toThrow('backend unavailable')
+    expect(() => b.unlock(UNLOCK)).toThrow('backend unavailable')
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
   })
 
@@ -346,7 +370,7 @@ describe('unlock', () => {
     })
     b._node = node
     b._signer = fakeSigner()
-    expect(() => b.unlock({})).toThrow('ExternalSignerMismatch')
+    expect(() => b.unlock(UNLOCK)).toThrow('ExternalSignerMismatch')
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
   })
 
@@ -358,18 +382,18 @@ describe('unlock', () => {
     b._node = node
     b._signer = fakeSigner()
     b._fallbackSeedHex = Buffer.from('seed-v1')
-    expect(() => b.unlock({})).toThrow('backend unavailable')
+    expect(() => b.unlock(UNLOCK)).toThrow('backend unavailable')
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
   })
 
-  it('swallows a thrown string containing Conflict (no .message) and proceeds', () => {
+  it('accepts a thrown string with the exact released Conflict tag', () => {
     const b = makeBinding()
     const node = fakeNode()
     // eslint-disable-next-line no-throw-literal
-    node.initWithNativeExternalSigner.mockImplementation(() => { throw 'Conflict: already initialized' })
+    node.initWithNativeExternalSigner.mockImplementation(() => { throw 'Rln(Conflict): already initialized' })
     b._node = node
     b._signer = fakeSigner()
-    expect(() => b.unlock({})).not.toThrow()
+    expect(() => b.unlock(UNLOCK)).not.toThrow()
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
     expect(b._sdkInitDone).toBe(true)
   })
@@ -381,7 +405,7 @@ describe('unlock', () => {
     node.initWithNativeExternalSigner.mockImplementation(() => { throw 'plain boom' })
     b._node = node
     b._signer = fakeSigner()
-    expect(() => b.unlock({})).toThrow('plain boom')
+    expect(() => b.unlock(UNLOCK)).toThrow('plain boom')
     expect(node.unlockWithNativeExternalSigner).not.toHaveBeenCalled()
     expect(b._sdkInitDone).toBe(false)
   })
@@ -540,7 +564,7 @@ describe('shutdown', () => {
     expect(b._signer).toBeNull()
   })
 
-  it('destroys the signer and wipes both seeds even when node shutdown fails', () => {
+  it('retains live handles and permits shutdown retry after node failure', () => {
     const b = makeBinding()
     const node = fakeNode()
     const signer = fakeSigner()
@@ -553,6 +577,12 @@ describe('shutdown', () => {
     b._fallbackSeedHex = fallbackSeed
 
     expect(() => b.shutdown()).toThrow('node shutdown failed')
+    expect(signer.destroy).not.toHaveBeenCalled()
+    expect(b._node).toBe(node)
+    expect(b._signer).toBe(signer)
+    expect(primarySeed.toString()).toBe('seed-v2')
+    node.shutdown.mockImplementation(() => {})
+    b.shutdown()
     expect(signer.destroy).toHaveBeenCalledTimes(1)
     expect(b._node).toBeNull()
     expect(b._signer).toBeNull()
@@ -560,7 +590,7 @@ describe('shutdown', () => {
     expect(fallbackSeed.every((byte) => byte === 0)).toBe(true)
   })
 
-  it('still wipes retained seeds when signer destruction fails', () => {
+  it('retains the signer for retry when destruction fails', () => {
     const b = makeBinding()
     const signer = fakeSigner()
     signer.destroy.mockImplementation(() => { throw new Error('signer destroy failed') })
@@ -569,8 +599,11 @@ describe('shutdown', () => {
     b._seedHex = seed
 
     expect(() => b.shutdown()).toThrow('signer destroy failed')
+    expect(b._signer).toBe(signer)
+    signer.destroy.mockImplementation(() => {})
+    b.shutdown()
     expect(b._signer).toBeNull()
-    expect(seed.every((byte) => byte === 0)).toBe(true)
+    expect(b._seedHex).toBeUndefined()
   })
 })
 

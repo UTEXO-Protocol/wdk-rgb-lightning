@@ -4,6 +4,25 @@ Releases are built from a reviewed commit on `main`, staged through npm trusted
 publishing, approved by a maintainer with 2FA, and finalized as an immutable
 GitHub release.
 
+## 0.2 Candidate Hold
+
+The RLN 0.13.0-beta.3 branches are draft implementation candidates, not release
+approval. Do not create a release tag, publish, promote, or merge as part of this
+task. Resolve every release gate in [UPGRADE-TRACKER.md](./UPGRADE-TRACKER.md).
+
+Both exact native peers (`0.2.0-beta.1`) must first pass their complete platform,
+packed-consumer, migration and runtime gates. Their manual artifact workflows
+cannot publish. WDK's existing staged/OIDC/manual release workflow is unchanged;
+it must not bypass unpublished-peer or registry-provenance checks.
+
+Local package qualification may set `RLN_NODE_PACKAGE_TARBALL` when running
+`scripts/smoke-node-package.mjs`. This tests a candidate tarball, not npm registry
+provenance. A cache-assisted source build is not a bit-for-bit hermetic build.
+
+Package rollback below concerns npm distribution only. Never restore stale wallet
+or channel state after activity; protocol state requires a separately qualified
+operator recovery procedure.
+
 ## One-time configuration
 
 ### npm

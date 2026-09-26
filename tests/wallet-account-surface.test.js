@@ -15,6 +15,7 @@
 // are not re-tested here.
 
 import { jest } from '@jest/globals'
+import { normalizeUnlockRequest } from '../src/node-unlock-request.js'
 import { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 import WalletAccountRgbLightning from '../src/wallet-account-rgb-lightning.js'
 import WalletAccountReadOnlyRgbLightning, {
@@ -71,7 +72,7 @@ function makeNode (overrides = {}) {
     sendBtc: jest.fn((r) => ({ txid: 'btctx', echo: r })),
     listTransactions: jest.fn(() => ({ transactions: [] })),
     listTransactionsByTxid: jest.fn(() => []),
-    listUnspents: jest.fn(() => ({ unspents: [] })),
+    listUnspents: jest.fn(() => []),
     createUtxos: jest.fn(() => undefined),
     estimateFee: jest.fn(() => ({ fee_rate: 12 })),
     sendOnionMessage: jest.fn(() => undefined),
@@ -141,16 +142,16 @@ describe('lifecycle', () => {
   it('unlock forwards the request and returns { ok: true }', async () => {
     const unlock = jest.fn()
     const account = makeAccount({ unlock })
-    const req = { bitcoind_rpc_username: 'u' }
+    const req = { indexer_url: 'electrum://localhost:50001' }
     await expect(account.unlock(req)).resolves.toEqual({ ok: true })
-    expect(unlock).toHaveBeenCalledWith(req)
+    expect(unlock).toHaveBeenCalledWith(normalizeUnlockRequest(req))
   })
 
   it('unlock wraps a binding failure into an UnlockError preserving the message', async () => {
     const account = makeAccount({
       unlock: () => { throw new Error('Rln(NotInitialized): bad creds') }
     })
-    const err = await account.unlock({}).catch((e) => e)
+    const err = await account.unlock({ indexer_url: 'electrum://localhost:50001' }).catch((e) => e)
     expect(err).toBeInstanceOf(UnlockError)
     expect(err.message).toBe('Rln(NotInitialized): bad creds')
     expect(err.code).toBe('UNLOCK_FAILED')
@@ -574,11 +575,13 @@ describe('RGB assets', () => {
     await expect(account.listTransfers('aid')).resolves.toEqual({ transfers: 'aid' })
   })
 
-  it('refreshTransfers forwards and returns { ok: true }', async () => {
+  it('refreshTransfers preserves released per-batch failures', async () => {
     const node = makeNode()
+    const result = { transfers: { 7: { updated_status: 'WaitingBroadcast', failure: { name: 'Network', message: 'retry later' } } } }
+    node.refreshTransfers.mockReturnValue(result)
     const account = makeAccount({ node })
-    const req = { asset_id: 'aid' }
-    await expect(account.refreshTransfers(req)).resolves.toEqual({ ok: true })
+    const req = { skip_sync: false }
+    await expect(account.refreshTransfers(req)).resolves.toBe(result)
     expect(node.refreshTransfers).toHaveBeenCalledWith(req)
   })
 
@@ -753,7 +756,7 @@ describe('BTC ops', () => {
   })
 
   it('rotateAddress accepts the native string response form', async () => {
-    const account = makeAccount({ node: makeNode({ rotateAddress: () => 'tb1qstringrotated' }) })
+    const account = makeAccount({ node: makeNode({ rotateAddress: () => 'tb1qstringrotated', address: () => 'tb1qstringrotated' }) })
     await expect(account.rotateAddress()).resolves.toBe('tb1qstringrotated')
   })
 
@@ -774,19 +777,17 @@ describe('BTC ops', () => {
   })
 
   it('listUnspents forwards to node.listUnspents', async () => {
-    const listUnspents = jest.fn(() => ({ unspents: [] }))
+    const listUnspents = jest.fn(() => [])
     const account = makeAccount({ node: makeNode({ listUnspents }) })
-    await expect(account.listUnspents(false)).resolves.toEqual({ unspents: [] })
+    await expect(account.listUnspents(false)).resolves.toEqual([])
     expect(listUnspents).toHaveBeenCalledWith(false)
   })
 
-  it('listUnspents normalizes skipSync to boolean', async () => {
-    const listUnspents = jest.fn(() => ({ unspents: [] }))
+  it('listUnspents rejects ambiguous skipSync before native access', async () => {
+    const listUnspents = jest.fn(() => [])
     const account = makeAccount({ node: makeNode({ listUnspents }) })
-    await account.listUnspents(1)
-    const arg = listUnspents.mock.calls[0][0]
-    expect(arg).toBe(true)
-    expect(typeof arg).toBe('boolean')
+    await expect(account.listUnspents(1)).rejects.toThrow('skipSync must be a boolean')
+    expect(listUnspents).not.toHaveBeenCalled()
   })
 
   it('createUtxos forwards and returns { ok: true }', async () => {
@@ -1425,12 +1426,12 @@ describe('toReadOnlyAccount / ReadOnlyRgbLightningAccount', () => {
   it('quoteTransfer rejects invalid and negative amounts before quoting', async () => {
     const ro = await makeAccount().toReadOnlyAccount()
     await expect(ro.quoteTransfer({ recipient: 'lnbc1abc', amount: 'not-a-number' })).rejects.toThrow('amount must be an integer')
-    await expect(ro.quoteTransfer({ recipient: 'lnbc1abc', amount: -1 })).rejects.toThrow('amount must not be negative')
+    await expect(ro.quoteTransfer({ recipient: 'lnbc1abc', amount: -1 })).rejects.toThrow('non-negative safe integer')
   })
 
   it('listTransfers requires a concrete RGB asset id', async () => {
     const ro = await makeAccount().toReadOnlyAccount()
-    await expect(ro.listTransfers('')).rejects.toThrow('requires a non-empty RGB asset id')
+    await expect(ro.listTransfers('')).rejects.toThrow('must be a non-empty RGB asset id')
   })
 
   it('getTransactionReceipt uses the read-only txid query', async () => {

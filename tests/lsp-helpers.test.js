@@ -17,8 +17,20 @@ import {
   payRgbViaLsp
 } from '../src/lsp-helpers.js'
 import { LspClient } from '../src/lsp-client.js'
+import { lnurlMetadataHash } from '../src/lsp-linked-assets.js'
 
 const BOLT11 = 'lnbcrt10u1pcoffee'
+
+function decodeInvoice (amtMsat) {
+  return jest.fn(async () => ({
+    amt_msat: amtMsat,
+    payment_hash: 'ab'.repeat(32),
+    timestamp: Math.floor(Date.now() / 1000),
+    expiry_sec: 3600,
+    network: 'regtest',
+    description_hash: lnurlMetadataHash('[["text/plain","tip"]]')
+  }))
+}
 
 // A Response-like object for the injected fetch.
 function jsonResponse (obj, { ok = true, status = 200 } = {}) {
@@ -71,7 +83,7 @@ describe('payLightningAddress', () => {
 
   it('resolves the address and pays via sendPayment, returning the DTO', async () => {
     const fetch = makeLnurlFetch({ routes: [{ a: 1 }] })
-    const account = { sendPayment: jest.fn(async () => ({ payment_hash: 'ph' })) }
+    const account = { decodeInvoice: decodeInvoice(5000), sendPayment: jest.fn(async () => ({ payment_hash: 'ph' })) }
 
     const out = await payLightningAddress(account, 'alice@host.example', 5000, { fetch })
 
@@ -88,7 +100,7 @@ describe('payLightningAddress', () => {
 
   it('accepts an UMA address and strips the prefix before discovery', async () => {
     const fetch = makeLnurlFetch()
-    const account = { sendPayment: jest.fn(async () => ({ payment_hash: 'uma' })) }
+    const account = { decodeInvoice: decodeInvoice(5000), sendPayment: jest.fn(async () => ({ payment_hash: 'uma' })) }
 
     await payLightningAddress(account, '$Alice@Host.Example', 5000, { fetch })
 
@@ -98,7 +110,7 @@ describe('payLightningAddress', () => {
 
   it('omits amt_msat when opts.skipAmount is set', async () => {
     const fetch = makeLnurlFetch()
-    const account = { sendPayment: jest.fn(async () => ({ ok: true })) }
+    const account = { decodeInvoice: decodeInvoice(5000), sendPayment: jest.fn(async () => ({ ok: true })) }
 
     await payLightningAddress(account, 'bob@host.example', 5000, { fetch, skipAmount: true })
 
@@ -108,7 +120,7 @@ describe('payLightningAddress', () => {
   it('invokes the beforePay hook with (invoice, discovery) before paying', async () => {
     const fetch = makeLnurlFetch()
     const order = []
-    const account = { sendPayment: jest.fn(async () => { order.push('pay'); return {} }) }
+    const account = { decodeInvoice: decodeInvoice(2000), sendPayment: jest.fn(async () => { order.push('pay'); return {} }) }
     const beforePay = jest.fn(async (pr, discovery) => {
       order.push('before')
       expect(pr).toBe(BOLT11)
@@ -123,35 +135,36 @@ describe('payLightningAddress', () => {
 
   it('coerces a small bigint amount to a Number for amt_msat', async () => {
     const fetch = makeLnurlFetch()
-    const account = { sendPayment: jest.fn(async () => ({})) }
+    const account = { decodeInvoice: decodeInvoice(1234), sendPayment: jest.fn(async () => ({})) }
     await payLightningAddress(account, 'd@host.example', 1234n, { fetch })
     expect(account.sendPayment).toHaveBeenCalledWith({ invoice: BOLT11, amt_msat: 1234 })
   })
 
-  it('keeps a huge bigint amount as a string for amt_msat', async () => {
+  it('rejects a huge bigint before requesting or paying an invoice', async () => {
     const huge = BigInt(Number.MAX_SAFE_INTEGER) + 10n
     const fetch = makeLnurlFetch({ maxSendable: (huge + 1n).toString() })
     const account = { sendPayment: jest.fn(async () => ({})) }
-    await payLightningAddress(account, 'e@host.example', huge, { fetch })
-    expect(account.sendPayment).toHaveBeenCalledWith({ invoice: BOLT11, amt_msat: huge.toString() })
+    await expect(payLightningAddress(account, 'e@host.example', huge, { fetch })).rejects.toThrow()
+    expect(fetch).not.toHaveBeenCalled()
+    expect(account.sendPayment).not.toHaveBeenCalled()
   })
 
   it('coerces a bigint equal to MAX_SAFE_INTEGER to a Number', async () => {
     // MAX_SAFE_INTEGER is the inclusive upper bound for numeric output.
     const boundary = BigInt(Number.MAX_SAFE_INTEGER)
     const fetch = makeLnurlFetch({ maxSendable: (boundary + 1n).toString() })
-    const account = { sendPayment: jest.fn(async () => ({})) }
+    const account = { decodeInvoice: decodeInvoice(Number.MAX_SAFE_INTEGER), sendPayment: jest.fn(async () => ({})) }
     await payLightningAddress(account, 'maxsafe@host.example', boundary, { fetch })
     const req = account.sendPayment.mock.calls[0][0]
     expect(req.amt_msat).toBe(Number.MAX_SAFE_INTEGER)
     expect(typeof req.amt_msat).toBe('number')
   })
 
-  it('passes through a numeric-string amount unchanged for amt_msat', async () => {
+  it('converts an exact numeric-string amount to the released numeric DTO', async () => {
     const fetch = makeLnurlFetch()
-    const account = { sendPayment: jest.fn(async () => ({})) }
+    const account = { decodeInvoice: decodeInvoice(4096), sendPayment: jest.fn(async () => ({})) }
     await payLightningAddress(account, 'f@host.example', '4096', { fetch })
-    expect(account.sendPayment).toHaveBeenCalledWith({ invoice: BOLT11, amt_msat: '4096' })
+    expect(account.sendPayment).toHaveBeenCalledWith({ invoice: BOLT11, amt_msat: 4096 })
   })
 
   it('rejects an amount that is not a non-negative integer', async () => {
@@ -159,7 +172,7 @@ describe('payLightningAddress', () => {
     const account = { sendPayment: jest.fn(async () => ({})) }
     await expect(
       payLightningAddress(account, 'g@host.example', {}, { fetch })
-    ).rejects.toThrow('amountMsat must be a non-negative integer')
+    ).rejects.toThrow('amountMsat')
     expect(account.sendPayment).not.toHaveBeenCalled()
   })
 
@@ -167,8 +180,24 @@ describe('payLightningAddress', () => {
     const fetch = makeLnurlFetch()
     const account = { sendPayment: jest.fn(async () => ({})) }
     await expect(payLightningAddress(account, 'g@host.example', 1.5, { fetch }))
-      .rejects.toThrow('amountMsat must be a non-negative integer')
+      .rejects.toThrow('amountMsat')
     expect(account.sendPayment).not.toHaveBeenCalled()
+  })
+
+  it('refuses changed signed amounts even when beforePay would accept', async () => {
+    const fetch = makeLnurlFetch()
+    const account = { decodeInvoice: decodeInvoice(6000), sendPayment: jest.fn() }
+    await expect(payLightningAddress(account, 'a@host.example', 5000, { fetch, beforePay: () => {} }))
+      .rejects.toThrow('amount')
+    expect(account.sendPayment).not.toHaveBeenCalled()
+  })
+
+  it('refuses unsupported fee caps before any HTTP request', async () => {
+    const fetch = makeLnurlFetch()
+    const account = { decodeInvoice: decodeInvoice(5000), sendPayment: jest.fn() }
+    await expect(payLightningAddress(account, 'a@host.example', 5000, { fetch, maxTotalRoutingFeeMsat: 1 }))
+      .rejects.toMatchObject({ code: 'ERR_RLN_UNSUPPORTED_CAPABILITY' })
+    expect(fetch).not.toHaveBeenCalled()
   })
 })
 
@@ -362,7 +391,7 @@ describe('payRgbViaLsp', () => {
   it('issues the BOLT11 via onchainSend then pays it, returning the DTO', async () => {
     // Real wire shape: snake_case response; client normalizes to camelCase.
     const { client, fetch } = makeLspClient({ ln_invoice: BOLT11, rgb_invoice: 'rgb:out', mapping_id: 11 })
-    const account = { sendPayment: jest.fn(async () => ({ payment_hash: 'ph2' })) }
+    const account = { decodeInvoice: decodeInvoice(1000), sendPayment: jest.fn(async () => ({ payment_hash: 'ph2' })) }
 
     const out = await payRgbViaLsp(account, { lsp: client, rgbInvoice: 'rgb:in', ln })
 
@@ -384,7 +413,7 @@ describe('payRgbViaLsp', () => {
       rgb_invoice: 'rgb:snk',
       mapping_id: 3
     })
-    const account = { sendPayment: jest.fn(async () => ({ ok: true })) }
+    const account = { decodeInvoice: decodeInvoice(1000), sendPayment: jest.fn(async () => ({ ok: true })) }
 
     const out = await payRgbViaLsp(account, { lsp: client, rgbInvoice: 'rgb:in', ln })
 
@@ -408,7 +437,7 @@ describe('payRgbViaLsp', () => {
       rgbInvoice: 'rgb:right',
       mappingId: 55
     })
-    const account = { sendPayment: jest.fn(async () => ({ ok: true })) }
+    const account = { decodeInvoice: decodeInvoice(1000), sendPayment: jest.fn(async () => ({ ok: true })) }
 
     const out = await payRgbViaLsp(account, { lsp: client, rgbInvoice: 'rgb:in', ln })
 
@@ -424,7 +453,7 @@ describe('payRgbViaLsp', () => {
 
   it('drives a base-URL string + injected fetch through to sendPayment', async () => {
     const fetch = jest.fn(async () => jsonResponse({ ln_invoice: BOLT11, rgb_invoice: 'rgb:url', mapping_id: 8 }))
-    const account = { sendPayment: jest.fn(async () => ({ done: true })) }
+    const account = { decodeInvoice: decodeInvoice(1000), sendPayment: jest.fn(async () => ({ done: true })) }
 
     const out = await payRgbViaLsp(account, {
       lsp: 'https://lsp.example',

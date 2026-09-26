@@ -20,6 +20,16 @@
 
 import { LspClient } from './lsp-client.js'
 import { parseLightningAddress, resolveAddressToInvoice } from './lnurl-pay.js'
+import { exactUnsignedNumber } from './released-native-contract.js'
+import { canonicalAssetId, canonicalInvoice } from './lsp-utils.js'
+import { rejectRoutingFeeCap, paymentExpectation, requireInvoiceDecoder, verifyPaymentInvoice } from './lsp-payment-verification.js'
+import { assertAddressRequest, assertAddressQuote, decodedInvoice, verifyApayAddressAttestation, verifyApayInvoiceProof, LspQuoteMismatchError } from './lsp-linked-assets.js'
+
+function positiveAmount (value, field) {
+  const amount = exactUnsignedNumber(value, field)
+  if (amount === 0) throw new TypeError(`${field} must be positive`)
+  return amount
+}
 
 /** @typedef {import('./lnurl-pay.js').LnurlPayError} LnurlPayError */
 /** @typedef {import('./lsp-client.js').LspError} LspError */
@@ -61,7 +71,7 @@ export class LspLiquidityTimeoutError extends Error {
   }
 }
 
-/** Settlement reached a terminal non-success state (Failed / Expired). */
+/** Settlement reached a terminal non-success state. */
 export class LspSettlementError extends Error {
   /**
    * Create an error for terminal non-success settlement.
@@ -90,13 +100,13 @@ export function peerUri (peer) {
 }
 
 /**
- * Canonicalise the many status shapes RLN / the LSP emit into the four
+ * Canonicalise the many status shapes RLN / the LSP emit into the five
  * receive states. Accepts a bare string (`'Succeeded'`) or an object
  * (`{ status }` from `getInvoiceStatus`).
  *
  * @param {string|{status?:string}|null|undefined} raw - Native or LSP status
  *   value.
- * @returns {'Pending'|'Succeeded'|'Failed'|'Expired'} - Canonical receive
+ * @returns {'Pending'|'Succeeded'|'Failed'|'Expired'|'Cancelled'} - Canonical receive
  *   status.
  */
 export function normalizeReceiveStatus (raw) {
@@ -105,12 +115,15 @@ export function normalizeReceiveStatus (raw) {
   if (up === 'SUCCEEDED' || up === 'SETTLED') return 'Succeeded'
   if (up === 'FAILED') return 'Failed'
   if (up === 'EXPIRED') return 'Expired'
+  if (up === 'CANCELLED') return 'Cancelled'
   return 'Pending'
 }
 
 const DEFAULT_CHANNEL_TIMEOUT_MS = 120_000
 const DEFAULT_SETTLEMENT_TIMEOUT_MS = 60_000
 const DEFAULT_POLL_INTERVAL_MS = 2_000
+const LIGHTNING_ADDRESS_LOOKUP_ATTEMPTS = 8
+const LIGHTNING_ADDRESS_LOOKUP_DELAY_MS = 2_000
 
 // ── UtexoLsp ─────────────────────────────────────────────────────────────────
 
@@ -120,8 +133,8 @@ export class UtexoLsp {
    *
    * @param {object} account - A `WalletAccountRgbLightning` or compatible
    *   exposing connectPeer, sync, listChannels, createLightningInvoice,
-   *   getInvoiceStatus, sendPayment, getNodeInfo, apayNew, listPayments,
-   *   claimHodlInvoice.
+   *   getInvoiceStatus, sendPayment, getNodeInfo, apayNewWithAddress,
+   *   apayNew, listPayments, claimHodlInvoice.
    * @param {object} peer - LSP peer details: `{ baseUrl, peerPubkey, peerHost,
    *   peerPort, bearerToken?, timeoutMs?, allowHttp? }`.
    * @throws {TypeError} - If the account or peer base URL is missing or
@@ -214,14 +227,18 @@ export class UtexoLsp {
     if (typeof opts.assetId !== 'string' || opts.assetId.length === 0) {
       throw new TypeError('UtexoLsp.receiveAsset: assetId required')
     }
-    const expirySeconds = opts.expirySeconds ?? 3600
+    const expirySeconds = positiveAmount(opts.expirySeconds ?? 3600, 'expirySeconds')
+    const amountMsat = opts.amountSats == null
+      ? undefined
+      : exactUnsignedNumber(BigInt(positiveAmount(opts.amountSats, 'amountSats')) * 1000n, 'amountMsat')
+    const assetAmount = opts.amountRgb == null ? undefined : positiveAmount(opts.amountRgb, 'amountRgb')
 
     const createdAtMs = Date.now()
     const created = await this.account.createLightningInvoice({
-      amountMsat: opts.amountSats != null ? Number(opts.amountSats) * 1000 : undefined,
+      amountMsat,
       expirySec: expirySeconds,
       assetId: opts.assetId,
-      assetAmount: opts.amountRgb
+      assetAmount
     })
     const lnInvoice = created?.invoice ?? created?.lnInvoice
     if (typeof lnInvoice !== 'string' || lnInvoice.length === 0) {
@@ -252,7 +269,7 @@ export class UtexoLsp {
    * @param {object} [opts] - Wait options.
    * @returns {Promise<'settled'|'timed_out'>} - Settlement outcome.
    * @throws {LspSettlementError} - If settlement reaches `Failed` or
-   *   `Expired`.
+   *   `Expired` or `Cancelled`.
    * @throws {Error} - If the operation is aborted or account synchronization
    *   fails.
    */
@@ -268,7 +285,7 @@ export class UtexoLsp {
       const status = normalizeReceiveStatus(raw)
       opts.onProgress?.(status)
       if (status === 'Succeeded') return 'settled'
-      if (status === 'Failed' || status === 'Expired') {
+      if (status === 'Failed' || status === 'Expired' || status === 'Cancelled') {
         throw new LspSettlementError('ln_invoice', status)
       }
       await this._sleep(pollIntervalMs, opts.signal)
@@ -291,6 +308,7 @@ export class UtexoLsp {
    *   fails.
    */
   async waitForOutboundLiquidity (minMsat, opts = {}) {
+    minMsat = exactUnsignedNumber(minMsat, 'minMsat')
     const timeoutMs = opts.timeoutMs ?? DEFAULT_CHANNEL_TIMEOUT_MS
     const pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
     const deadline = Date.now() + timeoutMs
@@ -299,11 +317,12 @@ export class UtexoLsp {
       this._checkAbort(opts.signal)
       await this.account.sync()
       const channels = await this._listChannels()
-      const lspChan = channels.find((c) =>
+      const lspChannels = channels.filter((c) =>
         this._raw(c, 'peerPubkey', 'peer_pubkey') === this.peer.peerPubkey &&
-        Boolean(this._raw(c, 'isUsable', 'is_usable'))
+        this._raw(c, 'isUsable', 'is_usable') === true
       )
-      const outbound = Number(this._outboundMsat(lspChan))
+      const outbound = lspChannels.reduce((maximum, channel) => Math.max(maximum,
+        exactUnsignedNumber(this._outboundMsat(channel), 'native outbound balance')), 0)
       opts.onProgress?.(`outbound: ${outbound} msat (need ${minMsat})`)
       if (outbound >= minMsat) return
       await this._sleep(pollIntervalMs, opts.signal)
@@ -332,7 +351,15 @@ export class UtexoLsp {
     if (typeof opts.rgbInvoice !== 'string' || opts.rgbInvoice.length === 0) {
       throw new TypeError('UtexoLsp.sendAsset: rgbInvoice required')
     }
+    rejectRoutingFeeCap(opts)
+    const expected = paymentExpectation(opts.ln)
+    requireInvoiceDecoder(this.account)
     const issued = await this.http.onchainSend({ rgbInvoice: opts.rgbInvoice, ln: opts.ln })
+    await verifyPaymentInvoice(this.account, issued.lnInvoice, {
+      ...expected,
+      lspPubkey: this.peer.peerPubkey,
+      network: this.peer.network
+    })
     const sendResult = await this.account.sendPayment({ invoice: issued.lnInvoice })
     return {
       lnInvoice: issued.lnInvoice,
@@ -346,8 +373,8 @@ export class UtexoLsp {
 
   /**
    * Resolve a Lightning Address and pay it. Addresses on this LSP's host
-   * use `resolveAddress` first (for internal/emulator host rewriting) and
-   * fall back to the shared LNURL resolver. External hosts go directly
+   * use verified LSP resolution without fallback after an ambiguous callback.
+   * External hosts go directly
    * through the shared resolver so a same-named LSP user cannot be paid
    * by mistake.
    *
@@ -366,70 +393,176 @@ export class UtexoLsp {
    * @throws {Error} - If no invoice is returned or the account payment fails.
    */
   async payAddress (opts = {}) {
+    const quote = await this.quoteAddress(opts)
+    this._checkAbort(opts.signal)
+    const sendResult = await this.account.sendPayment({ invoice: quote.invoice })
+    return { invoice: quote.invoice, sendResult }
+  }
+
+  async quoteAddress (opts = {}) {
+    rejectRoutingFeeCap(opts)
     const address = opts.address
     let parsed
     try {
       parsed = parseLightningAddress(address, { allowHttp: this.peer.allowHttp === true })
     } catch {
-      throw new TypeError(`UtexoLsp.payAddress: invalid Lightning Address "${address}"`)
+      throw new TypeError(`UtexoLsp.quoteAddress: invalid Lightning Address "${address}"`)
     }
 
-    let invoice
-    let useStandardResolver = parsed.host !== new URL(this.http.baseUrl ?? this.peer.baseUrl).host.toLowerCase()
-    if (!useStandardResolver) {
-      try {
-        const cb = await this.http.resolveAddress(
-          parsed.username, opts.amtMsat, { assetId: opts.asset?.assetId, assetAmount: opts.asset?.assetAmount }
-        )
-        invoice = cb?.pr
-      } catch {
-        useStandardResolver = true
+    const amtMsat = positiveAmount(opts.amtMsat, 'UtexoLsp.quoteAddress: amtMsat')
+    if (
+      opts.asset !== undefined &&
+      (opts.asset === null || typeof opts.asset !== 'object' || Array.isArray(opts.asset))
+    ) {
+      throw new TypeError('UtexoLsp.quoteAddress: asset must be an object when provided')
+    }
+    const requestedAssetAmount = opts.asset?.assetAmount ?? opts.asset?.amount
+    if (opts.asset && requestedAssetAmount === undefined) {
+      throw new TypeError('UtexoLsp.quoteAddress: asset.assetAmount is required when asset is set')
+    }
+    const assetAmount = requestedAssetAmount === undefined
+      ? undefined
+      : positiveAmount(requestedAssetAmount, 'UtexoLsp.quoteAddress: asset.assetAmount')
+
+    const localHost = new URL(this.http.baseUrl ?? this.peer.baseUrl).host.toLowerCase()
+    const hosted = parsed.host === localHost
+    let expectedNetwork = this.peer.network
+    if (hosted || expectedNetwork === undefined) {
+      const info = await this.http.getInfo({ signal: opts.signal })
+      if (info.pubkey !== this.peer.peerPubkey || (this.peer.network !== undefined && info.network !== this.peer.network)) {
+        throw new LspQuoteMismatchError('discovered LSP identity or network does not match the configured peer')
       }
+      expectedNetwork = info.network
     }
+    const assetId = opts.asset?.assetId === undefined
+      ? undefined
+      : canonicalAssetId(opts.asset.assetId, 'UtexoLsp.quoteAddress: asset.assetId')
+    if (opts.asset && assetId === undefined) throw new TypeError('An explicit asset.assetId is required')
 
-    if (useStandardResolver) {
-      const resolved = await resolveAddressToInvoice(parsed.address, opts.amtMsat, {
+    let resolved
+    if (hosted) {
+      const resolve = this.http.resolveAddressVerified.bind(this.http)
+      this._checkAbort(opts.signal)
+      resolved = await resolve(parsed.username, amtMsat, {
+        assetId,
+        assetAmount,
+        signal: opts.signal
+      })
+    } else {
+      resolved = await resolveAddressToInvoice(parsed.address, amtMsat, {
         allowHttp: this.peer.allowHttp === true,
         allowCrossHostCallback: opts.allowCrossHostCallback === true,
-        assetId: opts.asset?.assetId,
-        assetAmount: opts.asset?.assetAmount
+        assetId,
+        assetAmount,
+        signal: opts.signal
       })
-      invoice = resolved.pr
     }
 
-    if (typeof invoice !== 'string' || invoice.length === 0) {
-      throw new Error('UtexoLsp.payAddress: no invoice returned for Lightning Address')
+    const invoice = canonicalInvoice(
+      resolved?.pr,
+      'UtexoLsp.quoteAddress: no invoice returned for Lightning Address'
+    )
+
+    const discovery = resolved.discovery
+    if (!discovery) throw new LspQuoteMismatchError('missing discovery evidence')
+    assertAddressRequest(discovery, { amtMsat, assetId, assetAmount })
+
+    const proof = resolved.proof
+    const canVerifyInvoice = typeof this.account.decodeInvoice === 'function'
+    const requireProof = opts.requireAddressProof ?? hosted
+    if (requireProof && !proof) {
+      throw new LspQuoteMismatchError('the hosted Lightning Address quote has no APay inclusion proof')
     }
-    const sendResult = await this.account.sendPayment({ invoice })
-    return { invoice, sendResult }
+    if (hosted && (requireProof || discovery.addressSig !== undefined)) {
+      if (discovery.recipientPubkey === undefined || discovery.addressSig === undefined) {
+        throw new LspQuoteMismatchError('the hosted Lightning Address has no recipient attestation')
+      }
+      verifyApayAddressAttestation({
+        recipientPubkey: discovery.recipientPubkey,
+        username: parsed.username,
+        domain: parsed.host,
+        addressSig: discovery.addressSig
+      })
+    }
+    const requireInvoiceVerification = true
+    if (canVerifyInvoice) {
+      const decoded = decodedInvoice(await this.account.decodeInvoice(invoice), 'Lightning Address invoice')
+      assertAddressQuote(decoded, {
+        amtMsat,
+        assetId,
+        assetAmount,
+        metadata: discovery.metadata,
+        ...(expectedNetwork === undefined ? {} : { network: expectedNetwork }),
+        ...(hosted ? { lspPubkey: this.peer.peerPubkey } : {}),
+        ...(proof?.paymentHash === undefined ? {} : { paymentHash: proof.paymentHash })
+      })
+      if (proof) {
+        if (discovery.recipientPubkey === undefined) {
+          throw new LspQuoteMismatchError('the Lightning Address discovery does not identify the APay recipient')
+        }
+        if (decoded.payeePubkey === undefined) {
+          throw new LspQuoteMismatchError('the APay invoice does not identify its payment recipient')
+        }
+        verifyApayInvoiceProof(proof, {
+          paymentHash: decoded.paymentHash,
+          recipientPubkey: discovery.recipientPubkey,
+          hostPubkey: hosted ? this.peer.peerPubkey : decoded.payeePubkey
+        })
+      }
+    } else if (requireInvoiceVerification || proof) {
+      throw new LspQuoteMismatchError('the wallet cannot decode the Lightning Address invoice for local verification')
+    }
+    return Object.freeze({
+      invoice,
+      amtMsat,
+      ...(assetId === undefined ? {} : { assetId, assetAmount }),
+      ...(proof === undefined ? {} : { proof })
+    })
   }
 
   // ── 8. Async / offline receive (APay) ─────────────────────────────────────────
 
   /**
-   * Register the async-payment hash pool with this LSP, then read back
-   * the auto-assigned Lightning Address for this wallet's pubkey. Call
-   * once after first unlock to enable offline receive.
+   * Register the async-payment hash pool with this LSP and return the
+   * auto-assigned Lightning Address for this wallet's pubkey. Call once after
+   * first unlock to enable offline receive.
    *
+   * The LSP provisions the address before registration. The production path
+   * resolves that address first and registers exactly one signed batch through
+   * `apayNewWithAddress`. Calling legacy `apayNew` first can consume the hash
+   * pool capacity and leaves the address ownership unattested.
+   *
+   * @param {object} [opts] - Registration policy.
+   * @param {boolean} [opts.requireAddressAttestation=true] - Require the
+   *   generated native address-attestation method. Set to `false` only for an
+   *   explicit legacy compatibility downgrade.
    * @returns {Promise<{ username:string, domain:string, address:string }>} - Auto-assigned
    *   Lightning Address components and full address.
    * @throws {LspError} - If LSP information or address lookup fails.
    * @throws {Error} - If the wallet is locked, the LSP response is malformed,
    *   or APay registration fails.
    */
-  async enableLightningAddress () {
-    const nodeInfo = await this.account.getNodeInfo()
-    const pubkey = String(nodeInfo?.pubkey ?? '')
-    if (!pubkey) throw new Error('UtexoLsp.enableLightningAddress: wallet not unlocked (no pubkey)')
-
+  async enableLightningAddress ({ requireAddressAttestation = true } = {}) {
+    const addr = await this._ownLightningAddress('UtexoLsp.enableLightningAddress')
     const lspInfo = await this.http.getInfo()
     const lspPubkey = lspInfo?.pubkey
     if (typeof lspPubkey !== 'string' || lspPubkey.length === 0) {
       throw new Error('UtexoLsp.enableLightningAddress: LSP /get_info returned no pubkey')
     }
-    await this.account.apayNew(lspPubkey)
 
-    const addr = await this.http.getLightningAddressByPubkey(pubkey)
+    if (requireAddressAttestation) {
+      if (typeof this.account.apayNewWithAddress !== 'function') {
+        throw new Error(
+          'UtexoLsp.enableLightningAddress: address-attested APay is unavailable; ' +
+          'install compatible native wrappers or explicitly set ' +
+          'requireAddressAttestation to false for legacy registration'
+        )
+      }
+      await this.account.apayNewWithAddress(lspPubkey, addr.username, addr.domain)
+    } else {
+      await this.account.apayNew(lspPubkey)
+    }
+
     return { username: addr.username, domain: addr.domain, address: `${addr.username}@${addr.domain}` }
   }
 
@@ -475,7 +608,7 @@ export class UtexoLsp {
     const resp = await this.account.listChannels()
     if (Array.isArray(resp)) return resp
     if (resp && Array.isArray(resp.channels)) return resp.channels
-    return []
+    throw new TypeError('Invalid native channel list')
   }
 
   async _listPayments () {
@@ -487,8 +620,9 @@ export class UtexoLsp {
 
   _isUsableRgbChannel (c, assetId) {
     return (
+      this._raw(c, 'peerPubkey', 'peer_pubkey') === this.peer.peerPubkey &&
       this._raw(c, 'assetId', 'asset_id') === assetId &&
-      Boolean(this._raw(c, 'isUsable', 'is_usable') ?? this._raw(c, 'ready', 'ready'))
+      (this._raw(c, 'isUsable', 'is_usable') ?? this._raw(c, 'ready', 'ready')) === true
     )
   }
 
@@ -496,9 +630,9 @@ export class UtexoLsp {
     return {
       channelId: String(this._raw(c, 'channelId', 'channel_id') ?? ''),
       peerPubkey: this.peer.peerPubkey,
-      capacitySat: Number(this._raw(c, 'capacitySat', 'capacity_sat') ?? 0),
-      outboundBalanceMsat: Number(this._outboundMsat(c)),
-      inboundBalanceMsat: Number(this._raw(c, 'inboundBalanceMsat', 'inbound_balance_msat') ?? 0)
+      capacitySat: exactUnsignedNumber(this._raw(c, 'capacitySat', 'capacity_sat') ?? 0, 'native capacity'),
+      outboundBalanceMsat: exactUnsignedNumber(this._outboundMsat(c), 'native outbound balance'),
+      inboundBalanceMsat: exactUnsignedNumber(this._raw(c, 'inboundBalanceMsat', 'inbound_balance_msat') ?? 0, 'native inbound balance')
     }
   }
 
@@ -515,6 +649,37 @@ export class UtexoLsp {
   _raw (obj, camel, snake) {
     if (obj == null) return undefined
     return obj[camel] ?? obj[snake]
+  }
+
+  async _ownLightningAddress (context) {
+    const nodeInfo = await this.account.getNodeInfo()
+    const pubkey = String(nodeInfo?.pubkey ?? '')
+    if (!pubkey) throw new Error(`${context}: wallet not unlocked (no pubkey)`)
+
+    let lastError
+    for (let attempt = 0; attempt < LIGHTNING_ADDRESS_LOOKUP_ATTEMPTS; attempt += 1) {
+      try {
+        const address = await this.http.getLightningAddressByPubkey(pubkey)
+        if (
+          typeof address?.username === 'string' && address.username.length > 0 &&
+          typeof address?.domain === 'string' && address.domain.length > 0
+        ) {
+          return address
+        }
+        lastError = new Error('LSP returned an incomplete Lightning Address')
+      } catch (error) {
+        lastError = error
+      }
+
+      if (attempt + 1 < LIGHTNING_ADDRESS_LOOKUP_ATTEMPTS) {
+        await this._sleep(LIGHTNING_ADDRESS_LOOKUP_DELAY_MS)
+      }
+    }
+
+    throw new Error(
+      `${context}: LSP did not provision a Lightning Address for ${pubkey}. ` +
+      `Last error: ${String(lastError)}`
+    )
   }
 
   _checkAbort (signal) {

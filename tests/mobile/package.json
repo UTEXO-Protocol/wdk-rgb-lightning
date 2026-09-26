@@ -1,0 +1,26 @@
+{
+  "name": "wdk-runtime-qualification",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "dependencies": {
+    "expo": "56.0.21",
+    "expo-build-properties": "56.0.27",
+    "expo-file-system": "56.0.11",
+    "react": "19.2.3",
+    "react-native": "0.85.3",
+    "react-native-bare-kit": "0.14.5",
+    "@utexo/wdk-rgb-lightning": "0.2.0-beta.1",
+    "@utexo/rgb-lightning-node-bare": "0.2.0-beta.1",
+    "bare-node-runtime": "1.5.0",
+    "bare-crypto": "1.15.3",
+    "bare-https": "3.0.0",
+    "bare-fs": "4.7.4",
+    "bare-path": "3.1.1"
+  },
+  "devDependencies": {
+    "bare-pack": "2.2.1",
+    "bare-link": "3.3.0",
+    "bare-lief": "0.2.5"
+  }
+}
