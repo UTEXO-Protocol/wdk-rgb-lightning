@@ -10,15 +10,45 @@ No VSS work, upstream behavioral fork, wallet migration or physical device run.
 | --- | --- | --- | --- |
 | P01 | Preserve pending_blinded through C-FFI and wrapper types | Node and Bare host native pass | Funded blinded counts 1/2 preserved through process restart; Rust conversion regression passed for 0/3/u32::MAX; Node 13/Bare 34 installer tests |
 | P02 | Normalize released DTOs at Iris boundary | Implemented and unit-tested | Strict assignment grammar/u64 boundary, WaitingBroadcast and sequential portfolio/history reads; full Iris suite and coverage gates pass |
-| P03 | Replace prepared-plan UX with released one-shot sends | Approved; Iris implementation in progress | Recipient/amount/fee-rate authorization, unknown final fee, durable commit marker and no replay. Setup adoption and app qualification remain open |
+| P03 | Replace prepared-plan UX with released one-shot sends | Implemented; bounded Android funded pass | Released BTC send and RGB output setup with recipient/amount or output-count/fee-rate review, durable markers and no replay. Funded app RGB transfer and remaining mobile lanes are open |
 | P04 | Explicit non-reuse address policy and safe legacy rotation | WDK implemented; Node and Bare funded pass | Seven strict native checks pass on each runtime: setup/witness script isolation, actual settlement of all three interleaved witness invoices, and balances/reservations/funded BTC addresses persisting after process restart |
 | P05 | Fresh-wallet unknown-asset receive | Planned | Generic invoices must not promise a particular asset; no custom import or mislabeled USDT invoice |
-| P06 | Sequential refresh/history with partial/error states | Implemented; app native qualification pending | Iris contract v4 records sequential/known-scripts reads and null block hash; recovery remains pending; BTC requests explicitly untracked without released address receipts |
-| P07 | Native signer lifecycle and runtime containment | Upstream defect; containment pending | Same-process retained DB lock is not fixed by handle disposal |
-| P08 | One-shot failure and interrupted-broadcast recovery | Updated host fixtures pass; app qualification pending | Node/Bare disk-full and 0/20/100-ms dispatch-relative interruption checks pass. Iris file-backed journal restart/no-replay tests pass; not mobile crash qualification |
+| P06 | Sequential refresh/history with partial/error states | Implemented; Android native BTC reads pass | Strict native network enum normalization; source-specific history health avoids false BTC warnings from unconfigured RGB. Sequential/known-script scope and untracked address receipts remain explicit |
+| P07 | Native signer lifecycle and runtime containment | Signer lock open; app containment verified | Android reproduces same-process lock; sanitized restart guidance is observed, no reset/reinstall or automatic retry. Bare Android TLS unload fix passes two normal worklet Reload cycles; separate Expo debug deep-link exception remains |
+| P08 | One-shot failure and interrupted-broadcast recovery | Host tests and bounded Android SQLCipher recovery pass | Real app process death after setup broadcast/ack before confirmation retains unresolved marker, no resend, then reconciles after six blocks. BTC send survives cold restart. Arbitrary commit-boundary kills and mobile disk-full remain unqualified |
 | P09 | New-wallet restore and address discovery | Pending | FastSync alone is insufficient evidence |
-| P10 | Rebuild and fingerprint all supported artifacts | Seven Bare builds and five Node CI targets pass | Iris updated iOS Debug build/startup pass; no authenticated funded app pass. Android APK build blocked by Maven timeout; mobile completion remains open |
+| P10 | Rebuild and fingerprint all supported artifacts | Seven Bare artifacts and five Node CI targets pass | Bare source 642572d relinks all seven with verified archive hashes. Iris current Android Debug APK passes 72 ELF/ZIP checks and live 16-KiB RELRO; funded flow identities recorded separately. Funded iOS and latest Release execution remain open |
 | P11 | VSS and Lightning-only extensions | Excluded | Preserve existing WIP; do not advertise unsupported guarantees |
+
+## Current Mobile Follow-Up (2026-09-27)
+
+- Iris now uses released one-shot sends/setup and sequential reads. Unsupported
+  contract/consignment imports are removed; named USDT requires exact native
+  membership and never substitutes a generic invoice. Unknown-asset first receive
+  remains unavailable; seed discovery remains unproven with FastSync.
+- Fresh Android 16-KiB wallet was funded with 1,000,000 regtest sats. Native
+  output setup creates four 20,000-sat outputs (567-sat fee); 10,000-sat BTC send
+  has independently verified 285-sat fee and six confirmations. Persisted setup
+  survives process termination before confirmation without replay. Cold restart
+  restores balance/history. Exact public transactions and binary hashes are in
+  Iris's integration tracker, not inferred from mock tests.
+- Bare source `642572d` adds Android DF_1_NODELETE and bounded validation plus
+  link-recipe provenance. This fixes a separately symbol-correlated Rust TLS
+  destructor call into unmapped addon code. Two normal Reload cycles replace
+  worklet threads in one surviving process, with no crash and protected live
+  RELRO. Re-authentication still reproduces the independent signer database lock.
+  A dev-client deep link hits a separate Expo debug React-context exception;
+  it is not reported as passing or as an observed Release crash.
+- Iris current gates: 212 suites / 2,372 tests, unchanged coverage, typecheck,
+  lint, Expo Doctor, production export credential scans and dependency audit
+  pass. Required installed API gate fails only on deferred `vssDeleteAll`;
+  remote CI is not green. Original dev/VSS work remains untouched.
+- Existing stack passes its read-only pinned-image doctor at height 3852.
+  No volume reset or real-network funds. Mobile first-asset RGB receipt, funded
+  iOS, latest Release execution, production connectivity/asset approval,
+  remaining adverse recovery and full native lifecycle remain release gates.
+  The original generic mobile fixture's older dependency audit is separate from
+  the now-passing Iris audit.
 
 ## Verification Log
 
