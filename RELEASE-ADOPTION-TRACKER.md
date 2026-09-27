@@ -10,17 +10,36 @@ No VSS work, upstream behavioral fork, wallet migration or physical device run.
 | --- | --- | --- | --- |
 | P01 | Preserve pending_blinded through C-FFI and wrapper types | Node and Bare host native pass | Funded blinded counts 1/2 preserved through process restart; Rust conversion regression passed for 0/3/u32::MAX; Node 13/Bare 34 installer tests |
 | P02 | Normalize released DTOs at Iris boundary | Implemented and unit-tested | Strict assignment grammar/u64 boundary, WaitingBroadcast and sequential portfolio/history reads; full Iris suite and coverage gates pass |
-| P03 | Replace prepared-plan UX with released one-shot sends | Explicit approval required | Automated safety review rejected removal of exact-fee/preauthorized-transaction guarantees; proposed edit was not applied. Approval requested for clearly disclosed fee-rate authorization and durable unknown-outcome handling, or disabled sends |
+| P03 | Replace prepared-plan UX with released one-shot sends | Approved; Iris implementation in progress | Recipient/amount/fee-rate authorization, unknown final fee, durable commit marker and no replay. Setup adoption and app qualification remain open |
 | P04 | Explicit non-reuse address policy and safe legacy rotation | WDK implemented; Node and Bare funded pass | Seven strict native checks pass on each runtime: setup/witness script isolation, actual settlement of all three interleaved witness invoices, and balances/reservations/funded BTC addresses persisting after process restart |
 | P05 | Fresh-wallet unknown-asset receive | Planned | Generic invoices must not promise a particular asset; no custom import or mislabeled USDT invoice |
 | P06 | Sequential refresh/history with partial/error states | Implemented; app native qualification pending | Iris contract v4 records sequential/known-scripts reads and null block hash; recovery remains pending; BTC requests explicitly untracked without released address receipts |
 | P07 | Native signer lifecycle and runtime containment | Upstream defect; containment pending | Same-process retained DB lock is not fixed by handle disposal |
-| P08 | One-shot failure and interrupted-broadcast recovery | Pending | No duplicate submission; signing/write-failure qualification |
+| P08 | One-shot failure and interrupted-broadcast recovery | Updated host fixtures pass; app qualification pending | Node/Bare disk-full and 0/20/100-ms dispatch-relative interruption checks pass. Iris file-backed journal restart/no-replay tests pass; not mobile crash qualification |
 | P09 | New-wallet restore and address discovery | Pending | FastSync alone is insufficient evidence |
-| P10 | Rebuild and fingerprint all supported artifacts | Pending after adapter edit | Host native probes, mobile builds, installed identity, post-link alignment |
+| P10 | Rebuild and fingerprint all supported artifacts | Seven Bare builds and five Node CI targets pass | Iris updated iOS Debug build/startup pass; no authenticated funded app pass. Android APK build blocked by Maven timeout; mobile completion remains open |
 | P11 | VSS and Lightning-only extensions | Excluded | Preserve existing WIP; do not advertise unsupported guarantees |
 
 ## Verification Log
+
+### 2026-09-27 Current Identity Follow-Up
+
+- All seven Bare targets rebuilt and verified at `78d34c4`; all five Node native
+  matrix targets passed run 36228166056 at source commit `549c428`. These are
+  artifact/offline checks, not funded networking on every target.
+- Updated strict host disk-full fixtures pass: Node `wdk-rln-storage-0DGXfK`,
+  Bare `wdk-rln-storage-DV69PE`. Interrupted-send fixtures pass: Node
+  `wdk-rln-interrupted-BzwkU1`, Bare `wdk-rln-interrupted-tkKNn8`. The bounded
+  volume was restored and unmounted; no wallet replacement or automatic resend.
+  Timing is dispatch-relative, not a proven database-commit crash boundary.
+- Iris `88a9062` pins the verified artifacts and explicit address policy. New
+  iOS Debug build and cold launch reach the locked-wallet screen. This is not
+  authenticated wallet or funded app evidence. Android input staging passes
+  provenance, symbols and 16-KiB ELF checks for all three ABIs, but APK assembly
+  timed out downloading Kotlin 2.1.20 from Maven before app compilation.
+- WDK CI run 36231326910 and Bare CI run 36229814128 pass. Source, artifacts and
+  private wallet evidence were retained while only completed compiler caches
+  were removed. Historical mobile runs below qualify their original identities.
 
 - 2026-09-26: all four remote draft heads match the audited local release heads.
   Original Iris dev worktree contains unrelated VSS work and remains untouched.
