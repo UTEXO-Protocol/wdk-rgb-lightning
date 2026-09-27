@@ -99,6 +99,7 @@ if (packedPackages.length !== 1) {
 const packed = packedPackages[0]
 const packedFiles = new Set(packed.files.map(file => file.path))
 const requiredRootFiles = [
+  'UPGRADE-TRACKER.md',
   'CHANGELOG.md',
   'LICENSE',
   'README.md',
@@ -107,6 +108,7 @@ const requiredRootFiles = [
   'index-node.js',
   'index.d.ts',
   'index.js',
+  'lsp-info.d.ts',
   'package.json'
 ]
 const requiredRuntimeFiles = [

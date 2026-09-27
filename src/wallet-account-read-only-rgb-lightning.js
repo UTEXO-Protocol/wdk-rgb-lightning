@@ -4,6 +4,9 @@
 // you may not use this file except in compliance with the License.
 'use strict'
 
+import { exactUnsignedNumber, validateUnspents } from './released-native-contract.js'
+import { receiveAddress } from './receive-address.js'
+
 import { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 
 import { AccountLockedError } from './errors.js'
@@ -44,6 +47,7 @@ function isLockedError (error) {
 }
 
 function asBigInt (value, label) {
+  if (typeof value === 'number') exactUnsignedNumber(value, label)
   try {
     const result = BigInt(value)
     if (result < 0n) throw new Error(`${label} must not be negative`)
@@ -92,7 +96,7 @@ export function createReadOnlyRgbLightningAdapter (binding) {
     vssStatus: () => binding.vssStatus(),
     nodeInfo: () => callNode('nodeInfo'),
     networkInfo: () => callNode('networkInfo'),
-    address: () => callNode('address'),
+    address: () => receiveAddress(binding),
     listChannels: () => callNode('listChannels'),
     getChannelId: (temporaryChannelIdHex) => callNode('getChannelId', temporaryChannelIdHex),
     listPeers: () => callNode('listPeers'),
@@ -103,7 +107,7 @@ export function createReadOnlyRgbLightningAdapter (binding) {
     listAssets: (filterAssetSchemas) => callNode('listAssets', filterAssetSchemas),
     assetBalance: (assetId) => callNode('assetBalance', assetId),
     assetMetadata: (assetId) => callNode('assetMetadata', assetId),
-    listTransfers: (assetId) => callNode('listTransfers', assetId),
+    listTransfers: (assetId, txid) => callNode('listTransfers', assetId, txid),
     listTransfersByTxid: (txid) => callNode('listTransfersByTxid', txid),
     decodeRgbInvoice: (invoice) => callNode('decodeRgbInvoice', invoice),
     getAssetMedia: (digest) => callNode('getAssetMedia', digest),
@@ -323,17 +327,24 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
   async getAssetMetadata (assetId) { return this._reader.assetMetadata(assetId) }
 
   /**
-   * Returns transfers associated with one RGB asset.
+   * Returns transfers associated with an RGB asset, transaction, or both.
    *
-   * @param {string} assetId - The RGB asset ID.
+   * @param {string} [assetId] - The RGB asset ID.
+   * @param {string} [txid] - Transaction ID; required when assetId is omitted.
    * @returns {Promise<object>} The native transfer-list response.
    * @throws {TypeError} If the asset ID is empty or is not a string.
    */
-  async listTransfers (assetId) {
-    if (typeof assetId !== 'string' || assetId.length === 0) {
-      throw new TypeError('listTransfers(assetId) requires a non-empty RGB asset id')
+  async listTransfers (assetId, txid) {
+    if (assetId === undefined && txid === undefined) {
+      throw new TypeError('listTransfers requires an assetId or txid')
     }
-    return this._reader.listTransfers(assetId)
+    if (assetId !== undefined && (typeof assetId !== 'string' || assetId.length === 0)) {
+      throw new TypeError('listTransfers assetId must be a non-empty RGB asset id when supplied')
+    }
+    if (txid !== undefined && (typeof txid !== 'string' || !/^[a-f\d]{64}$/i.test(txid))) {
+      throw new TypeError('listTransfers txid must be a transaction ID')
+    }
+    return this._reader.listTransfers(assetId, txid)
   }
 
   /**
@@ -374,7 +385,7 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
   async getBalance (skipSync = false) {
     try {
       const result = await this._reader.btcBalance(Boolean(skipSync))
-      return BigInt(result?.vanilla?.spendable ?? result?.vanilla?.settled ?? 0)
+      return asBigInt(result?.vanilla?.spendable ?? result?.vanilla?.settled ?? 0, 'BTC balance')
     } catch (error) {
       if (isLockedError(error)) return 0n
       throw error
@@ -403,7 +414,7 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
    */
   async getTokenBalance (assetId) {
     const result = await this.getAssetBalance(assetId)
-    return BigInt(result?.spendable ?? result?.settled ?? 0)
+    return asBigInt(result?.spendable ?? result?.settled ?? 0, 'RGB balance')
   }
 
   /**
@@ -437,7 +448,8 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
    * @returns {Promise<object>} The native unspent-output response.
    */
   async listUnspents (skipSync = false) {
-    return this._reader.listUnspents(Boolean(skipSync))
+    if (typeof skipSync !== 'boolean') throw new TypeError('skipSync must be a boolean')
+    return validateUnspents(await this._reader.listUnspents(skipSync))
   }
 
   /**

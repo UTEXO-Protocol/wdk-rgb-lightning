@@ -1,0 +1,131 @@
+name: wdk-rln-013-qualification
+services:
+  bitcoind:
+    build:
+      context: .
+      dockerfile: Bitcoin.Dockerfile
+    image: wdk-qualification/bitcoin:31.1
+    command:
+      - -regtest
+      - -datadir=/data
+      - -server
+      - -rest
+      - -txindex
+      - -fallbackfee=0.00002
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=0.0.0.0/0
+      - -rpcuser=wdk
+      - -rpcpassword=regtest-only
+      - -discover=0
+      - -dnsseed=0
+      - -listen=1
+      - -port=18444
+    ports: ["127.0.0.1:29443:18443"]
+    volumes: ["bitcoin:/data"]
+    healthcheck:
+      test: ["CMD", "bitcoin-cli", "-regtest", "-rpcuser=wdk", "-rpcpassword=regtest-only", "getblockchaininfo"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  indexer:
+    image: mempool/electrs:v3.3.0@sha256:de9dd2f5a328d5f464936dc4128d848f9b8bf72221ab3c9b8e2949df50899b74
+    command:
+      - --network=regtest
+      - --jsonrpc-import
+      - --cookie=wdk:regtest-only
+      - --daemon-rpc-addr=bitcoind:18443
+      - --http-addr=0.0.0.0:3002
+      - --electrum-rpc-addr=0.0.0.0:50001
+      - --db-dir=/data
+    ports: ["127.0.0.1:29302:3002"]
+    volumes: ["indexer:/data"]
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+  proxy:
+    image: ghcr.io/rgb-tools/rgb-proxy-server:0.3.0@sha256:b06fe0f234c53030d54fe1e704daf4bc6ff2879a335124353175130a5112d313
+    platform: linux/amd64
+    ports: ["127.0.0.1:29300:3000"]
+  electrs:
+    build:
+      context: .
+      dockerfile: Electrs.Dockerfile
+    image: wdk-qualification/electrs:0.12.0
+    command:
+      - --network=regtest
+      - --daemon-rpc-addr=bitcoind:18443
+      - --electrum-rpc-addr=0.0.0.0:50001
+      - --conf=/config/electrs.toml
+      - --db-dir=/data
+      - --skip-block-download-wait
+    ports: ["127.0.0.1:29401:50001"]
+    volumes: ["electrs:/data", "./electrs.toml:/config/electrs.toml:ro"]
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+  rln:
+    image: wdk-qualification/rln:0.13.0-beta.3
+    profiles: ["lsp"]
+    command: ["/data", "--network", "regtest", "--daemon-listening-port", "3001", "--ldk-peer-listening-port", "9735", "--disable-authentication", "--reuse-addresses", "--lsp-base-url", "http://lsp:8080", "--lsp-bearer-token", "disposable-local-apay-only"]
+    ports: ["127.0.0.1:29301:3001", "127.0.0.1:29735:9735"]
+    volumes: ["rln:/data"]
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+  lsp:
+    image: wdk-qualification/lsp:b865c8868e202ba90055d4924382eada62c52cd6
+    profiles: ["lsp"]
+    environment:
+      SERVER_ADDR: :8080
+      LSP_BASE_URL: http://rln:3001
+      RGB_NODE_BASE_URL: http://rln:3001
+      RGB_INVOICE_TRANSPORT_ENDPOINTS: rpc://127.0.0.1:29300/json-rpc
+      SUPPORTED_ASSET_IDS: ${REGTEST_ASSET_ID:-}
+      LIGHTNING_ADDRESS_DOMAIN_URL: http://127.0.0.1:29380
+      LSP_NODE_HOST: 127.0.0.1
+      LSP_NODE_PORT: 29735
+      CRON_EVERY: 2s
+      DEFAULT_CHANNEL_CAPACITY_SAT: 500000
+      DEFAULT_CHANNEL_PUSH_MSAT: 100000000
+      DEFAULT_CHANNEL_ASSET_AMOUNT: 10000
+      DATABASE_URL: /data/lsp.db
+      APAY_BEARER_TOKEN: disposable-local-apay-only
+    ports: ["127.0.0.1:29380:8080"]
+    volumes: ["lsp:/data"]
+    depends_on: [rln]
+  peer-proxy-loopback:
+    image: node:22-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37
+    profiles: ["lsp"]
+    network_mode: service:rln
+    command: ["node", "/test/proxy-forward.cjs"]
+    volumes: ["./proxy-forward.cjs:/test/proxy-forward.cjs:ro"]
+    depends_on: [rln, proxy]
+  explorer:
+    build:
+      context: .
+      dockerfile: Explorer.Dockerfile
+    image: wdk-qualification/explorer:3.5.1
+    environment:
+      BTCEXP_HOST: 0.0.0.0
+      BTCEXP_PORT: 3002
+      BTCEXP_BITCOIND_HOST: bitcoind
+      BTCEXP_BITCOIND_PORT: 18443
+      BTCEXP_BITCOIND_USER: wdk
+      BTCEXP_BITCOIND_PASS: regtest-only
+      BTCEXP_BITCOIND_RPC_TIMEOUT: 30000
+      BTCEXP_ADDRESS_API: electrum
+      BTCEXP_ELECTRUM_SERVERS: tcp://indexer:50001
+      BTCEXP_PRIVACY_MODE: "true"
+      BTCEXP_NO_RATES: "true"
+      BTCEXP_RPC_ALLOWALL: "false"
+      BTCEXP_SLOW_DEVICE_MODE: "true"
+    ports: ["127.0.0.1:29303:3002"]
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+volumes:
+  bitcoin:
+  indexer:
+  electrs:
+  rln:
+  lsp:

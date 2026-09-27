@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "WDK Qualification",
+    "slug": "wdk-runtime-qualification",
+    "version": "1.0.0",
+    "ios": {
+      "bundleIdentifier": "com.utexo.wdkqualification",
+      "infoPlist": { "NSAppTransportSecurity": { "NSAllowsLocalNetworking": true } }
+    },
+    "android": { "package": "com.utexo.wdkqualification" },
+    "plugins": [["expo-build-properties", { "android": { "minSdkVersion": 29, "usesCleartextTraffic": true } }]]
+  }
+}

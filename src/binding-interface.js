@@ -23,6 +23,9 @@
  *   Defaults to `0`, which lets the operating system choose a port.
  * @property {number} [maxMediaUploadSizeMb] - Maximum RGB media upload size
  *   in MiB. Defaults to `5`.
+ * @property {boolean} [reuseAddresses] - Defaults to true. False uses released
+ *   native non-reuse for Bitcoin and colored scripts. Account address reads
+ *   share a session cache; getNewAddress explicitly allocates another address.
  * @property {boolean} [enableVirtualChannelsV0] - Enable the
  *   virtual-channels-v0 protocol. Defaults to `false`. Production APay requires
  *   this together with `virtualPeerPubkeys` because mobile clients open
@@ -32,7 +35,8 @@
  *   list, which disables virtual peering. For APay, set this to the LSP node ID.
  *   Forwarded to RLN as `virtual_peer_pubkeys`.
  * @property {boolean} [permissiveSignerPolicy] - Whether the in-process VLS
- *   signer uses its permissive policy filter. Defaults to `true`.
+ *   signer uses its permissive policy filter. Defaults to `false`; the released
+ *   native runtime rejects permissive mode on mainnet.
  * @property {string} [vssUrl] - VSS cloud-backup service URL. Omit to disable
  *   VSS. Only HTTPS and loopback HTTP URLs are accepted unless `vssAllowHttp`
  *   is enabled. Backup encryption is derived from the wallet seed, which is
@@ -48,10 +52,8 @@
  * @property {string} [lspBearerToken] - Bearer token sent to the LSP's
  *   `/internal/*` endpoints. Omit when the LSP does not require authorization.
  *
- * Concrete WDK bindings always send RLN `reuse_addresses: true`. This keeps
- * inherited read-only `getAddress()` calls pinned to the current address;
- * callers use the full account's explicit `rotateAddress()` command when
- * needed.
+ * Address policy is explicit and must remain consistent for a wallet. The
+ * default preserves reuse; new wallets may opt into native non-reuse.
  */
 
 /**
@@ -90,6 +92,12 @@
  *   accepts payments addressed to those hashes on the wallet's behalf
  *   while the wallet is offline. Argument is the LSP's node_id (hex).
  *   Returns the native AsyncOrderNewResponse unchanged.
+ * @property {(hostNodeId: string, username: string, domain: string) => object} apayNewWithAddress -
+ *   Register an APay hash batch carrying the wallet node's signed Lightning
+ *   Address attestation. Production Lightning Address registration uses this
+ *   method so the LSP can bind the batch to `username@domain` without trusting
+ *   caller-supplied identity data. Returns the native AsyncOrderNewResponse
+ *   unchanged.
  * @property {() => void} shutdown - Idempotently release the node handle and
  *   destroy the signer.
  */
