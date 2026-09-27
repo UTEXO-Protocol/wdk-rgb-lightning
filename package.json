@@ -35,7 +35,8 @@
     "test:regtest": "node tests/regtest/run.mjs",
     "test:regtest:assets": "node tests/regtest/assets.mjs",
     "test:regtest:reopen": "node tests/regtest/reopen.mjs",
-    "test:regtest:lsp": "node tests/regtest/lsp.mjs"
+    "test:regtest:lsp": "node tests/regtest/lsp.mjs",
+    "test:regtest:imports": "node tests/regtest/imports.mjs"
   },
   "dependencies": {
     "@noble/secp256k1": "2.3.0",

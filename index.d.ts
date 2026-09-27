@@ -21,6 +21,12 @@ import WalletManager, { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 
 export type DecimalString = `${bigint}`
 
+export interface RgbImportResult {
+  asset_id: string
+  already_imported: boolean
+  metadata: Record<string, unknown>
+}
+
 /** Native response integer: number within the safe range, exact decimal text otherwise. */
 export type ExactInteger = number | DecimalString
 export type LspAssetSchema = 'Nia' | 'Uda' | 'Cfa' | 'Ifa'
@@ -604,6 +610,10 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   failTransfers(request: object): Promise<object>
   createRgbInvoice(request: CreateRgbInvoiceRequest | object): Promise<object>
   sendRgbAsset(request: SendRgbAssetRequest | object): Promise<object>
+  /** Validated contract metadata only; creates no balance. Requires the approved import extension. */
+  importRgbContract(request: { contract_base64: string; expected_asset_id: string }): Promise<RgbImportResult>
+  /** Metadata for an already accepted transfer, not ownership acceptance. */
+  importRgbTransferConsignment(request: { consignment_base64: string; offchain_txid: string; expected_asset_id?: string }): Promise<RgbImportResult>
   postAssetMedia(request: object): Promise<object>
 
   // BTC on-chain

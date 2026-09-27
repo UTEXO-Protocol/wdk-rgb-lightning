@@ -43,8 +43,12 @@ Never delete or recreate state to bypass refusal, or roll back stale channel sta
 after activity.
 
 There is no snapshot/FullSync overlay, prepared-send/UTXO inventory, native
-operation control, address receipt, RLN import or VSS delete-all API. Native
+operation control, address receipt or VSS delete-all API. Native
 routing fee caps are unavailable and are rejected before payment submission.
+Contract and transfer-consignment metadata import APIs are available through the
+approved RLN PR #128, rebased onto this release. They validate the asset identity
+and never credit funds; normal receive/settlement remains required. Native runtime
+identity pins import revision `5d5aa742984d52767e1055fed6aa154ad732d551`.
 Current overlay-dependent app versions cannot adopt this line unchanged.
 
 Native JSON integer inputs must fit `Number.MAX_SAFE_INTEGER`; larger input

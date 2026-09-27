@@ -22,6 +22,10 @@ import { UtexoLsp } from './utexo-lsp.js'
 import { normalizeUnlockRequest, normalizeAutoUnlockRequest, sameUnlockRequest } from './node-unlock-request.js'
 import { exactUnsignedNumber, validatePaymentRequest, validateRefreshResult } from './released-native-contract.js'
 import { receiveAddress, joinAddressOperations, stopAddressOperations } from './receive-address.js'
+import {
+  validateImportRgbContractRequest, validateImportRgbContractResult,
+  validateImportRgbTransferConsignmentRequest, validateImportRgbTransferConsignmentResult
+} from './rgb-import-contract.js'
 import WalletAccountReadOnlyRgbLightning, {
   createReadOnlyRgbLightningAdapter,
   PENDING_ADDRESS
@@ -642,6 +646,22 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * @param {Object} request - JsonRgbInvoiceRequest (see above).
    */
   async createRgbInvoice (request) { return this._node.rgbInvoice(request) }
+
+  /** Register validated public metadata only; no asset units or allocations are imported. */
+  async importRgbContract (request) {
+    const validated = validateImportRgbContractRequest(request)
+    return validateImportRgbContractResult(
+      await this._node.importRgbContract(validated), validated.expected_asset_id
+    )
+  }
+
+  /** Register metadata for an already accepted transfer; does not accept ownership. */
+  async importRgbTransferConsignment (request) {
+    const validated = validateImportRgbTransferConsignmentRequest(request)
+    return validateImportRgbTransferConsignmentResult(
+      await this._node.importRgbTransferConsignment(validated), validated.expected_asset_id
+    )
+  }
 
   /**
    * Send an RGB asset. Forwarded verbatim to RLN's `sendRgb`

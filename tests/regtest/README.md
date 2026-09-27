@@ -153,3 +153,14 @@ released commitment fails to broadcast. See the report: strict BTC sweeps and
 RGB commitment signatures currently block acceptance. Do not call a diagnostic
 BTC pass complete production recovery. Mobile commands are in
 [the simulator/emulator fixture](../mobile/README.md).
+
+## Approved Import Extension
+
+`RGB_IMPORT_FIXTURE=/absolute/path/public-regtest-ifa.json npm run test:regtest:imports`
+qualifies fresh-wallet metadata import, zero balances, malformed payload rejection,
+named invoices, strict on-chain receipt/send, two-sided settlement and reimport.
+Use `-- --bare` with `BARE_BIN` pointing to Bare >=1.32.0 for the Bare runtime.
+The public fixture contains `network: "regtest"`, `schema: "Ifa"`, `precision: 6`,
+`asset_id` and `contract_base64` exported with RGB-lib's contract serializer.
+The existing local daemon must own at least 250000 units per run. The test checks
+the chain before funding; it does not reset volumes or qualify real USDT networks.

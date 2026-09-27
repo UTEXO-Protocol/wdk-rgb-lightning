@@ -1443,3 +1443,30 @@ describe('toReadOnlyAccount / ReadOnlyRgbLightningAccount', () => {
     await expect(ro.getTransactionReceipt('roTx')).resolves.toBe(hit)
   })
 })
+
+describe('approved import extension', () => {
+  it('validates requests and identities without exposing mutation on read-only accounts', async () => {
+    const result = { asset_id: 'rgb:expected', already_imported: false, metadata: { asset_schema: 'Ifa' } }
+    const node = makeNode({
+      importRgbContract: jest.fn(() => result),
+      importRgbTransferConsignment: jest.fn(() => result)
+    })
+    const account = makeAccount({ node })
+    const request = { contract_base64: 'YQ==', expected_asset_id: 'rgb:expected' }
+    await expect(account.importRgbContract(request)).resolves.toEqual(result)
+    expect(node.importRgbContract).toHaveBeenCalledWith(request)
+    await expect(account.importRgbContract({ contract_base64: 'YQ==' })).rejects.toThrow('expected_asset_id')
+    expect(node.importRgbContract).toHaveBeenCalledTimes(1)
+    await expect(account.importRgbTransferConsignment({
+      consignment_base64: 'YQ==', offchain_txid: 'AB'.repeat(32), expected_asset_id: 'rgb:expected'
+    })).resolves.toEqual(result)
+    expect(node.importRgbTransferConsignment).toHaveBeenCalledWith({
+      consignment_base64: 'YQ==', offchain_txid: 'ab'.repeat(32), expected_asset_id: 'rgb:expected'
+    })
+    node.importRgbContract.mockReturnValue({ ...result, asset_id: 'rgb:other' })
+    await expect(account.importRgbContract(request)).rejects.toThrow('expected_asset_id')
+    const readOnly = await account.toReadOnlyAccount()
+    expect(readOnly.importRgbContract).toBeUndefined()
+    expect(readOnly.importRgbTransferConsignment).toBeUndefined()
+  })
+})
