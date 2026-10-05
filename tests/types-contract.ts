@@ -37,6 +37,11 @@ void managerContract
 void accountContract
 void readOnlyContract
 
+const exportedConsignment: Promise<Uint8Array> = account.getConsignment('rgb:asset', '00'.repeat(32))
+const readOnlyConsignment: Promise<Uint8Array> = readOnlyAccount.getConsignment('rgb:asset', '00'.repeat(32))
+void exportedConsignment
+void readOnlyConsignment
+
 const lnurlOptions: LnurlPayOptions = {
   allowCrossHostCallback: true,
   assetAmount: 1n

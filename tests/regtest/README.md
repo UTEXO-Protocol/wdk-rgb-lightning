@@ -16,7 +16,7 @@ that a remotely deployed LSP runs the same commit.
 | RGB Electrum | romanz/electrs 0.12.0, 37501cc4b94aea99e50670a6524fa3ad4ac9aabb | TCP 127.0.0.1:29401 |
 | Esplora | mempool/electrs 3.3.0, image digest pinned | HTTP 127.0.0.1:29302 |
 | RGB proxy | 0.3.0, image digest pinned | HTTP 127.0.0.1:29300 |
-| RLN | 0.13.0-beta.3, af03c7f1a65135a429f05a5820600338215954dc | HTTP 127.0.0.1:29301 |
+| RLN | 0.15.0-beta.3, e2b39d5ae8da74525eafb58bc39b9a614c756a73 | HTTP 127.0.0.1:29301 |
 | LSP | main b865c8868e202ba90055d4924382eada62c52cd6; no release tag | HTTP 127.0.0.1:29380 |
 | Explorer | btc-rpc-explorer 3.5.1, 8ed77ab225f5507c521b570d5240624de597ad44 | HTTP 127.0.0.1:29303 |
 
@@ -52,7 +52,9 @@ BARE_BIN=/absolute/path/to/bare npm run test:regtest:assets -- --bare
 npm run test:regtest:reopen
 ```
 
-Use Bare >=1.32.0 for the WDK dependency graph. Setup builds the released daemon
+Use Bare >=1.33.0 for the WDK dependency graph. Setup requires `ORG_READ_TOKEN`
+with read access to the three private upstream BFA repos, passed only via a
+BuildKit secret. Setup builds the released daemon
 and pinned LSP from clean checkouts when public container images are unavailable.
 It does not patch their runtime behavior. The LSP scenario issues its own fixture
 asset, updates only this Compose project's LSP asset allowlist, and leaves the
@@ -159,7 +161,7 @@ BTC pass complete production recovery. Mobile commands are in
 `RGB_IMPORT_FIXTURE=/absolute/path/public-regtest-ifa.json npm run test:regtest:imports`
 qualifies fresh-wallet metadata import, zero balances, malformed payload rejection,
 named invoices, strict on-chain receipt/send, two-sided settlement and reimport.
-Use `-- --bare` with `BARE_BIN` pointing to Bare >=1.32.0 for the Bare runtime.
+Use `-- --bare` with `BARE_BIN` pointing to Bare >=1.33.0 for the Bare runtime.
 The public fixture contains `network: "regtest"`, `schema: "Ifa"`, `precision: 6`,
 `asset_id` and `contract_base64` exported with RGB-lib's contract serializer.
 The existing local daemon must own at least 250000 units per run. The test checks

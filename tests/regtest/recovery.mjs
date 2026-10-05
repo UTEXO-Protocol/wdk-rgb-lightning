@@ -11,6 +11,8 @@ const permissive = process.argv.includes('--diagnostic-permissive')
 const scenario = process.argv.find(arg => arg.startsWith('--scenario='))?.split('=')[1] ?? 'force-close'
 const blockSync = process.argv.includes('--block-sync')
 const rgb = process.argv.includes('--rgb')
+const interruptDelays = (process.argv.find(arg => arg.startsWith('--interrupt-delays='))?.split('=')[1] ?? '0,20,100').split(',').map(Number)
+assert.ok(interruptDelays.length > 0 && interruptDelays.length <= 20 && interruptDelays.every(delay => Number.isInteger(delay) && delay >= 0 && delay <= 1000))
 assert.ok(['force-close', 'reorg', 'rgb-reorg', 'interrupted', 'hodl-crash', 'cold-copy'].includes(scenario))
 assert.ok(!rgb || scenario === 'force-close', '--rgb is only supported for force-close')
 const root = fs.mkdtempSync(path.join(os.tmpdir(), `wdk-rln-${scenario}-`))
@@ -175,7 +177,7 @@ try {
 
   if (scenario === 'interrupted') {
     let interrupted = 0
-    for (const delay of [0, 20, 100]) {
+    for (const delay of interruptDelays) {
       await step(`kill after send dispatch (${delay}ms target delay), reconcile without retry`, async () => {
         const destination = await rpc('getnewaddress', [], 'miner')
         const receivedBefore = await rpc('getreceivedbyaddress', [destination, 0], 'miner')
@@ -210,7 +212,26 @@ try {
         const received = Math.round((await rpc('getreceivedbyaddress', [destination, 1], 'miner')) * 1e8)
         assert.ok(received === 0 || received === 10000, `unexpected recipient amount ${received}`)
         if (outcome.acknowledged) assert.equal(received, 10000)
-        const after = (await balance(alice)).vanilla.spendable
+        const recoveredBalance = await balance(alice)
+        const after = recoveredBalance.vanilla.spendable
+        const funding = results.find(result => result.name === 'fund wallet and independently reconcile').result.txid
+        const fundingTransaction = await transaction(funding)
+        const fundingIndex = fundingTransaction.vout.findIndex(output => output.scriptPubKey.address === address)
+        results.push({
+          name: `post-interruption evidence (${delay}ms target delay)`,
+          status: 'observed',
+          result: {
+            received,
+            before,
+            recoveredBalance,
+            outcome,
+            responsePersistedBeforeKill,
+            fundingOutpoint: { txid: funding, vout: fundingIndex },
+            fundingUtxo: await rpc('gettxout', [funding, fundingIndex, true]),
+            unspents: await alice.call('listUnspents', [false], 'native'),
+            transactions: await alice.call('listTransactions', [false], 'native')
+          }
+        })
         if (received === 0) assert.equal(after, before)
         else assert.ok(after <= before - 10000 && after > before - 20000)
         return { delay, observedDelay, responsePersistedBeforeKill, outcome, received, before, after, boundary: 'process killed after dispatch marker, not an instrumented database commit boundary' }

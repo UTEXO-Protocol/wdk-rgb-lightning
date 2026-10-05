@@ -4,7 +4,7 @@ import { snakeCaseLnParams } from './lsp-utils.js'
 
 export function rejectRoutingFeeCap (options = {}) {
   if ('maxTotalRoutingFeeMsat' in options || 'max_total_routing_fee_msat' in options) {
-    const error = new Error('RLN 0.13 cannot enforce a routing fee cap')
+    const error = new Error('RLN 0.15 cannot enforce a routing fee cap')
     error.code = 'ERR_RLN_UNSUPPORTED_CAPABILITY'
     throw error
   }

@@ -27,14 +27,14 @@ RLN rejects **issuance and inflation in external-signer mode**, which this
 module always uses. Issue assets in a separate on-chain wallet, such as
 [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], then transfer them to this wallet.
 
-> Status: unpublished `0.2.0-beta.1` candidate for RLN `0.13.0-beta.3`.
-> Not approved for production rollout. See [UPGRADE-TRACKER.md](./UPGRADE-TRACKER.md).
+> Status: unpublished `0.2.0-beta.2` candidate for RLN `0.15.0-beta.3`.
+> Not approved for production rollout. See [RELEASE-0.15-TRACKER.md](./RELEASE-0.15-TRACKER.md).
 
 ## Upgrade Restrictions
 
 This breaking line requires both runtime and package identity to match RLN
-`af03c7f1a65135a429f05a5820600338215954dc`. Install the exact native candidate
-`0.2.0-beta.1` for your runtime. These versions are not yet published.
+`e2b39d5ae8da74525eafb58bc39b9a614c756a73`. Install the exact native candidate
+`0.2.0-beta.2` for your runtime. These versions are not yet published.
 
 This candidate is scoped to fresh wallets: the deployment owner confirmed there
 are no live wallets to migrate. No legacy-wallet migration compatibility is
@@ -45,10 +45,9 @@ after activity.
 There is no snapshot/FullSync overlay, prepared-send/UTXO inventory, native
 operation control, address receipt or VSS delete-all API. Native
 routing fee caps are unavailable and are rejected before payment submission.
-Contract and transfer-consignment metadata import APIs are available through the
-approved RLN PR #128, rebased onto this release. They validate the asset identity
-and never credit funds; normal receive/settlement remains required. Native runtime
-identity pins import revision `5d5aa742984d52767e1055fed6aa154ad732d551`.
+Contract and transfer-consignment metadata import APIs are included in released
+RLN 0.15 (PR #128); no import backport is used. They validate asset identity and
+never credit funds; normal receive/settlement remains required.
 Current overlay-dependent app versions cannot adopt this line unchanged.
 
 Native JSON integer inputs must fit `Number.MAX_SAFE_INTEGER`; larger input
@@ -60,12 +59,12 @@ preserve `utxo.exists`, including false, and `pending_blinded`. Both are require
 an absent reservation count is not treated as zero. No spendability is inferred
 from absence.
 
-Real BTC/RGB, channel/APay, mobile and adverse-recovery results are recorded in
-[the qualification report](./tests/regtest/QUALIFICATION.md). All five Node
-platforms pass native offline execution; iOS arm64 simulator and Android arm64
-4-KiB worklets pass their recorded suites. Strict outgoing signing, same-process
-reopen, strict BTC sweeping, RGB force-close and Android 16-KiB packaging remain
-blockers. Permissive regtest diagnostics are not production qualification.
+Fresh RLN 0.15 results and release gates are recorded in
+[the release tracker](./RELEASE-0.15-TRACKER.md). The earlier
+[qualification report](./tests/regtest/QUALIFICATION.md) records RLN 0.13, not
+qualification of these artifacts. Strict outgoing signing, same-process reopen,
+RGB reorg safety, Lightning recovery and Android 16-KiB packaging remain gates.
+Permissive regtest diagnostics are not production qualification.
 
 Released RGB-lib does not revisit settled transfers during refresh: after a
 one-confirmation RGB transfer is disconnected by a reorg, `getAssetBalance`
@@ -126,21 +125,32 @@ module-load differs.
 ## Installation
 
 ```sh
-npm install @utexo/wdk-rgb-lightning@0.2.0-beta.1
+npm install @utexo/wdk-rgb-lightning@0.2.0-beta.2
 
 # Plus the native binding matching your runtime (optional peer deps):
-npm install @utexo/rgb-lightning-node-nodejs@0.2.0-beta.1   # Node host
+npm install @utexo/rgb-lightning-node-nodejs@0.2.0-beta.2   # Node host
 # or
-npm install @utexo/rgb-lightning-node-bare@0.2.0-beta.1     # Bare / React Native host
+npm install @utexo/rgb-lightning-node-bare@0.2.0-beta.2     # Bare / React Native host
 ```
 
 Both bindings are declared as **optional** peer dependencies — install only
-the one for your runtime after publication. Candidate `postinstall` builds the
-exact locked native source and requires Rust 1.94.0, Git, CMake and the relevant
-native SDK/toolchain. There is no no-Rust prebuilt-install promise. Bare mobile
-builds must be performed before bundling the worklet. See each binding's README
-for target selection and prerequisites. With scripts disabled, native imports
-are not usable; the parser-only `@utexo/wdk-rgb-lightning/lsp-info` entry is pure JS.
+the one for your runtime after publication. Native installers verify packed
+prebuilds when present, otherwise build the exact locked source. Source builds
+require authorized access to private upstream BFA repositories, Rust 1.94.0, Git,
+CMake and the target SDK/toolchain. Complete verified release prebuilds and clean
+consumer installs are still publication gates. Bare mobile artifacts must exist
+before bundling the worklet. Standalone Bare requires >=1.33.0. See each binding's
+README for target selection and prerequisites. The parser-only
+`@utexo/wdk-rgb-lightning/lsp-info` entry is pure JS.
+
+Saved transfer consignments can be exported without exposing native paths:
+
+```js
+const bytes = await account.getConsignment(assetId, transactionId) // Uint8Array
+```
+
+This reads a consignment already stored by RLN. It does not construct a new
+transfer or replace the receive/validation/settlement flow.
 
 ## Quick start
 
@@ -349,8 +359,8 @@ Higher-level linked-asset payment execution remains excluded from this candidate
 For bridge helpers, a verified Lightning payment is not proof that the RGB delivery
 leg settled; monitor that leg independently.
 
-The WDK Bare entry requires Bare >= 1.32.0 with the current dependency graph
-(`bare-type` 1.3.0 requires that engine). Its packed desktop canary pins 1.32.0.
+The WDK Bare entry requires Bare >= 1.33.0 with current dependency resolution
+(`bare-thread` requires that engine). Its packed desktop canary pins 1.33.0.
 The standalone native binding's 1.30.3 canary does not qualify the complete WDK
 dependency graph or a React Native worklet. Qualify the app's embedded runtime
 and dependency lock separately before adoption.

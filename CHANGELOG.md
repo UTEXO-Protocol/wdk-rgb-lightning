@@ -8,6 +8,18 @@ while pre-`1.0`.
 
 ## [Unreleased]
 
+### 0.2.0-beta.2 Candidate
+- Upgrade both exact native peers to RLN 0.15.0-beta.3 and verify its compiled
+  source/adapter identity. Contract imports now use upstream #128, not a backport.
+- Add `getConsignment(assetId, txid): Promise<Uint8Array>` on writable and
+  read-only accounts, with strict identifiers, exact bytes and native errors.
+- Preserve strict persistent signing, lossless response amounts and existing
+  account/LSP behavior. Enforce upstream mainnet Lightning rejection.
+- Require standalone Bare >=1.33.0 for current dependency resolution.
+- Support provenance-verified native prebuild packages, with publication gated
+  on complete release artifacts. Track exact-candidate tests and outstanding
+  production gates in RELEASE-0.15-TRACKER.md. No npm publication yet.
+
 ### Breaking: 0.2.0-beta.1 Candidate
 - Pin native peers to the unpublished 0.2.0-beta.1 release-based candidates for
   RLN 0.13.0-beta.3, with compiled capability/identity checks before handle creation.

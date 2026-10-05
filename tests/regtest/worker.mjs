@@ -12,7 +12,11 @@ let manager
 let account
 let lsp
 let busy = false
-const encode = value => JSON.stringify(value, (_key, item) => typeof item === 'bigint' ? { bigint: String(item) } : item)
+const encode = value => JSON.stringify(value, (_key, item) => {
+  if (typeof item === 'bigint') return { bigint: String(item) }
+  if (item instanceof Uint8Array) return { bytes_hex: Buffer.from(item).toString('hex') }
+  return item
+})
 const publish = value => {
   fs.writeFileSync(path.join(directory, 'response.tmp'), encode(value), { mode: 0o600 })
   fs.renameSync(path.join(directory, 'response.tmp'), path.join(directory, 'response.json'))

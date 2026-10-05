@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import net from 'node:net'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
@@ -54,6 +55,27 @@ export async function prepareChain () {
     else await rpc('createwallet', ['miner'])
   }
   if (chain.blocks < 110) await mine(110 - chain.blocks)
+  await until('Esplora and Electrum index the active chain', async () => {
+    try {
+      const height = await rpc('getblockcount')
+      const response = await fetch(`${endpoints.esplora}/blocks/tip/height`, { signal: AbortSignal.timeout(5000) })
+      if (!response.ok || Number(await response.text()) !== height) return false
+      return await new Promise(resolve => {
+        const socket = net.createConnection({ host: '127.0.0.1', port: 29401 })
+        let buffer = ''
+        const finish = result => { socket.destroy(); resolve(result) }
+        socket.setTimeout(5000, () => finish(false))
+        socket.on('error', () => finish(false))
+        socket.on('connect', () => socket.write(JSON.stringify({ id: 1, method: 'blockchain.headers.subscribe', params: [] }) + '\n'))
+        socket.on('data', data => {
+          buffer += data
+          if (buffer.includes('\n')) {
+            try { finish(JSON.parse(buffer.split('\n')[0]).result?.height === height) } catch { finish(false) }
+          }
+        })
+      })
+    } catch { return false }
+  })
   return chain
 }
 
@@ -76,8 +98,8 @@ export async function prepareIssuer () {
   try {
     await daemon('unlock', {
       password: 'Disposable-regtest-only-013!',
-      ldk_chain_sync: { mode: 'BlockSync', config: { bitcoind_rpc_username: 'wdk', bitcoind_rpc_password: 'regtest-only', bitcoind_rpc_host: 'bitcoind', bitcoind_rpc_port: 18443 } },
-      indexer_url: 'tcp://electrs:50001',
+      ldk_chain_sync: { mode: 'BlockSync', config: { bitcoind_rpc_username: 'wdk', bitcoind_rpc_password: 'regtest-only', bitcoind_rpc_host: process.env.REGTEST_HOST_ISSUER === '1' ? '127.0.0.1' : 'bitcoind', bitcoind_rpc_port: process.env.REGTEST_HOST_ISSUER === '1' ? 29443 : 18443 } },
+      indexer_url: process.env.REGTEST_HOST_ISSUER === '1' ? endpoints.electrum : 'tcp://electrs:50001',
       proxy_endpoint: endpoints.proxy,
       announce_addresses: []
     })
@@ -109,7 +131,7 @@ export class WalletProcess {
   spawn () {
     const log = fs.openSync(path.join(this.directory, 'runtime.log'), 'a', 0o600)
     const command = this.runtime === 'node' ? process.execPath : process.env.BARE_BIN
-    if (!command) throw new Error('BARE_BIN must point to a Bare >=1.32.0 executable')
+    if (!command) throw new Error('BARE_BIN must point to a Bare >=1.33.0 executable')
     this.exit = undefined
     this.spawnError = undefined
     this.groupKilled = false
@@ -188,7 +210,7 @@ export class WalletProcess {
       announce_addresses: []
     }
     const result = await this.call('init', [this.config, this.seed, this.unlock], 'control')
-    assert.equal(result.runtime.rln_commit, 'af03c7f1a65135a429f05a5820600338215954dc')
+    assert.equal(result.runtime.rln_commit, 'e2b39d5ae8da74525eafb58bc39b9a614c756a73')
     assert.equal(result.network.network.toLowerCase(), 'regtest')
     assert.equal(result.node.channel_asset_max_amount, '18446744073709551615')
     this.pubkey = result.node.pubkey

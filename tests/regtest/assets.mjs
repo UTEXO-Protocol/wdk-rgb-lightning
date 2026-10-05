@@ -93,6 +93,13 @@ try {
       })
       assert.equal((await bob.call('getAssetBalance', [asset.asset_id])).settled, unique ? 1 : 25)
       assert.equal((await alice.call('getAssetBalance', [asset.asset_id])).settled, unique ? 0 : 975)
+      const exported = await alice.call('getConsignment', [asset.asset_id, sent.txid])
+      const raw = await alice.call('getConsignment', [asset.asset_id, sent.txid], 'native')
+      const location = await alice.call('getConsignmentPath', [asset.asset_id, sent.txid], 'native')
+      assert.match(exported.bytes_hex, /^(?:[a-f0-9]{2})+$/)
+      assert.equal(exported.bytes_hex, raw.bytes_hex)
+      assert.equal(fs.readFileSync(location.path).toString('hex'), raw.bytes_hex)
+      await assert.rejects(alice.call('getConsignment', [asset.asset_id, '00'.repeat(32)]))
       return sent
     })
   }

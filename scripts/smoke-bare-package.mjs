@@ -34,7 +34,7 @@ try {
     process.env.RLN_BARE_PACKAGE_TARBALL
       ? path.resolve(process.env.RLN_BARE_PACKAGE_TARBALL)
       : `${nativePackage}@${nativeVersion}`,
-    'bare-runtime@1.32.0'], {
+    'bare-runtime@1.33.0'], {
     cwd: temporaryRoot,
     env: { ...process.env, RLN_BARE_TARGETS: 'darwin-arm64' }
   })
@@ -46,7 +46,7 @@ try {
     if (WalletManager.Binding !== BareRgbLightningBinding || parseLspInfo !== parseOnly) {
       throw new Error('Packed Bare exports resolved incorrectly')
     }
-    if (native.getRuntimeInfo().rln_commit !== 'af03c7f1a65135a429f05a5820600338215954dc') {
+    if (native.getRuntimeInfo().rln_commit !== 'e2b39d5ae8da74525eafb58bc39b9a614c756a73') {
       throw new Error('Wrong compiled RLN release')
     }
     BareRgbLightningBinding.healthcheck()

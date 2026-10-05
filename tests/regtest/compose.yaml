@@ -38,7 +38,7 @@ services:
       - --electrum-rpc-addr=0.0.0.0:50001
       - --db-dir=/data
     ports: ["127.0.0.1:29302:3002"]
-    volumes: ["indexer:/data"]
+    volumes: ["indexer015:/data"]
     depends_on:
       bitcoind:
         condition: service_healthy
@@ -59,12 +59,12 @@ services:
       - --db-dir=/data
       - --skip-block-download-wait
     ports: ["127.0.0.1:29401:50001"]
-    volumes: ["electrs:/data", "./electrs.toml:/config/electrs.toml:ro"]
+    volumes: ["electrs015:/data", "./electrs.toml:/config/electrs.toml:ro"]
     depends_on:
       bitcoind:
         condition: service_healthy
   rln:
-    image: wdk-qualification/rln:0.13.0-beta.3
+    image: wdk-qualification/rln:0.15.0-beta.3
     profiles: ["lsp"]
     command: ["/data", "--network", "regtest", "--daemon-listening-port", "3001", "--ldk-peer-listening-port", "9735", "--disable-authentication", "--reuse-addresses", "--lsp-base-url", "http://lsp:8080", "--lsp-bearer-token", "disposable-local-apay-only"]
     ports: ["127.0.0.1:29301:3001", "127.0.0.1:29735:9735"]
@@ -125,7 +125,7 @@ services:
         condition: service_healthy
 volumes:
   bitcoin:
-  indexer:
-  electrs:
+  indexer015:
+  electrs015:
   rln:
   lsp:

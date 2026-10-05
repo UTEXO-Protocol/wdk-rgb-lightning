@@ -100,6 +100,7 @@ const packed = packedPackages[0]
 const packedFiles = new Set(packed.files.map(file => file.path))
 const requiredRootFiles = [
   'UPGRADE-TRACKER.md',
+  'RELEASE-0.15-TRACKER.md',
   'CHANGELOG.md',
   'LICENSE',
   'README.md',

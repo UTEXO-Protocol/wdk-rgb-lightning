@@ -6,6 +6,7 @@
 
 import { exactUnsignedNumber, validateUnspents } from './released-native-contract.js'
 import { receiveAddress } from './receive-address.js'
+import { consignmentLookup, consignmentBytes } from './consignment-export.js'
 
 import { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 
@@ -107,6 +108,7 @@ export function createReadOnlyRgbLightningAdapter (binding) {
     listAssets: (filterAssetSchemas) => callNode('listAssets', filterAssetSchemas),
     assetBalance: (assetId) => callNode('assetBalance', assetId),
     assetMetadata: (assetId) => callNode('assetMetadata', assetId),
+    getConsignment: (assetId, txid) => callNode('getConsignment', assetId, txid),
     listTransfers: (assetId, txid) => callNode('listTransfers', assetId, txid),
     listTransfersByTxid: (txid) => callNode('listTransfersByTxid', txid),
     decodeRgbInvoice: (invoice) => callNode('decodeRgbInvoice', invoice),
@@ -317,6 +319,12 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
    * @returns {Promise<object>} The native asset balance response.
    */
   async getAssetBalance (assetId) { return this._reader.assetBalance(assetId) }
+
+  /** Returns locally stored consignment bytes; does not accept or credit a transfer. */
+  async getConsignment (assetId, txid) {
+    const lookup = consignmentLookup(assetId, txid)
+    return consignmentBytes(await this._reader.getConsignment(...lookup))
+  }
 
   /**
    * Returns metadata for an RGB asset.

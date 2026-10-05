@@ -479,6 +479,9 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
   /** Returns metadata for an RGB asset. */
   getAssetMetadata(assetId: string): Promise<object>
 
+  /** Locally stored consignment bytes. Not arbitrary offline acceptance or a wallet backup. */
+  getConsignment(assetId: string, txid: string): Promise<Uint8Array>
+
   /**
    * Returns transfers associated with one RGB asset.
    *

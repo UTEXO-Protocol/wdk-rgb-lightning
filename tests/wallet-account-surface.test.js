@@ -58,6 +58,7 @@ function makeNode (overrides = {}) {
     listAssets: jest.fn((f) => ({ assets: f })),
     assetBalance: jest.fn((id) => ({ settled: 7, asset: id })),
     assetMetadata: jest.fn((id) => ({ meta: id })),
+    getConsignment: jest.fn(() => ({ bytes_hex: '00ff' })),
     listTransfers: jest.fn((id) => ({ transfers: id })),
     listTransfersByTxid: jest.fn(() => []),
     refreshTransfers: jest.fn(() => undefined),

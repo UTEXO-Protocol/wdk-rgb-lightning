@@ -5,7 +5,10 @@ as a production wallet. No physical devices, real funds or production seeds.
 Run one app at a time against `server.mjs`, bound to host loopback port 29888.
 Start the [local stack](../regtest/README.md) first; run chain scenarios serially.
 
-## Tested Profile
+## Historical RLN 0.13 Profile
+
+The results below are historical, not qualification of the new RLN 0.15
+artifacts. The fixture now selects candidate 0.2.0-beta.2 for new runs.
 
 - Expo 56.0.21, React Native 0.85.3, React 19.2.3, Bare Kit 0.14.5.
 - Embedded Bare 1.29.4, uv 1.52.1, V8 14.8.178.31, reported by the worklet.
@@ -16,7 +19,7 @@ Start the [local stack](../regtest/README.md) first; run chain scenarios seriall
   `zipalign -P 16` passed, but post-link ELF RELRO alignment failed. Re-linking
   with bare-lief 0.2.8 still fails ELF validation. No 0.2.8 APK runtime pass claimed.
 
-The host WDK CLI engine floor remains Bare 1.32.0. A bundled mobile profile is a
+The current host WDK CLI engine floor is Bare 1.33.0. A bundled mobile profile is a
 different dependency/runtime configuration, not evidence that the CLI floor may
 be lowered. Transitive dependencies are not locked by this test source; retain
 each generated fixture lockfile and build artifacts with that run's evidence.

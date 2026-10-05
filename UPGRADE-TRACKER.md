@@ -1,5 +1,8 @@
 # RLN 0.13.0-beta.3 Upgrade Tracker
 
+Historical 0.13 evidence. Current candidate status is in
+[RELEASE-0.15-TRACKER.md](./RELEASE-0.15-TRACKER.md).
+
 Status: 2026-09-24 local released-runtime qualification completed within the
 recorded scope. Strict outgoing signing, same-process reopen, force-close recovery
 and Android 16-KiB packaging failures remain blockers. RGB settlement also remains

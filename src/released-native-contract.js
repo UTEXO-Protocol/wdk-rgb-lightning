@@ -16,7 +16,7 @@ export function validatePaymentRequest (request) {
   if (!request || typeof request !== 'object' || Array.isArray(request)) throw new TypeError('Payment request must be an object')
   const allowed = new Set(['invoice', 'amt_msat', 'asset_id', 'asset_amount'])
   if (Object.keys(request).some(key => !allowed.has(key))) {
-    const error = new Error('RLN 0.13 does not support this payment field; routing fee caps are unavailable')
+    const error = new Error('RLN 0.15 does not support this payment field; routing fee caps are unavailable')
     error.code = 'ERR_RLN_UNSUPPORTED_CAPABILITY'
     throw error
   }
