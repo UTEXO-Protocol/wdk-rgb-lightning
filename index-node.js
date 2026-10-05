@@ -26,6 +26,7 @@ export { NodeRgbLightningBinding } from './src/node-binding.js'
 export {
   RgbLightningError,
   AccountLockedError,
+  LightningDisabledError,
   UnlockError,
   VssError,
   VssNotConfiguredError,

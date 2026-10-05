@@ -11,6 +11,7 @@ import { consignmentLookup, consignmentBytes } from './consignment-export.js'
 import { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 
 import { AccountLockedError } from './errors.js'
+import { assertLightningEnabled } from './lightning-policy.js'
 
 /** @typedef {import('@tetherto/wdk-wallet').Transaction} Transaction */
 /** @typedef {import('@tetherto/wdk-wallet').TransferOptions} TransferOptions */
@@ -80,6 +81,7 @@ function isPendingPayment (payment) {
  */
 export function createReadOnlyRgbLightningAdapter (binding) {
   if (!binding) throw new TypeError('A RGB Lightning binding is required')
+  const network = (binding._initRequest?.network ?? binding._config?.network)?.toLowerCase()
 
   const callNode = (method, ...args) => {
     const node = binding.ensureNode()
@@ -93,6 +95,8 @@ export function createReadOnlyRgbLightningAdapter (binding) {
   }
 
   return Object.freeze({
+    getNetwork: () => network,
+    isDisposed: () => binding._closed === true,
     bootstrap: () => binding.bootstrap(),
     vssStatus: () => binding.vssStatus(),
     nodeInfo: () => callNode('nodeInfo'),
@@ -158,6 +162,32 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
      */
     this._reader = reader
   }
+
+  /** Configured network, available before unlock without a native call. */
+  getNetwork () { return this._reader.getNetwork?.() }
+
+  isDisposed () { return this._reader.isDisposed?.() === true }
+
+  /** Package support, not a statement that the wallet is online or funded. */
+  getCapabilities () {
+    return {
+      network: this.getNetwork(),
+      signer: 'external',
+      lightning: ['signet', 'testnet', 'testnet4', 'regtest'].includes(this.getNetwork()),
+      consignmentExport: true,
+      bfaAssetListing: true,
+      bfaValidation: false,
+      burn: false
+    }
+  }
+
+  /** BFA workflows require Ethereum validation, unavailable in this signer path. */
+  async getBfaCapabilities () {
+    return { bfa: false, burn: false, consignment: true }
+  }
+
+  /** @protected */
+  _assertLightningEnabled () { assertLightningEnabled(this.getNetwork()) }
 
   /**
    * Returns the account's public signer bootstrap metadata.
@@ -247,7 +277,10 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
    *
    * @returns {Promise<object>} The native channel-list response.
    */
-  async listChannels () { return this._reader.listChannels() }
+  async listChannels () {
+    this._assertLightningEnabled()
+    return this._reader.listChannels()
+  }
 
   /**
    * Resolves a temporary channel ID to its permanent channel ID.
@@ -257,6 +290,7 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
    * @returns {Promise<object>} The native channel ID lookup response.
    */
   async getChannelId (temporaryChannelIdHex) {
+    this._assertLightningEnabled()
     return this._reader.getChannelId(temporaryChannelIdHex)
   }
 
@@ -265,7 +299,10 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
    *
    * @returns {Promise<object>} The native peer-list response.
    */
-  async listPeers () { return this._reader.listPeers() }
+  async listPeers () {
+    this._assertLightningEnabled()
+    return this._reader.listPeers()
+  }
 
   /**
    * Decodes a BOLT11 Lightning invoice without paying it.
@@ -273,7 +310,10 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
    * @param {string} invoice - The BOLT11 invoice to decode.
    * @returns {Promise<object>} The decoded invoice response.
    */
-  async decodeInvoice (invoice) { return this._reader.decodeInvoice(invoice) }
+  async decodeInvoice (invoice) {
+    this._assertLightningEnabled()
+    return this._reader.decodeInvoice(invoice)
+  }
 
   /**
    * Returns the node's current status for a Lightning invoice.
@@ -281,14 +321,20 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
    * @param {string} invoice - The BOLT11 invoice to inspect.
    * @returns {Promise<object>} The native invoice status response.
    */
-  async getInvoiceStatus (invoice) { return this._reader.invoiceStatus(invoice) }
+  async getInvoiceStatus (invoice) {
+    this._assertLightningEnabled()
+    return this._reader.invoiceStatus(invoice)
+  }
 
   /**
    * Returns the node's Lightning payment history.
    *
    * @returns {Promise<object>} The native payment-list response.
    */
-  async listPayments () { return this._reader.listPayments() }
+  async listPayments () {
+    this._assertLightningEnabled()
+    return this._reader.listPayments()
+  }
 
   /**
    * Returns one Lightning payment by hash and payment type.
@@ -299,6 +345,7 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
    * @returns {Promise<object>} The native payment response.
    */
   async getPayment (paymentHashHex, paymentType) {
+    this._assertLightningEnabled()
     return this._reader.getPayment(paymentHashHex, paymentType)
   }
 
@@ -556,6 +603,7 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
     }
     const kind = this.constructor._classifyRecipient(options.recipient)
     if (kind === 'bolt11' || kind === 'ln-pubkey') {
+      this._assertLightningEnabled()
       const amount = asBigInt(options.amount ?? 0, 'quoteTransfer amount')
       const proportionalFee = (amount * LN_FEE_BPS + BASIS_POINTS - 1n) / BASIS_POINTS
       return { fee: proportionalFee > 0n ? proportionalFee : 1n }
@@ -617,6 +665,8 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
       return status === 'settled' ? transfer : null
     }
 
+    // An unknown on-chain hash must remain a null receipt on mainnet.
+    if (this.getNetwork() === 'mainnet') return null
     const payments = asArray(await this.listPayments(), 'payments')
     const payment = payments.find((item) => item?.payment_hash === hash)
     return payment && !isPendingPayment(payment) ? payment : null

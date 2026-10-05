@@ -24,6 +24,7 @@ export { BareRgbLightningBinding } from './src/bare-binding.js'
 export {
   RgbLightningError,
   AccountLockedError,
+  LightningDisabledError,
   UnlockError,
   VssError,
   VssNotConfiguredError,

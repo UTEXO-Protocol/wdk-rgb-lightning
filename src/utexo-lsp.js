@@ -4,6 +4,8 @@
 // you may not use this file except in compliance with the License.
 'use strict'
 
+import { assertAccountLightningEnabled } from './lightning-policy.js'
+
 // Composed, stateful LSP flows on top of a WalletAccountRgbLightning +
 // an LspClient. Where `lsp-helpers.js` exposes single-shot functions,
 // this class bundles the connect → wait-for-channel → receive/send →
@@ -142,6 +144,7 @@ export class UtexoLsp {
    * @throws {Error} - If the LSP client rejects an insecure HTTP origin.
    */
   constructor (account, peer) {
+    assertAccountLightningEnabled(account)
     if (account == null) throw new TypeError('UtexoLsp: account required')
     if (peer == null || typeof peer.baseUrl !== 'string') {
       throw new TypeError('UtexoLsp: peer.baseUrl required')
@@ -167,6 +170,7 @@ export class UtexoLsp {
    * @throws {Error} - If the account cannot connect to the LSP peer.
    */
   async connect () {
+    assertAccountLightningEnabled(this.account)
     return this.account.connectPeer(peerUri(this.peer))
   }
 
@@ -185,6 +189,7 @@ export class UtexoLsp {
    *   fails.
    */
   async waitForChannel (assetId, opts = {}) {
+    assertAccountLightningEnabled(this.account)
     const timeoutMs = opts.timeoutMs ?? DEFAULT_CHANNEL_TIMEOUT_MS
     const pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
     const deadline = Date.now() + timeoutMs
@@ -224,6 +229,7 @@ export class UtexoLsp {
    * @throws {Error} - If local invoice creation fails or returns no invoice.
    */
   async receiveAsset (opts = {}) {
+    assertAccountLightningEnabled(this.account)
     if (typeof opts.assetId !== 'string' || opts.assetId.length === 0) {
       throw new TypeError('UtexoLsp.receiveAsset: assetId required')
     }
@@ -274,6 +280,7 @@ export class UtexoLsp {
    *   fails.
    */
   async awaitReceiveSettlement (lnInvoice, opts = {}) {
+    assertAccountLightningEnabled(this.account)
     const timeoutMs = opts.timeoutMs ?? DEFAULT_SETTLEMENT_TIMEOUT_MS
     const pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
     const deadline = Date.now() + timeoutMs
@@ -308,6 +315,7 @@ export class UtexoLsp {
    *   fails.
    */
   async waitForOutboundLiquidity (minMsat, opts = {}) {
+    assertAccountLightningEnabled(this.account)
     minMsat = exactUnsignedNumber(minMsat, 'minMsat')
     const timeoutMs = opts.timeoutMs ?? DEFAULT_CHANNEL_TIMEOUT_MS
     const pollIntervalMs = opts.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
@@ -348,6 +356,7 @@ export class UtexoLsp {
    * @throws {Error} - If the account payment fails.
    */
   async sendAsset (opts = {}) {
+    assertAccountLightningEnabled(this.account)
     if (typeof opts.rgbInvoice !== 'string' || opts.rgbInvoice.length === 0) {
       throw new TypeError('UtexoLsp.sendAsset: rgbInvoice required')
     }
@@ -393,6 +402,7 @@ export class UtexoLsp {
    * @throws {Error} - If no invoice is returned or the account payment fails.
    */
   async payAddress (opts = {}) {
+    assertAccountLightningEnabled(this.account)
     const quote = await this.quoteAddress(opts)
     this._checkAbort(opts.signal)
     const sendResult = await this.account.sendPayment({ invoice: quote.invoice })
@@ -400,6 +410,7 @@ export class UtexoLsp {
   }
 
   async quoteAddress (opts = {}) {
+    assertAccountLightningEnabled(this.account)
     rejectRoutingFeeCap(opts)
     const address = opts.address
     let parsed
@@ -543,6 +554,7 @@ export class UtexoLsp {
    *   or APay registration fails.
    */
   async enableLightningAddress ({ requireAddressAttestation = true } = {}) {
+    assertAccountLightningEnabled(this.account)
     const addr = await this._ownLightningAddress('UtexoLsp.enableLightningAddress')
     const lspInfo = await this.http.getInfo()
     const lspPubkey = lspInfo?.pubkey
@@ -577,6 +589,7 @@ export class UtexoLsp {
    *   claim outcomes.
    */
   async claimPendingPayments () {
+    assertAccountLightningEnabled(this.account)
     const payments = await this._listPayments()
     const claimable = payments.filter((p) => {
       const s = String(this._raw(p, 'status', 'status') ?? '').toUpperCase()

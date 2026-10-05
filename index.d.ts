@@ -100,6 +100,24 @@ export interface SendPaymentRequest {
 
 export type Network = 'mainnet' | 'testnet' | 'regtest' | 'signet'
 
+/** Supported package operations, independent of online/funded state. */
+export interface RgbLightningCapabilities {
+  network: Network | undefined
+  signer: 'external'
+  lightning: boolean
+  consignmentExport: true
+  bfaAssetListing: true
+  bfaValidation: false
+  burn: false
+}
+
+export interface BfaCapabilities {
+  /** End-to-end BFA validation is unavailable with the current external signer. */
+  bfa: false
+  burn: false
+  consignment: true
+}
+
 export interface Transaction {
   to: string
   value: number | bigint
@@ -427,6 +445,12 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
    */
   protected constructor(reader: object)
 
+  /** Configured network; undefined only for a custom adapter without network metadata. */
+  getNetwork(): Network | undefined
+  isDisposed(): boolean
+  getCapabilities(): RgbLightningCapabilities
+  getBfaCapabilities(): Promise<BfaCapabilities>
+
   /** Returns the account's public signer bootstrap metadata. */
   getBootstrap(): Promise<object>
 
@@ -674,6 +698,11 @@ export class RgbLightningError extends Error {
 }
 export class UnlockError extends RgbLightningError {}
 export class AccountLockedError extends RgbLightningError {}
+/** All account Lightning APIs reject on mainnet before native or HTTP work. */
+export class LightningDisabledError extends RgbLightningError {
+  constructor()
+  code: 'LIGHTNING_DISABLED_ON_MAINNET'
+}
 export class VssError extends RgbLightningError {}
 export class VssNotConfiguredError extends VssError {}
 export class ApayError extends RgbLightningError {}

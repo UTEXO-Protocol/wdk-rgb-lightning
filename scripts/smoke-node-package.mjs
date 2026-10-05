@@ -140,8 +140,11 @@ try {
   const smokeProgram = `
     import WalletManagerRgbLightning, {
       NodeRgbLightningBinding,
-      WalletAccountReadOnlyRgbLightning
+      WalletAccountReadOnlyRgbLightning,
+      LightningDisabledError
     } from '${packageJson.name}'
+    import { WebRgbProvider } from '${packageJson.name}/webrgb'
+    import { smokeWalletPolicy } from ${JSON.stringify(path.join(rootDir, 'scripts/smoke-wallet-policy.mjs'))}
 
     const metadata = (
       await import('${packageJson.name}/package', {
@@ -168,6 +171,7 @@ try {
     NodeRgbLightningBinding.healthcheck()
     const binding = new NodeRgbLightningBinding({ dataDir: '${path.join(temporaryRoot, 'wallet')}', network: 'regtest' })
     binding.shutdown()
+    await smokeWalletPolicy(WalletManagerRgbLightning, WebRgbProvider, LightningDisabledError, ${JSON.stringify(path.join(temporaryRoot, 'mainnet-wallet'))})
   `
 
   run(

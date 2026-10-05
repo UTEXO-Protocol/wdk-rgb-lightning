@@ -4,6 +4,8 @@
 // you may not use this file except in compliance with the License.
 'use strict'
 
+import { assertAccountLightningEnabled } from './lightning-policy.js'
+
 // Higher-level orchestration on top of LspClient and LnurlPay. These
 // helpers take an "account-like" object — anything that exposes
 // `sendPayment`, `lnInvoice` / `createInvoice`, `decodeLnInvoice` —
@@ -59,6 +61,7 @@ import { rejectRoutingFeeCap, paymentExpectation, requireInvoiceDecoder, verifyP
  * @throws {Error} - If the pre-payment hook or account payment fails.
  */
 export async function payLightningAddress (account, addr, amountMsat, opts = {}) {
+  assertAccountLightningEnabled(account)
   if (account == null || typeof account.sendPayment !== 'function') {
     throw new TypeError('payLightningAddress: account.sendPayment(request) required')
   }
@@ -108,6 +111,7 @@ export async function payLightningAddress (account, addr, amountMsat, opts = {})
  * @throws {Error} - If local invoice creation fails or returns no invoice.
  */
 export async function requestLspRgbDeposit (account, { lsp, lnInvoice, lnInvoiceRequest, rgb, lspOpts } = {}) {
+  assertAccountLightningEnabled(account)
   if (account == null) throw new TypeError('requestLspRgbDeposit: account required')
   if (rgb == null || typeof rgb !== 'object') throw new TypeError('requestLspRgbDeposit: rgb params required')
   const client = asLspClient(lsp, lspOpts)
@@ -161,6 +165,7 @@ export async function requestLspRgbDeposit (account, { lsp, lnInvoice, lnInvoice
  * @throws {Error} - If the account payment fails.
  */
 export async function payRgbViaLsp (account, { lsp, rgbInvoice, ln, lspOpts } = {}) {
+  assertAccountLightningEnabled(account)
   if (account == null || typeof account.sendPayment !== 'function') {
     throw new TypeError('payRgbViaLsp: account.sendPayment required')
   }

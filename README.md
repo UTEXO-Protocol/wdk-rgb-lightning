@@ -5,8 +5,8 @@
 WDK module for RGB-over-Lightning, built on
 [`rgb-lightning-node`][rgb-lightning-node] (RLN). It runs a full LDK +
 `rgb-lib` Lightning node behind WDK's wallet-manager/account contract and
-adds channels, BOLT11 + RGB invoices, payments, HODL invoices, atomic
-swaps, async payments (APay), optional VSS cloud backup, and a complete LSP
+adds BTC/RGB on-chain transfers, channels, BOLT11 + RGB invoices, payments,
+HODL invoices, async payments (APay), optional VSS cloud backup, and an LSP
 client for the UTEXO Lightning Service Provider.
 
 The node runs in **external-signer** mode: the BIP-39 mnemonic stays in the
@@ -85,6 +85,8 @@ matrices are not implied by the recorded passes.
 - [Quick start](#quick-start)
 - [Account API](#account-api)
 - [Error handling](#error-handling)
+- [Mainnet policy and capabilities](#mainnet-policy-and-capabilities)
+- [WebRGB integration](#webrgb-integration)
 - [LSP integration](#lsp-integration)
 - [VSS cloud backup](#vss-cloud-backup)
 - [Async payments (APay)](#async-payments-apay)
@@ -92,6 +94,53 @@ matrices are not implied by the recorded passes.
 - [Testing and local development](#testing-and-local-development)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
+
+## Mainnet policy and capabilities
+
+RLN 0.15 disables Lightning **on mainnet only**. Account channel, peer, invoice
+(including BOLT11 decoding), payment, HODL, APay and onion-message methods reject
+with `LightningDisabledError`, code `LIGHTNING_DISABLED_ON_MAINNET`, before
+native execution. Lightning recipients in `transfer` and `quoteTransfer`,
+wallet-connected LSP methods and standalone account-taking LSP helpers use the
+same policy before HTTP side effects. Read-only accounts follow it too.
+
+Signet, testnet and regtest retain their Lightning APIs; availability is not a
+claim that their recorded release gates are resolved. BTC/RGB on-chain methods,
+identity queries, message signing/verification and standalone LSP discovery
+remain available. `getTransactionReceipt` does not query Lightning history on
+mainnet, so an unknown on-chain hash returns `null`.
+
+```js
+const capabilities = account.getCapabilities()
+// { network, signer: 'external', lightning, consignmentExport: true,
+//   bfaAssetListing: true, bfaValidation: false, burn: false }
+
+try {
+  await account.listChannels()
+} catch (error) {
+  if (error.code !== 'LIGHTNING_DISABLED_ON_MAINNET') throw error
+}
+```
+
+`getNetwork()` reads the configured network without unlocking.
+`getCapabilities()` describes this package/signer combination, not wallet
+readiness, balance or successful qualification. `getBfaCapabilities()` returns
+`{ bfa: false, burn: false, consignment: true }`: native BFA asset groups are
+preserved, but the released external-signer unlock has no Ethereum RPC input.
+BFA validation and burn are not advertised. Consignment export is the existing
+account API; no burn method or persistent burn journal is added.
+
+## WebRGB integration
+
+The optional `@utexo/wdk-rgb-lightning/webrgb` export adapts a native WDK account
+to WebRGB's receiving/read subset. It does not run RLN in a browser, inject
+`window.rgb`, or establish WalletConnect sessions. It has no runtime dependency
+on WebRGB or WalletConnect. TypeScript consumers of this subpath should install
+the optional type peer `@utexo/webrgb@0.1.0`; ordinary WDK consumers do not need it.
+
+See [WEBRGB.md](./WEBRGB.md) for session authorization, approval handling, API
+mapping and native-runtime integration. The subset matches the non-burn scope
+of [rgb-sdk-rn #59](https://github.com/UTEXO-Protocol/rgb-sdk-rn/pull/59).
 
 ## Architecture
 
@@ -327,6 +376,7 @@ verbatim and the underlying error is attached as `cause`; each error has a
 RgbLightningError            code: RGB_LIGHTNING_ERROR
 ├── UnlockError              code: UNLOCK_FAILED
 ├── AccountLockedError       code: ACCOUNT_LOCKED
+├── LightningDisabledError   code: LIGHTNING_DISABLED_ON_MAINNET
 ├── VssError                 code: VSS_ERROR
 │   └── VssNotConfiguredError code: VSS_NOT_CONFIGURED
 ├── ApayError                code: APAY_ERROR (e.g. APAY_PEER_NOT_VISIBLE)

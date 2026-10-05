@@ -8,9 +8,11 @@ const argv = isBare ? Bare.argv : process.argv
 const directory = argv[argv.length - 1]
 const { default: WalletManager } = await import(isBare ? '../../bare.js' : '../../index-node.js')
 const native = (await import(isBare ? '@utexo/rgb-lightning-node-bare' : '@utexo/rgb-lightning-node-nodejs')).default
+const { WebRgbProvider } = await import('../../src/webrgb.js')
 let manager
 let account
 let lsp
+let provider
 let busy = false
 const encode = value => JSON.stringify(value, (_key, item) => {
   if (typeof item === 'bigint') return { bigint: String(item) }
@@ -49,9 +51,17 @@ async function dispatch ({ target, method, args = [] }) {
       lsp = await account.createLsp(...args)
       return { ready: true }
     }
+    if (method === 'webrgb') {
+      provider = new WebRgbProvider(account, {
+        origin: 'https://qualification.example.com',
+        confirm: async () => true
+      })
+      await provider.enable()
+      return provider.getInfo()
+    }
     throw new Error(`Unknown control method ${method}`)
   }
-  const object = target === 'account' ? account : target === 'native' ? manager._binding.ensureNode() : target === 'lsp' ? lsp : null
+  const object = target === 'account' ? account : target === 'native' ? manager._binding.ensureNode() : target === 'lsp' ? lsp : target === 'webrgb' ? provider : null
   if (!object || typeof object[method] !== 'function') throw new Error(`Unknown ${target}.${method}`)
   return await object[method](...args)
 }

@@ -33,6 +33,10 @@ try {
     wallets.push(wallet)
     await step(`${name}: strict signer, funding and UTXOs`, async () => {
       await wallet.start(port)
+      const info = await wallet.call('webrgb', [], 'control')
+      assert.equal(info.network, 'regtest')
+      assert.ok(info.methods.includes('blindReceive'))
+      assert.equal((await wallet.call('getCapabilities')).lightning, true)
       await rpc('sendtoaddress', [await wallet.call('getAddress'), 1], 'miner')
       await mine()
       await wallet.call('createUtxos', [{ up_to: false, num: 10, size: 500000, fee_rate: 2, skip_sync: false }])
@@ -52,10 +56,12 @@ try {
     const amount = unique ? 1 : 1000
     const asset = await step(`${schema}: receive daemon-issued asset`, async () => {
       const issued = (await daemon(`issueasset${schema}`, request)).asset
-      const receive = await alice.call('createRgbInvoice', [{ witness: false, min_confirmations: 1 }])
-      const decoded = await alice.call('decodeRgbInvoice', [receive.invoice])
+      await assert.rejects(alice.call('getAssetBalance', [issued.asset_id], 'webrgb'), error => error.remote?.code === 'ASSET_NOT_FOUND')
+      const receive = await alice.call('blindReceive', [], 'webrgb')
+      assert.equal(receive.minConfirmations, 3)
+      const decoded = await alice.call('decodeRgbInvoice', [receive.invoice], 'webrgb')
       const assignment = unique ? { type: kind } : { type: kind, value: amount }
-      const sent = await daemon('sendrgb', { donation: true, fee_rate: 2, min_confirmations: 1, skip_sync: false, recipient_map: { [issued.asset_id]: [{ recipient_id: receive.recipient_id, assignment, transport_endpoints: decoded.transport_endpoints }] } })
+      const sent = await daemon('sendrgb', { donation: true, fee_rate: 2, min_confirmations: 3, skip_sync: false, recipient_map: { [issued.asset_id]: [{ recipient_id: receive.recipientId, assignment, transport_endpoints: decoded.transportEndpoints }] } })
       await mine()
       await until(`${schema} funding settled`, async () => {
         await alice.call('refreshTransfers', [{ skip_sync: false }])
@@ -64,6 +70,12 @@ try {
       })
       assert.equal((await alice.call('getAssetMetadata', [issued.asset_id])).name, request.name)
       assert.ok((await alice.call('listTransfersByTxid', [sent.txid])).some(item => item.status === 'Settled'))
+      assert.equal((await alice.call('getAssetBalance', [issued.asset_id], 'webrgb')).balance, amount)
+      assert.ok((await alice.call('listAssets', [], 'webrgb')).some(item => item.id === issued.asset_id && item.schema === schema))
+      const status = await alice.call('getTransferStatus', [sent.txid, issued.asset_id], 'webrgb')
+      assert.equal(status.status, 'Settled')
+      assert.equal(status.transfer.amount, unique ? undefined : amount)
+      assert.equal((await alice.call('getTransferStatus', [sent.txid], 'webrgb')).status, 'Settled')
       return issued
     })
     await step(`${schema}: witness transfer with exact assignment and two-sided settlement`, async () => {
@@ -100,9 +112,15 @@ try {
       assert.equal(exported.bytes_hex, raw.bytes_hex)
       assert.equal(fs.readFileSync(location.path).toString('hex'), raw.bytes_hex)
       await assert.rejects(alice.call('getConsignment', [asset.asset_id, '00'.repeat(32)]))
+      assert.equal((await bob.call('getAssetBalance', [asset.asset_id], 'webrgb')).balance, unique ? 1 : 25)
+      assert.equal((await bob.call('getTransferStatus', [sent.txid, asset.asset_id], 'webrgb')).status, 'Settled')
       return sent
     })
   }
+  const allTransfers = await wallets[0].call('listTransfers', [], 'webrgb')
+  assert.ok(allTransfers.length >= schemas.length)
+  assert.ok(allTransfers.every(item => typeof item.assetId === 'string'))
+  await assert.rejects(wallets[0].call('decodeRgbInvoice', ['rgb:invalid'], 'webrgb'), error => error.remote?.code === 'INVALID_PARAMS')
 } catch (error) {
   console.error(error)
   process.exitCode = 1

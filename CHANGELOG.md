@@ -9,6 +9,13 @@ while pre-`1.0`.
 ## [Unreleased]
 
 ### 0.2.0-beta.2 Candidate
+- Add an optional, transport-neutral WebRGB receiving/read adapter with session
+  approval, revocation checks, strict request/amount mapping and sanitized errors.
+- Reject mainnet account and wallet-connected LSP Lightning operations with
+  `LIGHTNING_DISABLED_ON_MAINNET` before native/HTTP work; preserve non-mainnet
+  APIs and mainnet on-chain receipt lookup.
+- Add local network/lifecycle and signer-aware capability reporting. BFA asset
+  listing is distinct from unsupported external-signer BFA validation and burn.
 - Upgrade both exact native peers to RLN 0.15.0-beta.3 and verify its compiled
   source/adapter identity. Contract imports now use upstream #128, not a backport.
 - Add `getConsignment(assetId, txid): Promise<Uint8Array>` on writable and

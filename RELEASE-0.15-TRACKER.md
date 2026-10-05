@@ -10,7 +10,7 @@ Target: `release/rln-0.15.0-beta.3`, branched from `release/rln-0.13.0-beta.3` i
 | Replace import backport with binding-only adapter | Done | Eight C-FFI files only. Upstream #128 supplies imports; persistent signer, APay address, JSON parity and provenance retained. |
 | Resolve and verify Node/C-FFI Cargo locks | Done | Four exact BFA overrides; source allowlists and locked builds pass. Compatible h2/rustls security updates included. |
 | Expose local consignment export in all three packages | Done | WDK returns exact Uint8Array; Node/Bare return native hex/path. Four-schema funded byte comparisons pass in both runtimes. |
-| Preserve published WDK public API and lossless amounts | Done | 710 WDK tests, types and existing surfaces pass; BFA response shape preserved without claiming external BFA support. |
+| Preserve published WDK public API and lossless amounts | Done | 850 WDK tests, types and existing surfaces pass after the WebRGB/policy follow-up; BFA response shape preserved without claiming external BFA support. |
 | Verify mainnet Lightning rejection | Done | Actual Node/Bare native canaries reject Lightning and retain on-chain initialization requirements. No mainnet funds or endpoint qualification. |
 | Public package installation and artifact provenance | Host packed installs passed; full matrix open | Fresh Node/Bare consumers load optimized packed addons without Rust on PATH. Complete-artifact publication gates reject the incomplete matrices. Private source credentials and full release matrix still required. |
 | Build and exercise host Node and Bare | Done for macOS arm64 | Fresh debug and optimized 0.15 artifacts pass native canaries. Both optimized runtimes pass the four-schema funded/export matrix. |
@@ -18,6 +18,45 @@ Target: `release/rln-0.15.0-beta.3`, branched from `release/rln-0.13.0-beta.3` i
 | Local-stack funded/adverse recovery regressions | Executed within recorded scope; release blocked | Both runtimes pass four-schema and six-decimal IFA import flows; adverse tests identify the failures below. Unexecuted scenarios are listed explicitly. |
 | Dependency security review | Reviewed; unresolved gate | Five RustSec lockfile findings; two optional crates not in selected normal/build graph, three in active legacy TLS. No advisory suppression. |
 | Draft PRs and final diff review | Done | WDK #45, Node #24, Bare #22, all draft against main. Source/patch identity, public method preservation, declarations, package contents and diff checks verified. No merge or publication. |
+
+## WebRGB and mainnet policy follow-up
+
+Reference: merged [rgb-sdk-rn #59](https://github.com/UTEXO-Protocol/rgb-sdk-rn/pull/59),
+head `69c3f92c28602a5bf6b7f89aa69a0fd8e5ac202c`. The receiving/read subset is
+adapted to this package's C-FFI DTOs, not copied from the RN camelCase model.
+Node/Bare native sources and their exact artifacts are unchanged by this follow-up.
+
+| Work | Status | Evidence / disposition |
+| --- | --- | --- |
+| Mainnet-only WDK Lightning guard | Implemented, tests pass | Stable `LIGHTNING_DISABLED_ON_MAINNET` across full/read-only accounts, generic transfer/quote routing and account-taking LSP helpers. Checks precede native calls and HTTP effects. Signet/testnet/regtest retain APIs. |
+| Mainnet on-chain receipt fallback | Fixed, regression test passes | Unknown on-chain hashes do not fall through to disabled Lightning payment history. |
+| Optional WebRGB adapter | Done; Node/Bare funded reruns pass | Nine receiving/read methods, per-session approval/revocation, safe amounts, immutable approved inputs, sanitized errors and txid lookup without an asset ID. No browser engine or WalletConnect dependency. |
+| Signer-aware capabilities | Implemented, tests pass | BFA listing/consignment export available; external-signer BFA validation and burn reported unavailable. No synthetic Ethereum RPC option. |
+| Burn and persistent burn journal | Excluded from this work | No method or proof extension advertised by WebRGB. Existing direct WDK consignment export remains. |
+| Exact TypeScript and package exports | Done; final reruns pass | Optional `@utexo/webrgb@0.1.0` type peer; fresh packed Node and Bare imports pass without Rust on PATH, including real offline mainnet accounts and WebRGB sessions. |
+| Upstream/cross-target release gates | Unchanged | The gates below are not resolved by this JavaScript follow-up. |
+
+Review fixes include native `NotFound`/`InvalidRequest` error mapping, unknown
+on-chain receipt routing, direct txid status lookup, amount overflow rejection,
+revocation while requests are pending, and rejection of async authorization
+assertions. `listTransfers()` without an asset enumerates known assets: released
+RLN cannot enumerate unassigned pending blind receives. This is documented in
+[WEBRGB.md](./WEBRGB.md); absence from that list is not proof of non-creation.
+
+Final follow-up verification (2026-10-05): 850 tests across 25 WDK suites,
+including 140 new cases; strict declarations, lint, package contents and npm
+production audit pass. The new policy/provider files have 100% line/function
+coverage (97.31% combined branch coverage). Native wrapper suites were rerun:
+18 Node and 41 Bare tests pass. No core rebuild or new platform qualification
+is claimed because the native source/artifact inputs are unchanged.
+
+Real optimized-runtime evidence: `wdk-rln-assets-aqrFpf` (Node) and
+`wdk-rln-assets-V760nq` (Bare 1.33.0). Both pass NIA/IFA/CFA/UDA receive through
+WebRGB, WDK witness sends, two-sided settlement, balances, histories, status by
+txid with/without an asset ID, tagged invoice decoding, native error mapping
+and byte-exact consignment export. Earlier iterations `irN3X1` / `IKI5gx` also
+passed but precede the final native-error/status cases. BFA funding and public
+Signet/mainnet settlement are not part of these disposable regtest runs.
 
 ## Release gates
 
@@ -144,7 +183,7 @@ prevents later steps in the combined Lightning suite from qualifying anything.
 All three branches descend from their respective 0.13 release branches; the old
 drafts remain unchanged. Candidate versions are exactly 0.2.0-beta.2. Adapter
 bytes match between native repos. AST checks preserve public methods in the five
-principal WDK classes. Local verification: 710 WDK tests, 18 Node tests, 41 Bare
+principal WDK classes. Local verification: 850 WDK tests, 18 Node tests, 41 Bare
 tests, seven C-FFI tests, three harness-ownership tests, declarations, lint and
 package checks pass. npm production audits report no findings in these locks.
 

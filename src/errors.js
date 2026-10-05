@@ -53,11 +53,17 @@ export class RgbLightningError extends Error {
   }
 }
 
-/**
- * Raised when bringing the node online (`unlock`) fails — bad
- * bitcoind/indexer/proxy credentials, an unreachable backend, or a
- * VSS init/restore failure surfaced during unlock.
- */
+/** Released RLN supports only on-chain operations on Bitcoin mainnet. */
+export class LightningDisabledError extends RgbLightningError {
+  constructor () {
+    super('Lightning is disabled on mainnet. Only on-chain operations are supported.', {
+      code: 'LIGHTNING_DISABLED_ON_MAINNET'
+    })
+    this.name = 'LightningDisabledError'
+  }
+}
+
+/** Raised when initialization or unlock fails, including backend or VSS errors. */
 export class UnlockError extends RgbLightningError {
   constructor (message, opts = {}) {
     super(message, { code: opts.code ?? 'UNLOCK_FAILED', cause: opts.cause })

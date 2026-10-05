@@ -77,6 +77,8 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     return this._binding.ensureNode()
   }
 
+  isDisposed () { return this._closed || Boolean(this._shutdownInFlight) || super.isDisposed() }
+
   // ==========================================================================
   // Lifecycle
   // ==========================================================================
@@ -230,6 +232,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    *      refill_batch_size, first_hash_index }`
    */
   async apayNew (hostNodeId) {
+    this._assertLightningEnabled()
     try {
       return this._binding.apayNew(hostNodeId)
     } catch (e) {
@@ -247,6 +250,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * @returns {Promise<object>} Native `AsyncOrderNewResponse`.
    */
   async apayNewWithAddress (hostNodeId, username, domain) {
+    this._assertLightningEnabled()
     try {
       return this._binding.apayNewWithAddress(hostNodeId, username, domain)
     } catch (e) {
@@ -297,6 +301,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     waitForPeerMs = 30000,
     pollIntervalMs = 1000
   } = {}) {
+    this._assertLightningEnabled()
     if (typeof peerPubkeyAndAddr !== 'string' || peerPubkeyAndAddr.length === 0) {
       throw new TypeError('bootstrapLsp: peerPubkeyAndAddr (pubkey@host:port) is required')
     }
@@ -400,6 +405,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * @returns {Promise<UtexoLsp>}
    */
   async createLsp (peer, peerPort) {
+    this._assertLightningEnabled()
     if (peer) return new UtexoLsp(this, peer)
 
     const { baseUrl, bearerToken } = this.getLspConfig()
@@ -449,10 +455,14 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    *   `capacity_sat`, `push_msat?`, `asset_id?`, `asset_amount?`, `public?`,
    *   `with_anchors?`, `virtual_open_mode?`).
    */
-  async openChannel (request) { return this._node.openChannel(request) }
+  async openChannel (request) {
+    this._assertLightningEnabled()
+    return this._node.openChannel(request)
+  }
 
   /** @param {Object} request - JsonCloseChannelRequest */
   async closeChannel (request) {
+    this._assertLightningEnabled()
     this._node.closeChannel(request)
     return { ok: true }
   }
@@ -463,6 +473,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
 
   /** @param {string} peerPubkeyAndAddr - "<pubkey>@<host>:<port>" */
   async connectPeer (peerPubkeyAndAddr) {
+    this._assertLightningEnabled()
     try {
       this._node.connectPeer(peerPubkeyAndAddr)
     } catch (e) {
@@ -482,6 +493,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
 
   /** @param {Object} request - JsonDisconnectPeerRequest */
   async disconnectPeer (request) {
+    this._assertLightningEnabled()
     this._node.disconnectPeer(request)
     return { ok: true }
   }
@@ -506,7 +518,10 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    *   honor a tunable claim-deadline policy. Passthrough — RLN-side default
    *   applies when omitted.
    */
-  async createInvoice (request) { return this._node.lnInvoice(request) }
+  async createInvoice (request) {
+    this._assertLightningEnabled()
+    return this._node.lnInvoice(request)
+  }
 
   /**
    * Cross-SDK alias for {@link createInvoice}. The reference on-chain
@@ -517,13 +532,13 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * `{ amountMsat?, expirySec, assetId?, assetAmount?, paymentHash?,
    *    descriptionHash?, minFinalCltvExpiryDelta? }`.
    *
-   * Unlike the reference SDK's stub (which throws "not implemented"),
-   * this is fully backed by a local LDK node.
+   * Backed by the local LDK node on supported non-mainnet networks.
    *
    * @param {Object} request
    * @returns {Promise<object>}  RLN's lnInvoice response (invoice, payment_hash, ...).
    */
   async createLightningInvoice (request) {
+    this._assertLightningEnabled()
     return this.createInvoice(WalletAccountRgbLightning._toLnInvoiceRequest(request))
   }
 
@@ -573,6 +588,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * @returns {Promise<{ bolt11:string, paymentHash:string }>}
    */
   async createHodlInvoice (params = {}) {
+    this._assertLightningEnabled()
     if (!params || typeof params.paymentHash !== 'string' || params.paymentHash.length === 0) {
       throw new TypeError('createHodlInvoice: params.paymentHash (hex) is required')
     }
@@ -593,12 +609,16 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   // HODL invoices
   /** @param {Object} request */
   async cancelHodlInvoice (request) {
+    this._assertLightningEnabled()
     this._node.cancelHodlInvoice(request)
     return { ok: true }
   }
 
   /** @param {Object} request */
-  async claimHodlInvoice (request) { return this._node.claimHodlInvoice(request) }
+  async claimHodlInvoice (request) {
+    this._assertLightningEnabled()
+    return this._node.claimHodlInvoice(request)
+  }
 
   // ==========================================================================
   // Payments
@@ -606,12 +626,16 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
 
   /** @param {Object} request - JsonSendPaymentRequest (invoice, amt_msat?, asset_id?, ...) */
   async sendPayment (request) {
+    this._assertLightningEnabled()
     validatePaymentRequest(request)
     return this._node.sendPayment(request)
   }
 
   /** @param {Object} request - JsonKeysendRequest (dest_pubkey, amt_msat, asset_id?, ...) */
-  async keysend (request) { return this._node.keysend(request) }
+  async keysend (request) {
+    this._assertLightningEnabled()
+    return this._node.keysend(request)
+  }
 
   // Atomic swaps are outside this module's WDK account contract. Lower-level
   // consumers can access that surface through the native binding.
@@ -757,6 +781,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
 
   /** @param {Object} request - JsonSendOnionMessageRequest */
   async sendOnionMessage (request) {
+    this._assertLightningEnabled()
     this._node.sendOnionMessage(request)
     return { ok: true }
   }
@@ -816,10 +841,11 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       throw new Error('transfer: options must be { recipient, amount, token? }')
     }
     const recipient = options.recipient
+    const kind = WalletAccountRgbLightning._classifyRecipient(recipient)
+    if (kind === 'bolt11' || kind === 'ln-pubkey') this._assertLightningEnabled()
     const amount = options.amount
     if (amount !== undefined && amount !== null) exactUnsignedNumber(amount, 'transfer amount')
     const assetId = options.token && options.token.length > 0 ? options.token : null
-    const kind = WalletAccountRgbLightning._classifyRecipient(recipient)
 
     switch (kind) {
       case 'bolt11': {

@@ -40,7 +40,9 @@ try {
   })
 
   const program = `
-    import WalletManager, { BareRgbLightningBinding, parseLspInfo } from '${pkg.name}'
+    import WalletManager, { BareRgbLightningBinding, parseLspInfo, LightningDisabledError } from '${pkg.name}'
+    import { WebRgbProvider } from '${pkg.name}/webrgb'
+    import { smokeWalletPolicy } from ${JSON.stringify(path.join(root, 'scripts/smoke-wallet-policy.mjs'))}
     import native from '${nativePackage}'
     import { parseLspInfo as parseOnly } from '${pkg.name}/lsp-info'
     if (WalletManager.Binding !== BareRgbLightningBinding || parseLspInfo !== parseOnly) {
@@ -68,7 +70,8 @@ try {
     } finally {
       manager.dispose()
     }
-    console.log('Packed Bare/WDK exports, native identity, signer and offline lifecycle passed')
+    await smokeWalletPolicy(WalletManager, WebRgbProvider, LightningDisabledError, ${JSON.stringify(path.join(temporaryRoot, 'mainnet-wallet'))})
+    console.log('Packed Bare/WDK exports, native identity, signer, mainnet policy and WebRGB passed')
   `
   const smokePath = path.join(temporaryRoot, 'smoke.mjs')
   writeFileSync(smokePath, program)
