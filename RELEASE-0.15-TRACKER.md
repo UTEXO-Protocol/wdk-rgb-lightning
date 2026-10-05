@@ -12,12 +12,12 @@ Target: `release/rln-0.15.0-beta.3`, branched from `release/rln-0.13.0-beta.3` i
 | Expose local consignment export in all three packages | Done | WDK returns exact Uint8Array; Node/Bare return native hex/path. Four-schema funded byte comparisons pass in both runtimes. |
 | Preserve published WDK public API and lossless amounts | Done | 710 WDK tests, types and existing surfaces pass; BFA response shape preserved without claiming external BFA support. |
 | Verify mainnet Lightning rejection | Done | Actual Node/Bare native canaries reject Lightning and retain on-chain initialization requirements. No mainnet funds or endpoint qualification. |
-| Public package installation and artifact provenance | Implemented; qualification open | Packed prebuild verification and complete-artifact publication gates added. Private source credentials and full release matrix still required. |
-| Build and exercise host Node and Bare | Debug passed; optimized build in progress | Fresh macOS arm64 0.15 artifacts; native canaries and funded import/export/transfer matrices pass. |
+| Public package installation and artifact provenance | Host packed installs passed; full matrix open | Fresh Node/Bare consumers load optimized packed addons without Rust on PATH. Complete-artifact publication gates reject the incomplete matrices. Private source credentials and full release matrix still required. |
+| Build and exercise host Node and Bare | Done for macOS arm64 | Fresh debug and optimized 0.15 artifacts pass native canaries. Both optimized runtimes pass the four-schema funded/export matrix. |
 | Cross-target and Android post-link qualification | Blocked | Fresh Android arm64 prebuild passes input ELF checks; bare-link 3.3.2/bare-lief 0.2.9 final output fails RELRO end alignment. Remaining 0.15 targets unqualified. |
-| Local-stack funded/adverse recovery regressions | In progress | Both runtimes pass four-schema and six-decimal IFA import flows; fresh failure evidence below. |
+| Local-stack funded/adverse recovery regressions | Executed within recorded scope; release blocked | Both runtimes pass four-schema and six-decimal IFA import flows; adverse tests identify the failures below. Unexecuted scenarios are listed explicitly. |
 | Dependency security review | Reviewed; unresolved gate | Five RustSec lockfile findings; two optional crates not in selected normal/build graph, three in active legacy TLS. No advisory suppression. |
-| Draft PRs and final independent diff review | Pending | Three draft PRs; no merge or publication. |
+| Draft PRs and final diff review | Done | WDK #45, Node #24, Bare #22, all draft against main. Source/patch identity, public method preservation, declarations, package contents and diff checks verified. No merge or publication. |
 
 ## Release gates
 
@@ -99,7 +99,8 @@ and packed smoke runtime now match that requirement.
 
 Each directory name below identifies retained private local results/logs. Wallet
 seeds, signer databases and wallet state are not committed. These are host debug
-regtest runs, not mainnet, Signet-LSP or mobile release approval.
+regtest runs unless marked optimized, not mainnet, Signet-LSP or mobile release
+approval.
 
 | Scenario | Result | Evidence directory |
 | --- | --- | --- |
@@ -117,6 +118,9 @@ regtest runs, not mainnet, Signet-LSP or mobile release approval.
 | Node RGB reorg after settlement | Fail: stale settled balance after restart | wdk-rln-rgb-reorg-U2SPR9 |
 | Node strict BTC force-close through maturity | Fail: no sweep | wdk-rln-force-close-ZMz9Td |
 | Node strict RGB force-close | Fail: invalid commitment signature | wdk-rln-force-close-jKfXp9 |
+| Optimized Node four-schema transfers, balances and exact exports | Pass | wdk-rln-assets-VUZzfX |
+| Optimized Bare four-schema transfers, balances and exact exports | Pass | wdk-rln-assets-d6XlZn |
+| Optimized Node six-decimal IFA contract import/settlement | Pass | wdk-rln-imports-njHk5S |
 
 Run chain scenarios serially. An earlier RGB force-close attempt with concurrent
 mining hit the fixture's exact-height indexer wait; it is not counted as a native
@@ -130,3 +134,29 @@ not established by the on-chain contract-import tests. VSS, keysend retries,
 APay/HODL concurrency, stock-peer interoperability, BFA fixtures and complete
 channel fault matrices remain unqualified. The first strict payment failure
 prevents later steps in the combined Lightning suite from qualifying anything.
+
+## Review and promotion
+
+- [WDK draft #45](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/pull/45)
+- [Node draft #24](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/pull/24)
+- [Bare draft #22](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/pull/22)
+
+All three branches descend from their respective 0.13 release branches; the old
+drafts remain unchanged. Candidate versions are exactly 0.2.0-beta.2. Adapter
+bytes match between native repos. AST checks preserve public methods in the five
+principal WDK classes. Local verification: 710 WDK tests, 18 Node tests, 41 Bare
+tests, seven C-FFI tests, three harness-ownership tests, declarations, lint and
+package checks pass. npm production audits report no findings in these locks.
+
+The initial [WDK CI run](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/actions/runs/37287376692)
+passed. [Node CI](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/actions/runs/37287360560),
+[Node runtime matrix](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/actions/runs/37287360534)
+and [Bare CI](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/37287366210)
+stop explicitly because ORG_READ_TOKEN is empty. These are not green native builds.
+
+Provision scoped source access, resolve the relevant upstream/package gates,
+then run the complete optimized target/runtime matrix and anonymous target
+installs. Requalify changed native sources before deliberate native-first
+publication and WDK promotion. Mainnet Lightning/IFA exclusions, BFA restrictions
+and optional feature gates must remain explicit; a reduced feature claim does
+not resolve the BTC crash, RGB reorg or lifecycle failures.
