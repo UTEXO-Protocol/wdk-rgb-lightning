@@ -105,6 +105,13 @@ and mnemonics are not committed.
    repository secret when checked on 2026-10-07. Hosted CI still needs approved
    private-source access, and redistribution/license review remains open.
 
+Post-push checks confirm the distinction: [WDK build/tests](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/actions/runs/37629815834)
+pass on implementation commit `d42b4dc`. [Node CI](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/actions/runs/37629617616),
+[its runtime matrix](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/actions/runs/37629617639)
+and [Bare CI](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/37629619939)
+stop at the explicit missing-`ORG_READ_TOKEN` guard before native compilation.
+These failed jobs are not native test passes or evidence of a compiler regression.
+
 ## Existing Gates
 
 This change does not fix the recorded persistent signer lock, RGB reorg
