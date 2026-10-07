@@ -199,7 +199,7 @@ export class WalletProcess {
     if (this.exit) throw new Error(`Runtime exited ${JSON.stringify(this.exit)}; inspect ${this.directory}/runtime.log`)
   }
 
-  async start (port, mode = 'TransactionSync', extra = {}) {
+  async start (port, mode = 'TransactionSync', extra = {}, unlockExtra = {}) {
     this.config = { network: 'regtest', dataDir: path.join(this.directory, 'wallet'), daemonListeningPort: 0, ldkPeerListeningPort: port, ...extra }
     this.unlock = {
       ldk_chain_sync: mode === 'TransactionSync'
@@ -207,10 +207,11 @@ export class WalletProcess {
         : { mode, config: { bitcoind_rpc_username: 'wdk', bitcoind_rpc_password: 'regtest-only', bitcoind_rpc_host: '127.0.0.1', bitcoind_rpc_port: 29443 } },
       indexer_url: process.env.RGB_INDEXER_URL || endpoints.electrum,
       proxy_endpoint: endpoints.proxy,
-      announce_addresses: []
+      announce_addresses: [],
+      ...unlockExtra
     }
     const result = await this.call('init', [this.config, this.seed, this.unlock], 'control')
-    assert.equal(result.runtime.rln_commit, 'e2b39d5ae8da74525eafb58bc39b9a614c756a73')
+    assert.equal(result.runtime.rln_commit, 'a17b685615750536f0320db1cd3f3ba68a8f1c57')
     assert.equal(result.network.network.toLowerCase(), 'regtest')
     assert.equal(result.node.channel_asset_max_amount, '18446744073709551615')
     this.pubkey = result.node.pubkey

@@ -24,7 +24,7 @@ function checkout (name, repository, commit, submodules = false) {
 
 try {
   run('docker', [...compose, 'build', 'bitcoind', 'electrs', 'explorer'])
-  const rln = checkout('rln', 'https://github.com/UTEXO-Protocol/rgb-lightning-node.git', 'e2b39d5ae8da74525eafb58bc39b9a614c756a73', true)
+  const rln = checkout('rln', 'https://github.com/UTEXO-Protocol/rgb-lightning-node.git', 'a17b685615750536f0320db1cd3f3ba68a8f1c57', true)
   fs.copyFileSync(path.join(here, 'source-credential.sh'), path.join(rln, 'source-credential.sh'))
   run('docker', ['build', '--secret', 'id=org_read_token,env=ORG_READ_TOKEN', '-f', path.join(here, 'Rln.Dockerfile'), '-t', 'wdk-qualification/rln:0.15.0-beta.3', rln])
   const lspCommit = 'b865c8868e202ba90055d4924382eada62c52cd6'

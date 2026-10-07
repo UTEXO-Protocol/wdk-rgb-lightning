@@ -3,7 +3,7 @@
 
 const RPC_FIELDS = ['bitcoind_rpc_username', 'bitcoind_rpc_password', 'bitcoind_rpc_host', 'bitcoind_rpc_port']
 const OPTIONAL_STRINGS = ['indexer_url', 'proxy_endpoint', 'announce_alias']
-const FIELDS = new Set(['ldk_chain_sync', 'announce_addresses', ...RPC_FIELDS, ...OPTIONAL_STRINGS])
+const FIELDS = new Set(['ldk_chain_sync', 'announce_addresses', 'eth_rpc_url', ...RPC_FIELDS, ...OPTIONAL_STRINGS])
 
 function record (value, field) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -60,6 +60,10 @@ export function normalizeUnlockRequest (value) {
   const result = { ldk_chain_sync: chainSync }
   for (const field of OPTIONAL_STRINGS) {
     if (value[field] !== undefined) result[field] = text(value[field], field)
+  }
+  // Native treats null and omission identically; preserve that in request equality.
+  if (value.eth_rpc_url !== undefined && value.eth_rpc_url !== null) {
+    result.eth_rpc_url = text(value.eth_rpc_url, 'eth_rpc_url')
   }
   const addresses = value.announce_addresses === undefined ? [] : value.announce_addresses
   if (!Array.isArray(addresses)) throw new TypeError('announce_addresses must be an array')

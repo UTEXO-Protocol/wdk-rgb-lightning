@@ -99,6 +99,7 @@ if (packedPackages.length !== 1) {
 const packed = packedPackages[0]
 const packedFiles = new Set(packed.files.map(file => file.path))
 const requiredRootFiles = [
+  'BFA-QUALIFICATION.md',
   'WEBRGB.md',
   'webrgb.d.ts',
   'UPGRADE-TRACKER.md',

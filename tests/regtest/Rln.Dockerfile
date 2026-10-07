@@ -11,7 +11,7 @@ RUN --mount=type=secret,id=org_read_token,required=true \
     GIT_CONFIG_KEY_2=credential.useHttpPath GIT_CONFIG_VALUE_2=true \
     cargo build --release --locked --bin rgb-lightning-node -j 4
 FROM node:22-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37
-LABEL org.opencontainers.image.revision=e2b39d5ae8da74525eafb58bc39b9a614c756a73
+LABEL org.opencontainers.image.revision=a17b685615750536f0320db1cd3f3ba68a8f1c57
 COPY --from=builder /src/target/release/rgb-lightning-node /usr/local/bin/rgb-lightning-node
 RUN mkdir /data && chown node:node /data
 USER node

@@ -33,7 +33,7 @@ const sdkInitialize = () => {}
 const sdkShutdown = () => {}
 
 export default {
-  getRuntimeInfo: () => ({ ...REQUIRED_NATIVE_RUNTIME, capabilities: ['canonical-unlock-v1', 'persistent-native-signer', 'refresh-transfers-v1', 'apay-address', 'decoded-invoice-cltv', 'tagged-rgb-assignment', 'pending-blinded-v1', 'rgb-contract-import-v1', 'rgb-transfer-metadata-import-v1', 'consignment-export-v1', 'mainnet-lightning-rejection-v1'] }),
+  getRuntimeInfo: () => ({ ...REQUIRED_NATIVE_RUNTIME, capabilities: ['canonical-unlock-v1', 'persistent-native-signer', 'refresh-transfers-v1', 'apay-address', 'decoded-invoice-cltv', 'tagged-rgb-assignment', 'pending-blinded-v1', 'rgb-contract-import-v1', 'rgb-transfer-metadata-import-v1', 'consignment-export-v1', 'mainnet-lightning-rejection-v1', 'external-signer-eth-rpc-v1'] }),
   SdkNode,
   NativeExternalSigner,
   uniffiHealthcheck,

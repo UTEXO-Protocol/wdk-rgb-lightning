@@ -30,6 +30,28 @@ describe('released unlock contract', () => {
   it('compares canonical requests independently of input key order', () => {
     expect(sameUnlockRequest(normalizeUnlockRequest({ ...rpc, ...legacy }), normalizeUnlockRequest({ ...legacy, ...rpc }))).toBe(true)
   })
+  it('preserves Ethereum RPC on canonical and legacy unlock without mutating the input', () => {
+    for (const base of [legacy, { ...rpc, ...legacy }, { ldk_chain_sync: { mode: 'TransactionSync', config: legacy } }]) {
+      const request = { ...base, eth_rpc_url: 'https://rpc.example/private-key' }
+      const normalized = normalizeUnlockRequest(request)
+      expect(normalized.eth_rpc_url).toBe(request.eth_rpc_url)
+      request.eth_rpc_url = 'changed'
+      expect(normalized.eth_rpc_url).toBe('https://rpc.example/private-key')
+      expect(Object.isFrozen(normalized)).toBe(true)
+    }
+  })
+  it('treats omitted and null Ethereum RPC alike but distinguishes different endpoints', () => {
+    const without = normalizeUnlockRequest(legacy)
+    expect(normalizeUnlockRequest({ ...legacy, eth_rpc_url: null })).toEqual(without)
+    const first = normalizeUnlockRequest({ ...legacy, eth_rpc_url: 'https://rpc.example/a' })
+    const second = normalizeUnlockRequest({ ...legacy, eth_rpc_url: 'https://rpc.example/b' })
+    expect(sameUnlockRequest(first, second)).toBe(false)
+    expect(sameUnlockRequest(first, without)).toBe(false)
+  })
+  it.each(['', '\0secret', 0, false, [], {}])('rejects malformed Ethereum endpoint values without echoing them: %p', (ethRpcUrl) => {
+    expect(() => normalizeUnlockRequest({ ...legacy, eth_rpc_url: ethRpcUrl }))
+      .toThrow('eth_rpc_url must be a non-empty string without NUL bytes')
+  })
   it.each([
     {}, { bitcoind_rpc_password: rpc.bitcoind_rpc_password }, { ...legacy, announce_addresses: null },
     { ...legacy, password: 'unsupported' }, { ...legacy, gossip_rgs_server_url: 'unsupported' },
@@ -103,6 +125,33 @@ describe('released account boundaries', () => {
     await Promise.all([first, second, shutdown])
     expect(binding.shutdown).toHaveBeenCalledTimes(1)
     await expect(account.unlock(legacy)).rejects.toThrow('closed')
+  })
+  it('does not coalesce unlocks for different Ethereum endpoints', async () => {
+    let finish
+    const binding = { ensureNode: () => ({}), unlock: jest.fn(() => new Promise(resolve => { finish = resolve })) }
+    const account = new WalletAccount({ binding })
+    const request = { ...legacy, eth_rpc_url: 'http://127.0.0.1:8545' }
+    const first = account.unlock(request)
+    await Promise.resolve()
+    await expect(account.unlock({ ...request, eth_rpc_url: 'http://127.0.0.1:8546' })).rejects.toThrow('different')
+    expect(binding.unlock).toHaveBeenCalledWith(normalizeUnlockRequest(request))
+    finish()
+    await first
+  })
+  it.each([NodeRgbLightningBinding, BareRgbLightningBinding])('forwards Ethereum RPC to the native signer through %p', (Binding) => {
+    const binding = new Binding({ dataDir: '/unused', network: 'regtest' })
+    binding._signer = {}
+    binding._node = { initWithNativeExternalSigner: jest.fn(), unlockWithNativeExternalSigner: jest.fn() }
+    const request = { ...legacy, eth_rpc_url: 'http://127.0.0.1:8545' }
+    binding.unlock(request)
+    expect(binding._node.unlockWithNativeExternalSigner).toHaveBeenCalledWith(binding._signer, normalizeUnlockRequest(request))
+  })
+  it('rejects a native runtime without the merged external-signer capability', () => {
+    const runtime = rln.getRuntimeInfo()
+    const spy = jest.spyOn(rln, 'getRuntimeInfo').mockReturnValue({
+      ...runtime, capabilities: runtime.capabilities.filter(value => value !== 'external-signer-eth-rpc-v1')
+    })
+    try { expect(() => new NodeRgbLightningBinding({ dataDir: '/unused', network: 'regtest' })).toThrow('Incompatible') } finally { spy.mockRestore() }
   })
   it('rejects fee caps before obtaining a native node', async () => {
     const binding = { ensureNode: jest.fn() }

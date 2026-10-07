@@ -8,6 +8,15 @@ while pre-`1.0`.
 
 ## [Unreleased]
 
+### 0.2.0-beta.3 Candidate
+
+- Build RLN from merged PR #192 at `a17b685615750536f0320db1cd3f3ba68a8f1c57`.
+- Accept optional `eth_rpc_url` on external unlock and preserve endpoint identity
+  when coalescing concurrent requests. Omitted/null keep non-BFA behavior.
+- Require the matching native candidate and compiled external Ethereum RPC
+  capability. BFA validation is available; external-signer burn remains disabled.
+- Add BFA qualification evidence and comparison with the React Native SDK.
+
 ### 0.2.0-beta.2 Candidate
 - Add an optional, transport-neutral WebRGB receiving/read adapter with session
   approval, revocation checks, strict request/amount mapping and sanitized errors.

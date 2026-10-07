@@ -27,14 +27,16 @@ RLN rejects **issuance and inflation in external-signer mode**, which this
 module always uses. Issue assets in a separate on-chain wallet, such as
 [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], then transfer them to this wallet.
 
-> Status: unpublished `0.2.0-beta.2` candidate for RLN `0.15.0-beta.3`.
+> Status: unpublished `0.2.0-beta.3` candidate for RLN `0.15.0-beta.3` plus merged PR #192.
 > Not approved for production rollout. See [RELEASE-0.15-TRACKER.md](./RELEASE-0.15-TRACKER.md).
 
 ## Upgrade Restrictions
 
 This breaking line requires both runtime and package identity to match RLN
-`e2b39d5ae8da74525eafb58bc39b9a614c756a73`. Install the exact native candidate
-`0.2.0-beta.2` for your runtime. These versions are not yet published.
+`a17b685615750536f0320db1cd3f3ba68a8f1c57`. This is the exact merge of
+[PR #192](https://github.com/UTEXO-Protocol/rgb-lightning-node/pull/192),
+not the older release binary or a floating `dev` build. Install the exact native
+candidate `0.2.0-beta.3` for your runtime. These versions are not yet published.
 
 This candidate is scoped to fresh wallets: the deployment owner confirmed there
 are no live wallets to migrate. No legacy-wallet migration compatibility is
@@ -113,7 +115,7 @@ mainnet, so an unknown on-chain hash returns `null`.
 ```js
 const capabilities = account.getCapabilities()
 // { network, signer: 'external', lightning, consignmentExport: true,
-//   bfaAssetListing: true, bfaValidation: false, burn: false }
+//   bfaAssetListing: true, bfaValidation: true, burn: false }
 
 try {
   await account.listChannels()
@@ -125,10 +127,30 @@ try {
 `getNetwork()` reads the configured network without unlocking.
 `getCapabilities()` describes this package/signer combination, not wallet
 readiness, balance or successful qualification. `getBfaCapabilities()` returns
-`{ bfa: false, burn: false, consignment: true }`: native BFA asset groups are
-preserved, but the released external-signer unlock has no Ethereum RPC input.
-BFA validation and burn are not advertised. Consignment export is the existing
-account API; no burn method or persistent burn journal is added.
+`{ bfa: true, burn: false, consignment: true }`. Configure `eth_rpc_url` when
+unlocking to enable native validation of BFA bridge events:
+
+```js
+await account.unlock({
+  ldk_chain_sync: {
+    mode: 'TransactionSync',
+    config: { indexer_url: bitcoinIndexerUrl }
+  },
+  indexer_url: bitcoinIndexerUrl,
+  proxy_endpoint: rgbProxyUrl,
+  eth_rpc_url: ethereumRpcUrl,
+  announce_addresses: []
+})
+```
+
+Choose the Ethereum RPC for the chain containing the asset's bridge contract.
+Omitting the field, or supplying `null`, keeps the non-BFA unlock behavior.
+No endpoint is inferred or substituted. A capability flag does not establish
+endpoint health, chain identity or the validity of any particular consignment.
+Consignment export uses the existing account API. External-signer burn remains
+unsupported upstream; no burn method or persistent burn journal is added.
+See [BFA qualification and RN comparison](./BFA-QUALIFICATION.md) for test results
+and remaining gates.
 
 ## WebRGB integration
 
@@ -174,12 +196,12 @@ module-load differs.
 ## Installation
 
 ```sh
-npm install @utexo/wdk-rgb-lightning@0.2.0-beta.2
+npm install @utexo/wdk-rgb-lightning@0.2.0-beta.3
 
 # Plus the native binding matching your runtime (optional peer deps):
-npm install @utexo/rgb-lightning-node-nodejs@0.2.0-beta.2   # Node host
+npm install @utexo/rgb-lightning-node-nodejs@0.2.0-beta.3   # Node host
 # or
-npm install @utexo/rgb-lightning-node-bare@0.2.0-beta.2     # Bare / React Native host
+npm install @utexo/rgb-lightning-node-bare@0.2.0-beta.3     # Bare / React Native host
 ```
 
 Both bindings are declared as **optional** peer dependencies — install only

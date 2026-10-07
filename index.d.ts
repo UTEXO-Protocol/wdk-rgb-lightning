@@ -74,6 +74,8 @@ export interface ExternalUnlockRequest {
   proxy_endpoint?: string
   announce_addresses?: string[]
   announce_alias?: string
+  /** Ethereum JSON-RPC endpoint for BFA validation. Null/omission leaves BFA disabled. */
+  eth_rpc_url?: string | null
 }
 export type LegacyExternalUnlockRequest =
   Omit<ExternalUnlockRequest, 'ldk_chain_sync'> &
@@ -107,13 +109,14 @@ export interface RgbLightningCapabilities {
   lightning: boolean
   consignmentExport: true
   bfaAssetListing: true
-  bfaValidation: false
+  /** Package supports BFA validation; unlock still requires eth_rpc_url. */
+  bfaValidation: true
   burn: false
 }
 
 export interface BfaCapabilities {
-  /** End-to-end BFA validation is unavailable with the current external signer. */
-  bfa: false
+  /** Supported by the pinned native build, not a live endpoint or balance check. */
+  bfa: true
   burn: false
   consignment: true
 }

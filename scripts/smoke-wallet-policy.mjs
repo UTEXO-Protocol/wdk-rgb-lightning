@@ -5,7 +5,7 @@ export async function smokeWalletPolicy (WalletManager, WebRgbProvider, Lightnin
   try {
     const account = await manager.getAccount()
     const caps = account.getCapabilities()
-    if (caps.network !== 'mainnet' || caps.lightning || caps.burn || caps.bfaValidation || !caps.consignmentExport) {
+    if (caps.network !== 'mainnet' || caps.lightning || caps.burn || !caps.bfaValidation || !caps.consignmentExport) {
       throw new Error('Incorrect mainnet capabilities')
     }
     for (const method of ['listChannels', 'listPayments', 'createInvoice', 'sendPayment', 'createLsp', 'bootstrapLsp']) {

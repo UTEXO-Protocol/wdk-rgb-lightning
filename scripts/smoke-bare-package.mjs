@@ -48,7 +48,7 @@ try {
     if (WalletManager.Binding !== BareRgbLightningBinding || parseLspInfo !== parseOnly) {
       throw new Error('Packed Bare exports resolved incorrectly')
     }
-    if (native.getRuntimeInfo().rln_commit !== 'e2b39d5ae8da74525eafb58bc39b9a614c756a73') {
+    if (native.getRuntimeInfo().rln_commit !== 'a17b685615750536f0320db1cd3f3ba68a8f1c57') {
       throw new Error('Wrong compiled RLN release')
     }
     BareRgbLightningBinding.healthcheck()

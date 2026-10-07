@@ -1,6 +1,16 @@
 # RLN 0.15 release tracker
 
-Target: `release/rln-0.15.0-beta.3`, branched from `release/rln-0.13.0-beta.3` in WDK, Node.js and Bare. Package candidate: `0.2.0-beta.2`. No npm publication is part of this change.
+Target: `release/rln-0.15.0-beta.3`, branched from `release/rln-0.13.0-beta.3` in WDK, Node.js and Bare. Package candidate: `0.2.0-beta.3`. No npm publication is part of this change.
+
+## Current BFA Source Candidate
+
+PR #192 is merged. The current native source is
+`a17b685615750536f0320db1cd3f3ba68a8f1c57`; both native packages and WDK are
+`0.2.0-beta.3`. Optional `eth_rpc_url` now reaches the external signer unlock path,
+and BFA validation is advertised separately from unsupported burn.
+See [BFA-QUALIFICATION.md](./BFA-QUALIFICATION.md) for current tests and the RN
+comparison. The sections below retain earlier candidate evidence; they do not
+qualify every target or recovery case against this new build.
 
 ## Implementation
 
@@ -73,7 +83,8 @@ remain open, not implicitly fixed by upstream merges or package unit tests.
 | Crash-safe RGB channel funding and explicit recovery | rgb-lib #80, LDK #32, RLN #139/#140 | Unmerged; not silently bundled |
 | Android final linked 16-KiB layout | Bare toolchain/package | Open; previous actual relink failed RELRO alignment |
 | Private BFA build dependencies | Source access and package delivery | ORG_READ_TOKEN absent from both native repos and available organization Actions secrets when checked. Maintainer must provision a read-scoped secret; personal credentials were not copied. All-target release builds, anonymous packed installs and license/notices review remain gates. |
-| BFA Ethereum RPC with external signer; external burn | RLN external-signer API | Unsupported; adding a JS option cannot implement it |
+| BFA Ethereum RPC with external signer | RLN #192 | Resolved in current source candidate; see BFA report. |
+| External burn | RLN external-signer API | Still unsupported; PR #192 only changes unlock. |
 | BFA receive lock-event selection | rgb-lib #103 | Unmerged; BFA funding not qualified |
 | Stock Lightning, virtual channels, APay restart durability, HODL concurrency | Applicable upstream behavior | Not qualified by matching-RLN happy-path tests |
 | VSS fencing, device-loss and channel recovery | RLN/VSS and release qualification | #172 fixes partial-store refill, not every recovery scenario |

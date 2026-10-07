@@ -106,7 +106,7 @@ describe('mainnet Lightning policy', () => {
     expect(node.listPayments).not.toHaveBeenCalled()
   })
 
-  test('capabilities are explicit about unsupported BFA and burn and do not call native code', async () => {
+  test('capabilities describe BFA build support, keep burn disabled and do not probe readiness', async () => {
     const { account, binding } = fixture()
     expect(account.getCapabilities()).toEqual({
       network: 'mainnet',
@@ -114,10 +114,10 @@ describe('mainnet Lightning policy', () => {
       lightning: false,
       consignmentExport: true,
       bfaAssetListing: true,
-      bfaValidation: false,
+      bfaValidation: true,
       burn: false
     })
-    await expect(account.getBfaCapabilities()).resolves.toEqual({ bfa: false, burn: false, consignment: true })
+    await expect(account.getBfaCapabilities()).resolves.toEqual({ bfa: true, burn: false, consignment: true })
     expect(binding.ensureNode).not.toHaveBeenCalled()
     expect(new LightningDisabledError().toJSON().code).toBe('LIGHTNING_DISABLED_ON_MAINNET')
   })

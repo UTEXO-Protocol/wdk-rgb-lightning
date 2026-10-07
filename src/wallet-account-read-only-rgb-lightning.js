@@ -176,14 +176,14 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
       lightning: ['signet', 'testnet', 'testnet4', 'regtest'].includes(this.getNetwork()),
       consignmentExport: true,
       bfaAssetListing: true,
-      bfaValidation: false,
+      bfaValidation: true,
       burn: false
     }
   }
 
-  /** BFA workflows require Ethereum validation, unavailable in this signer path. */
+  /** Build capabilities, not runtime readiness. BFA unlock requires eth_rpc_url. */
   async getBfaCapabilities () {
-    return { bfa: false, burn: false, consignment: true }
+    return { bfa: true, burn: false, consignment: true }
   }
 
   /** @protected */

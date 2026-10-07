@@ -1,13 +1,14 @@
 # Local Released-Runtime Qualification
 
 Disposable regtest only. No mainnet/Signet funds, existing wallets, VSS, virtual
-channels, or unreleased upstream behavior patches are used. These tests exercise
+channels, or unmerged upstream behavior patches are used. These tests exercise
 the real WDK and native packages, not the Jest mocks. Run scenarios serially:
 they share a chain, service volumes and fixed loopback ports.
 
 ## Pinned Stack
 
-Versions selected on 2026-09-24. This is a reproducible local stack, not a claim
+Base services selected on 2026-09-24; RLN source updated on 2026-10-07.
+This is a reproducible local stack, not a claim
 that a remotely deployed LSP runs the same commit.
 
 | Service | Source/version | Local endpoint |
@@ -16,7 +17,7 @@ that a remotely deployed LSP runs the same commit.
 | RGB Electrum | romanz/electrs 0.12.0, 37501cc4b94aea99e50670a6524fa3ad4ac9aabb | TCP 127.0.0.1:29401 |
 | Esplora | mempool/electrs 3.3.0, image digest pinned | HTTP 127.0.0.1:29302 |
 | RGB proxy | 0.3.0, image digest pinned | HTTP 127.0.0.1:29300 |
-| RLN | 0.15.0-beta.3, e2b39d5ae8da74525eafb58bc39b9a614c756a73 | HTTP 127.0.0.1:29301 |
+| RLN | 0.15.0-beta.3 plus merged #192, a17b685615750536f0320db1cd3f3ba68a8f1c57 | HTTP 127.0.0.1:29301 |
 | LSP | main b865c8868e202ba90055d4924382eada62c52cd6; no release tag | HTTP 127.0.0.1:29380 |
 | Explorer | btc-rpc-explorer 3.5.1, 8ed77ab225f5507c521b570d5240624de597ad44 | HTTP 127.0.0.1:29303 |
 
@@ -166,3 +167,9 @@ The public fixture contains `network: "regtest"`, `schema: "Ifa"`, `precision: 6
 `asset_id` and `contract_base64` exported with RGB-lib's contract serializer.
 The existing local daemon must own at least 250000 units per run. The test checks
 the chain before funding; it does not reset volumes or qualify real USDT networks.
+
+## BFA
+
+See [BFA.md](./BFA.md) for the separate local Ethereum fixture, both native
+external-unlock entrypoints, funded BFA transfers and the upstream event-order
+regression. These tests do not require the RLN HTTP issuer or LSP container.
