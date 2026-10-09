@@ -2,6 +2,10 @@
 
 Target: `release/rln-0.15.0-beta.3`, branched from `release/rln-0.13.0-beta.3` in WDK, Node.js and Bare. Package candidate: `0.2.0-beta.3`. No npm publication is part of this change.
 
+Current release decisions and October 9 CI-artifact verification are maintained
+in [PRODUCTION-GATES.md](./PRODUCTION-GATES.md). Dated historical results below
+retain their original source and scope.
+
 ## Current BFA Source Candidate
 
 PR #192 is merged. The current native source is
@@ -11,6 +15,32 @@ and BFA validation is advertised separately from unsupported burn.
 See [BFA-QUALIFICATION.md](./BFA-QUALIFICATION.md) for current tests and the RN
 comparison. The sections below retain earlier candidate evidence; they do not
 qualify every target or recovery case against this new build.
+
+## October 9 Packaging Follow-up
+
+The exact PR #192 source remains unchanged. All seven Bare release artifacts
+pass the local complete-artifact gate. Iris's three-ABI Release APK/AAB and
+generated splits pass provenance, signature, native import/layout and ZIP
+alignment checks, including 16-KiB checks for the final 64-bit payloads. Iris's
+byte-preserving staging avoids the generic ELF rewrite; it does not fix it.
+The seven-target Bare CI run still fails post-link checks for Android arm64/x64.
+These are locally test-signed, Signet-configured
+artifacts, not store uploads or Release-runtime qualification.
+
+Android Debug BTC send/receive and settled RGB receipt passed within the
+recorded regtest scope. RGB send remains unexecuted; the funded same-process
+signer lock and transient incoming RGB double-count remain reproducible.
+See the Bare release tracker for artifact scope and local evidence paths.
+All five Node artifacts now pass their local release gate, native offline
+canaries and fresh offline installation from one complete archive. Node 22.23.0
+was used for both macOS/GNU targets and Node 24.18.1 for Alpine/musl; x64 runs
+used local emulation, not physical x64 hardware. Details and exact evidence are
+in the Node release tracker.
+The maintainers subsequently provisioned `ORG_READ_TOKEN`; both native contract
+CI reruns and the original five-target Node runtime matrix passed. Inspecting
+the CI binaries found a Linux ARM64 glibc-floor regression. Both GNU jobs were
+fixed to build/test on Ubuntu 22.04 and now pass with a 2.34 symbol floor.
+Security, redistribution and the remaining runtime gates are separate.
 
 ## Implementation
 
@@ -22,9 +52,9 @@ qualify every target or recovery case against this new build.
 | Expose local consignment export in all three packages | Done | WDK returns exact Uint8Array; Node/Bare return native hex/path. Four-schema funded byte comparisons pass in both runtimes. |
 | Preserve published WDK public API and lossless amounts | Done | 850 WDK tests, types and existing surfaces pass after the WebRGB/policy follow-up; BFA response shape preserved without claiming external BFA support. |
 | Verify mainnet Lightning rejection | Done | Actual Node/Bare native canaries reject Lightning and retain on-chain initialization requirements. No mainnet funds or endpoint qualification. |
-| Public package installation and artifact provenance | Host packed installs passed; full matrix open | Fresh Node/Bare consumers load optimized packed addons without Rust on PATH. Complete-artifact publication gates reject the incomplete matrices. Private source credentials and full release matrix still required. |
+| Public package installation and artifact provenance | CI-built Node matrix and local Bare artifact gate passed on October 9 | All five Node packed consumers pass offline installation, provenance and native canaries from one complete CI-built archive. Bare's seven original artifacts verify locally; its hosted matrix passes five targets and fails two Android packaging checks. Remaining Bare target-runtime qualification and redistribution review remain open. |
 | Build and exercise host Node and Bare | Done for macOS arm64 | Fresh debug and optimized 0.15 artifacts pass native canaries. Both optimized runtimes pass the four-schema funded/export matrix. |
-| Cross-target and Android post-link qualification | Blocked | Fresh Android arm64 prebuild passes input ELF checks; bare-link 3.3.2/bare-lief 0.2.9 final output fails RELRO end alignment. Remaining 0.15 targets unqualified. |
+| Cross-target and Android post-link qualification | Original artifacts pass; generic Android packaging fails | Iris's final three-ABI APK/AAB/splits pass with app-owned staging. Bare CI fails both 64-bit generic post-link checks. Release-app interaction remains open. |
 | Local-stack funded/adverse recovery regressions | Executed within recorded scope; release blocked | Both runtimes pass four-schema and six-decimal IFA import flows; adverse tests identify the failures below. Unexecuted scenarios are listed explicitly. |
 | Dependency security review | Reviewed; unresolved gate | Five RustSec lockfile findings; two optional crates not in selected normal/build graph, three in active legacy TLS. No advisory suppression. |
 | Draft PRs and final diff review | Done | WDK #45, Node #24, Bare #22, all draft against main. Source/patch identity, public method preservation, declarations, package contents and diff checks verified. No merge or publication. |
@@ -81,10 +111,10 @@ remain open, not implicitly fixed by upstream merges or package unit tests.
 | Strict outbound Lightning payments | Native signer/LDK/RLN; non-mainnet Lightning | Reproduced on Node: both sides remain pending past 90 seconds with a confirmed usable BTC channel. |
 | Mature BTC force-close sweep; RGB commitment acceptance and sweep | Native signer/LDK/RLN; Lightning recovery | Fresh Node reproductions: BTC no sweep after CSV maturity plus 96 blocks; RGB commitment rejected by Bitcoin with failed CHECK(MULTI)SIG, before confirmation/sweeping. |
 | Crash-safe RGB channel funding and explicit recovery | rgb-lib #80, LDK #32, RLN #139/#140 | Unmerged; not silently bundled |
-| Android final linked 16-KiB layout | Bare toolchain/package | Open; previous actual relink failed RELRO alignment |
-| Private BFA build dependencies | Source access and package delivery | ORG_READ_TOKEN absent from both native repos and available organization Actions secrets when checked. Maintainer must provision a read-scoped secret; personal credentials were not copied. All-target release builds, anonymous packed installs and license/notices review remain gates. |
+| Android final linked 16-KiB layout | Bare toolchain/package | Original addons and Iris's staged APK/AAB pass; generic bare-link 3.3.2 / bare-lief 0.2.9 output fails. DYNAMIC also moves outside RELRO. |
+| Private BFA build dependencies | Source access and package delivery | ORG_READ_TOKEN is configured and scoped initialization works. Source access is resolved; license/notices and publication approval remain separate. |
 | BFA Ethereum RPC with external signer | RLN #192 | Resolved in current source candidate; see BFA report. |
-| External burn | RLN external-signer API | Still unsupported; PR #192 only changes unlock. |
+| External burn | Source selection and package API | Unsupported in this pin. Upstream #194 merged to dev; adopting it requires new native inputs and wrapper/WDK/recovery work. |
 | BFA receive lock-event selection | rgb-lib #103 | Unmerged; BFA funding not qualified |
 | Stock Lightning, virtual channels, APay restart durability, HODL concurrency | Applicable upstream behavior | Not qualified by matching-RLN happy-path tests |
 | VSS fencing, device-loss and channel recovery | RLN/VSS and release qualification | #172 fixes partial-store refill, not every recovery scenario |
@@ -202,9 +232,10 @@ The initial [WDK CI run](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/act
 passed. [Node CI](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/actions/runs/37287360560),
 [Node runtime matrix](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/actions/runs/37287360534)
 and [Bare CI](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/37287366210)
-stop explicitly because ORG_READ_TOKEN is empty. These are not green native builds.
+stopped at the missing ORG_READ_TOKEN guard in that initial run. Source access
+has since been provisioned; current results are in PRODUCTION-GATES.md.
 
-Provision scoped source access, resolve the relevant upstream/package gates,
+Resolve the relevant upstream/package gates,
 then run the complete optimized target/runtime matrix and anonymous target
 installs. Requalify changed native sources before deliberate native-first
 publication and WDK promotion. Mainnet Lightning/IFA exclusions, BFA restrictions

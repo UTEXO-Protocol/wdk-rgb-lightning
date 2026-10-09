@@ -104,6 +104,7 @@ const requiredRootFiles = [
   'webrgb.d.ts',
   'UPGRADE-TRACKER.md',
   'RELEASE-0.15-TRACKER.md',
+  'PRODUCTION-GATES.md',
   'CHANGELOG.md',
   'LICENSE',
   'README.md',

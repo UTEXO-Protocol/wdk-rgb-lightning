@@ -168,6 +168,16 @@ The public fixture contains `network: "regtest"`, `schema: "Ifa"`, `precision: 6
 The existing local daemon must own at least 250000 units per run. The test checks
 the chain before funding; it does not reset volumes or qualify real USDT networks.
 
+## Pending RGB Balance
+
+Run `REGTEST_HOST_ISSUER=1 node tests/regtest/pending-balance.mjs` against a
+host issuer, or omit the variable for the Compose issuer. Add `--bare` and
+`BARE_BIN` for Bare. Run serially with other chain tests. This compares WDK and
+native balances for one unconfirmed witness receipt, retains the confirmed
+comparison, and fails if the incoming amount is counted more than once.
+It is an acceptance test, not an expected-failure pass. The six-decimal NIA
+asset is a disposable fixture, not a public USDT deployment.
+
 ## BFA
 
 See [BFA.md](./BFA.md) for the separate local Ethereum fixture, both native

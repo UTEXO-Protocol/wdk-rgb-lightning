@@ -94,27 +94,51 @@ and mnemonics are not committed.
    pins `2faf6118`. Merge/release and propagate the approved graph through RLN
    and both bindings, then rerun the funded acceptance test. No unmerged fix is
    included here.
-2. **Burn feature blocker:** RLN needs an external-signer burn path with signed
-   PSBT validation and recovery tests. Only after that is available should WDK
-   add the burn API, durable journal and optional WebRGB burn/proof extension.
-3. **Release qualification:** only macOS arm64 artifacts were rebuilt for this
-   source. Complete Node/Bare artifact matrices, mobile/runtime tests and
-   anonymous all-target installs remain unqualified. Publication guards reject
-   the incomplete matrices; no old artifact is accepted as a substitute.
-4. **Build distribution:** neither native repository has an `ORG_READ_TOKEN`
-   repository secret when checked on 2026-10-07. Hosted CI still needs approved
-   private-source access, and redistribution/license review remains open.
+2. **Burn source/scope decision:** RLN #194 merged to `dev` on October 8 at
+   `f1105c207f4750a4258ae7b0df45d7e4caa04b4f`. It supplies the external-signer
+   path, but is absent from this candidate's #192 pin. Adopting it requires
+   an approved source update, C-FFI/wrapper/WDK exposure, a durable journal and
+   fresh funded/adverse qualification. Burn remains disabled in this candidate.
+3. **Release qualification:** on October 9, all five Node and seven Bare
+   current-source artifacts pass the local complete-artifact gates. All five
+   Node targets pass native canaries and fresh offline installation of the same
+   complete archive. Android's final three-ABI APK/AAB and generated splits pass
+   packaging checks with local test signing. Remaining mobile, network,
+   recovery and physical-hardware qualification is still open. These local
+   results are not successful hosted CI releases or production approval.
+4. **Build distribution:** `ORG_READ_TOKEN` is configured in both native
+   repositories. Hosted builds now reach compilation and tests. Private-source
+   access is closed; redistribution/license review remains open.
 
 Post-push checks confirm the distinction: [WDK build/tests](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/actions/runs/37629815834)
-pass on implementation commit `d42b4dc`. [Node CI](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/actions/runs/37629617616),
+pass on implementation commit `d42b4dc`. Attempt 2 of [Node CI](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/actions/runs/37629617616),
 [its runtime matrix](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/actions/runs/37629617639)
 and [Bare CI](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/37629619939)
-stop at the explicit missing-`ORG_READ_TOKEN` guard before native compilation.
-These failed jobs are not native test passes or evidence of a compiler regression.
+passed after the secret was provisioned. The subsequent optimized Bare matrix
+passed five targets and failed both 64-bit Android post-link checks. Iris's
+staging workaround must not be confused with the generic packaging result.
+See [PRODUCTION-GATES.md](./PRODUCTION-GATES.md) for the current decision register.
+
+## October 9 CI-Artifact Retest
+
+The CI-built macOS ARM64 addons, with the same #192 native identity, pass both
+12-case external-unlock suites and fresh packed WDK consumer smoke tests.
+Funded NIA/IFA/CFA/UDA receive, witness send, settlement, history, balance and
+exact consignment export pass in both runtimes. Funded BFA tests also pass
+all ten normal-path/invalid-mint/cleanup steps in each runtime:
+`wdk-bfa-L0N3N2` (Node), `wdk-bfa-qum9YP` (Bare).
+
+The event-order acceptance test still fails on the CI Node addon:
+`wdk-bfa-ugIt93`, actual `Failed`, expected `Settled`. This failure is not marked
+expected-success. The tests reused the existing Bitcoin/indexer/proxy stack
+and used a separate loopback-only Anvil fixture with the same pinned contract
+sources. No public-network assets, old chain reset or upstream behavior patch
+was used. Machine-readable evidence is retained in
+`/tmp/wdk-release-ci-20261009/` and the named private evidence directories.
 
 ## Existing Gates
 
 This change does not fix the recorded persistent signer lock, RGB reorg
 settlement, interrupted BTC reservations, Lightning recovery, VSS recovery,
-native security findings or complete target/runtime qualification. See
+native security findings or the remaining runtime/recovery qualification. See
 `RELEASE-0.15-TRACKER.md`. No browser runtime or Iris dependency update is included.

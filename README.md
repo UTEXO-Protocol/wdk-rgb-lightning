@@ -29,6 +29,7 @@ module always uses. Issue assets in a separate on-chain wallet, such as
 
 > Status: unpublished `0.2.0-beta.3` candidate for RLN `0.15.0-beta.3` plus merged PR #192.
 > Not approved for production rollout. See [RELEASE-0.15-TRACKER.md](./RELEASE-0.15-TRACKER.md).
+> Current verification and release decisions: [PRODUCTION-GATES.md](./PRODUCTION-GATES.md).
 
 ## Upgrade Restrictions
 
