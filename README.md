@@ -66,7 +66,9 @@ Fresh RLN 0.15 results and release gates are recorded in
 [the release tracker](./RELEASE-0.15-TRACKER.md). The earlier
 [qualification report](./tests/regtest/QUALIFICATION.md) records RLN 0.13, not
 qualification of these artifacts. Strict outgoing signing, same-process reopen,
-RGB reorg safety, Lightning recovery and Android 16-KiB packaging remain gates.
+RGB reorg safety and Lightning recovery remain gates. Android requires the
+byte-preserving packaging integration described below; raw `bare-link` output
+is not supported for this candidate.
 Permissive regtest diagnostics are not production qualification.
 
 Released RGB-lib does not revisit settled transfers during refresh: after a
@@ -214,6 +216,14 @@ consumer installs are still publication gates. Bare mobile artifacts must exist
 before bundling the worklet. Standalone Bare requires >=1.33.0. See each binding's
 README for target selection and prerequisites. The parser-only
 `@utexo/wdk-rgb-lightning/lsp-info` entry is pure JS.
+
+For Android, use `react-native-bare-kit@0.15.5` and apply the native package's
+[Android staging hook](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/release/rln-0.15.0-beta.3/android/README.md)
+in the root Android Gradle build. The hook verifies the pinned original addon
+and packages it without the ELF rewrite that damages RELRO/DYNAMIC protection.
+Installing WDK or its Bare peer does not apply this hook automatically. This
+integration supports ARM64, ARMv7 and x86-64; it does not change WDK APIs or
+RLN's source revision. Validate the final app artifact and runtime separately.
 
 Saved transfer consignments can be exported without exposing native paths:
 
