@@ -2,7 +2,7 @@
 
 Target: `release/rln-0.15.0-beta.3`, branched from `release/rln-0.13.0-beta.3` in WDK, Node.js and Bare. Package candidate: `0.2.0-beta.3`. No npm publication is part of this change.
 
-Current release decisions and October 9 CI-artifact verification are maintained
+Current release decisions and the latest verification are maintained
 in [PRODUCTION-GATES.md](./PRODUCTION-GATES.md). Dated historical results below
 retain their original source and scope.
 
@@ -15,6 +15,23 @@ and BFA validation is advertised separately from unsupported burn.
 See [BFA-QUALIFICATION.md](./BFA-QUALIFICATION.md) for current tests and the RN
 comparison. The sections below retain earlier candidate evidence; they do not
 qualify every target or recovery case against this new build.
+
+## October 10 Public Android Packaging
+
+The Bare release branch now supplies a public byte-preserving staging CLI and
+Gradle hook; another wallet no longer needs Iris's private implementation.
+All three Android ABIs pass provenance, ELF and import checks. One test-signed
+APK passes public-wrapper signer/worklet and live RELRO/DYNAMIC protection
+checks on ARM64 4-KiB and 16-KiB emulators. The Gradle ordering regression also
+passes hosted CI after pinning Java 17. The fresh native candidate matrix is
+separate and still requires its own artifact results.
+
+Consumers must explicitly adopt the
+[documented BareKit 0.15.5 integration](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/release/rln-0.15.0-beta.3/android/README.md).
+Raw bare-link/bare-lief output is still unsafe. See P05 in
+[PRODUCTION-GATES.md](./PRODUCTION-GATES.md) for the supported boundary and
+evidence. No RLN source, native wrapper, recipe or WDK runtime change was needed.
+Full wallet behavior and the other production gates are not closed by this test.
 
 ## October 9 Packaging Follow-up
 
@@ -111,7 +128,7 @@ remain open, not implicitly fixed by upstream merges or package unit tests.
 | Strict outbound Lightning payments | Native signer/LDK/RLN; non-mainnet Lightning | Reproduced on Node: both sides remain pending past 90 seconds with a confirmed usable BTC channel. |
 | Mature BTC force-close sweep; RGB commitment acceptance and sweep | Native signer/LDK/RLN; Lightning recovery | Fresh Node reproductions: BTC no sweep after CSV maturity plus 96 blocks; RGB commitment rejected by Bitcoin with failed CHECK(MULTI)SIG, before confirmation/sweeping. |
 | Crash-safe RGB channel funding and explicit recovery | rgb-lib #80, LDK #32, RLN #139/#140 | Unmerged; not silently bundled |
-| Android final linked 16-KiB layout | Bare toolchain/package | Original addons and Iris's staged APK/AAB pass; generic bare-link 3.3.2 / bare-lief 0.2.9 output fails. DYNAMIC also moves outside RELRO. |
+| Android final linked 16-KiB layout | Bare toolchain/package | Closed for the public staging integration verified October 10; consumers must adopt it explicitly. Generic bare-link output still damages RELRO/DYNAMIC. See P05 in PRODUCTION-GATES.md. |
 | Private BFA build dependencies | Source access and package delivery | ORG_READ_TOKEN is configured and scoped initialization works. Source access is resolved; license/notices and publication approval remain separate. |
 | BFA Ethereum RPC with external signer | RLN #192 | Resolved in current source candidate; see BFA report. |
 | External burn | Source selection and package API | Unsupported in this pin. Upstream #194 merged to dev; adopting it requires new native inputs and wrapper/WDK/recovery work. |
