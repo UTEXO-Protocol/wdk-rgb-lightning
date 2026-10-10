@@ -119,6 +119,47 @@ describe('WalletManagerRgbLightning', () => {
     expect(FakeBinding.instances).toHaveLength(0)
   })
 
+  it('preserves a failed creation handle until cleanup succeeds', async () => {
+    class FailingBinding extends FakeBinding {
+      constructor (config) {
+        super(config)
+        this.attachExternalSigner.mockImplementation(() => { throw new Error('attach failed') })
+        this.shutdown.mockImplementation(() => { throw new Error('cleanup failed') })
+      }
+    }
+    class FailingManager extends TestManager {
+      static get Binding () { return FailingBinding }
+    }
+    const manager = new FailingManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
+    await expect(manager.getAccount()).rejects.toBeInstanceOf(AggregateError)
+    const binding = FakeBinding.instances[0]
+    expect(manager._binding).toBe(binding)
+    await expect(manager.getAccount()).rejects.toThrow('cleanup failed')
+    expect(FakeBinding.instances).toHaveLength(1)
+    binding.shutdown.mockImplementation(() => {})
+    manager.dispose()
+    expect(manager._binding).toBeNull()
+  })
+
+  it('reports every disposal failure and allows native shutdown retry', async () => {
+    const manager = new TestManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
+    const account = await manager.getAccount()
+    const binding = FakeBinding.instances[0]
+    jest.spyOn(account, 'dispose').mockImplementation(() => { throw new Error('account cleanup') })
+    binding.shutdown.mockImplementationOnce(() => { throw new Error('native cleanup') })
+    try {
+      manager.dispose()
+      throw new Error('Expected aggregate failure')
+    } catch (error) {
+      expect(error).toBeInstanceOf(AggregateError)
+      expect(error.errors.map(e => e.message)).toEqual(['account cleanup', 'native cleanup'])
+    }
+    expect(manager._binding).toBe(binding)
+    manager.dispose()
+    expect(manager._binding).toBeNull()
+    await expect(manager.getAccount()).rejects.toThrow('disposed')
+  })
+
   it('maps mempool fee recommendations to WDK bigint fee rates', async () => {
     const originalFetch = globalThis.fetch
     globalThis.fetch = jest.fn(async () => ({

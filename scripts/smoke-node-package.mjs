@@ -1,3 +1,4 @@
+import { minimumVersion } from './peer-version.mjs'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -40,16 +41,6 @@ function runAndCapture (command, args, options = {}) {
     )
   }
   return result.stdout.trim()
-}
-
-function minimumVersion (range, packageName) {
-  const match = /^>=([^ ]+)/.exec(range)
-  if (!match) {
-    throw new Error(
-      `Cannot derive the minimum version from ${packageName} range: ${range}`
-    )
-  }
-  return match[1]
 }
 
 const temporaryRoot = mkdtempSync(
@@ -101,7 +92,7 @@ try {
     '--no-fund',
     '--save-exact',
     packageSpec,
-    `${nativePackage}@${nativeVersion}`
+    process.env.RLN_NODE_PACKAGE_TARBALL ? path.resolve(process.env.RLN_NODE_PACKAGE_TARBALL) : `${nativePackage}@${nativeVersion}`
   ], { cwd: temporaryRoot })
 
   const runtimeInstallations = runAndCapture(
@@ -149,8 +140,11 @@ try {
   const smokeProgram = `
     import WalletManagerRgbLightning, {
       NodeRgbLightningBinding,
-      WalletAccountReadOnlyRgbLightning
+      WalletAccountReadOnlyRgbLightning,
+      LightningDisabledError
     } from '${packageJson.name}'
+    import { WebRgbProvider } from '${packageJson.name}/webrgb'
+    import { smokeWalletPolicy } from ${JSON.stringify(path.join(rootDir, 'scripts/smoke-wallet-policy.mjs'))}
 
     const metadata = (
       await import('${packageJson.name}/package', {
@@ -175,6 +169,9 @@ try {
     }
 
     NodeRgbLightningBinding.healthcheck()
+    const binding = new NodeRgbLightningBinding({ dataDir: '${path.join(temporaryRoot, 'wallet')}', network: 'regtest' })
+    binding.shutdown()
+    await smokeWalletPolicy(WalletManagerRgbLightning, WebRgbProvider, LightningDisabledError, ${JSON.stringify(path.join(temporaryRoot, 'mainnet-wallet'))})
   `
 
   run(

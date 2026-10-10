@@ -8,6 +8,53 @@ while pre-`1.0`.
 
 ## [Unreleased]
 
+### 0.2.0-beta.3 Candidate
+
+- Build RLN from merged PR #192 at `a17b685615750536f0320db1cd3f3ba68a8f1c57`.
+- Accept optional `eth_rpc_url` on external unlock and preserve endpoint identity
+  when coalescing concurrent requests. Omitted/null keep non-BFA behavior.
+- Require the matching native candidate and compiled external Ethereum RPC
+  capability. BFA validation is available; external-signer burn remains disabled.
+- Add BFA qualification evidence and comparison with the React Native SDK.
+
+### 0.2.0-beta.2 Candidate
+- Add an optional, transport-neutral WebRGB receiving/read adapter with session
+  approval, revocation checks, strict request/amount mapping and sanitized errors.
+- Reject mainnet account and wallet-connected LSP Lightning operations with
+  `LIGHTNING_DISABLED_ON_MAINNET` before native/HTTP work; preserve non-mainnet
+  APIs and mainnet on-chain receipt lookup.
+- Add local network/lifecycle and signer-aware capability reporting. BFA asset
+  listing is distinct from unsupported external-signer BFA validation and burn.
+- Upgrade both exact native peers to RLN 0.15.0-beta.3 and verify its compiled
+  source/adapter identity. Contract imports now use upstream #128, not a backport.
+- Add `getConsignment(assetId, txid): Promise<Uint8Array>` on writable and
+  read-only accounts, with strict identifiers, exact bytes and native errors.
+- Preserve strict persistent signing, lossless response amounts and existing
+  account/LSP behavior. Enforce upstream mainnet Lightning rejection.
+- Require standalone Bare >=1.33.0 for current dependency resolution.
+- Support provenance-verified native prebuild packages, with publication gated
+  on complete release artifacts. Track exact-candidate tests and outstanding
+  production gates in RELEASE-0.15-TRACKER.md. No npm publication yet.
+
+### Breaking: 0.2.0-beta.1 Candidate
+- Pin native peers to the unpublished 0.2.0-beta.1 release-based candidates for
+  RLN 0.13.0-beta.3, with compiled capability/identity checks before handle creation.
+- Normalize canonical and supported flat unlock inputs; reject ambiguous settings.
+  Use persistent VLS storage and strict signing by default. Preserve native handles
+  after cleanup failure, serialize activation/shutdown and support explicit retry.
+- Preserve refresh batch failures, released invoice metadata and UTXO existence;
+  reject unsafe integer inputs/outputs and unsupported routing fee caps.
+- Add parser-only typed LSP discovery, address-attested APay registration,
+  strongest usable single-channel liquidity checks, terminal Cancelled handling,
+  verified Lightning Address resolution and local invoice verification before
+  convenience-helper payments. Helpers now require a native invoice decoder and
+  explicit safe-range payment amounts; bridge auto-quoting is not implied.
+- Do not merge native operation/snapshot/prepared-send/import/delete-all or capped
+  routing overlays. No implicit virtual-channel enablement or VSS fence takeover.
+- Native installation remains source-built with pinned Rust and adapter identities.
+  Existing-channel/password-wallet migration, mobile/network and recovery gates
+  remain open. See UPGRADE-TRACKER.md; this is not production qualification.
+
 ### Added
 - UMA address-format compatibility across Lightning Address payment flows.
   `$recipient@example.com` is normalized to `recipient@example.com` before

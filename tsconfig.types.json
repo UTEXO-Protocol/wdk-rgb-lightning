@@ -7,5 +7,5 @@
     "strict": true,
     "target": "ES2022"
   },
-  "files": ["index.d.ts", "tests/types-contract.ts"]
+  "files": ["index.d.ts", "webrgb.d.ts", "tests/types-contract.ts", "tests/webrgb-types.ts"]
 }

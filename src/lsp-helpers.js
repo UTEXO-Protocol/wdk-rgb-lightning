@@ -4,6 +4,8 @@
 // you may not use this file except in compliance with the License.
 'use strict'
 
+import { assertAccountLightningEnabled } from './lightning-policy.js'
+
 // Higher-level orchestration on top of LspClient and LnurlPay. These
 // helpers take an "account-like" object — anything that exposes
 // `sendPayment`, `lnInvoice` / `createInvoice`, `decodeLnInvoice` —
@@ -16,7 +18,8 @@
 
 import { LspClient } from './lsp-client.js'
 import { resolveAddressToInvoice } from './lnurl-pay.js'
-import { toUint64 } from './lsp-utils.js'
+import { assertAddressRequest } from './lsp-linked-assets.js'
+import { rejectRoutingFeeCap, paymentExpectation, requireInvoiceDecoder, verifyPaymentInvoice } from './lsp-payment-verification.js'
 
 /** @typedef {import('./lnurl-pay.js').LnurlPayError} LnurlPayError */
 /** @typedef {import('./lsp-client.js').LspError} LspError */
@@ -58,12 +61,19 @@ import { toUint64 } from './lsp-utils.js'
  * @throws {Error} - If the pre-payment hook or account payment fails.
  */
 export async function payLightningAddress (account, addr, amountMsat, opts = {}) {
+  assertAccountLightningEnabled(account)
   if (account == null || typeof account.sendPayment !== 'function') {
     throw new TypeError('payLightningAddress: account.sendPayment(request) required')
   }
+  rejectRoutingFeeCap(opts)
+  const expected = paymentExpectation({ amtMsat: amountMsat, assetId: opts.assetId, assetAmount: opts.assetAmount })
+  requireInvoiceDecoder(account)
   const { pr, discovery, callbackUrl } = await resolveAddressToInvoice(addr, amountMsat, opts)
+  assertAddressRequest(discovery, expected)
+  await verifyPaymentInvoice(account, pr, { ...expected, metadata: discovery.metadata })
   if (typeof opts.beforePay === 'function') await opts.beforePay(pr, discovery)
-  const req = opts.skipAmount ? { invoice: pr } : { invoice: pr, amt_msat: toUint64(amountMsat) }
+  if (opts.signal?.aborted) throw new Error('operation aborted')
+  const req = opts.skipAmount ? { invoice: pr } : { invoice: pr, amt_msat: expected.amtMsat }
   const sendResult = await account.sendPayment(req)
   return { invoice: pr, sendResult, discovery, callbackUrl }
 }
@@ -101,6 +111,7 @@ export async function payLightningAddress (account, addr, amountMsat, opts = {})
  * @throws {Error} - If local invoice creation fails or returns no invoice.
  */
 export async function requestLspRgbDeposit (account, { lsp, lnInvoice, lnInvoiceRequest, rgb, lspOpts } = {}) {
+  assertAccountLightningEnabled(account)
   if (account == null) throw new TypeError('requestLspRgbDeposit: account required')
   if (rgb == null || typeof rgb !== 'object') throw new TypeError('requestLspRgbDeposit: rgb params required')
   const client = asLspClient(lsp, lspOpts)
@@ -154,6 +165,7 @@ export async function requestLspRgbDeposit (account, { lsp, lnInvoice, lnInvoice
  * @throws {Error} - If the account payment fails.
  */
 export async function payRgbViaLsp (account, { lsp, rgbInvoice, ln, lspOpts } = {}) {
+  assertAccountLightningEnabled(account)
   if (account == null || typeof account.sendPayment !== 'function') {
     throw new TypeError('payRgbViaLsp: account.sendPayment required')
   }
@@ -161,12 +173,15 @@ export async function payRgbViaLsp (account, { lsp, rgbInvoice, ln, lspOpts } = 
     throw new TypeError('payRgbViaLsp: rgbInvoice required')
   }
   if (ln == null) throw new TypeError('payRgbViaLsp: ln params required')
+  const expected = paymentExpectation(ln)
+  requireInvoiceDecoder(account)
 
   const client = asLspClient(lsp, lspOpts)
   // LspClient.onchainSend() now returns the response normalized to
   // camelCase; raw snake_case fields are preserved for backward compat.
   const issued = await client.onchainSend({ rgbInvoice, ln })
   const lnInvoice = issued.lnInvoice ?? issued.ln_invoice
+  await verifyPaymentInvoice(account, lnInvoice, expected)
   const sendResult = await account.sendPayment({ invoice: lnInvoice })
 
   return {

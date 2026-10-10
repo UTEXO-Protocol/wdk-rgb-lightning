@@ -1,6 +1,6 @@
 {
   "name": "@utexo/wdk-rgb-lightning",
-  "version": "0.1.0-beta.15",
+  "version": "0.2.0-beta.3",
   "description": "WDK module for RGB Lightning (rgb-lightning-node) — channels, invoices, payments, hodl, RGB-over-LN.",
   "keywords": [
     "wdk",
@@ -19,26 +19,41 @@
   "main": "index.js",
   "types": "./index.d.ts",
   "type": "module",
+  "engines": {
+    "bare": ">=1.33.0"
+  },
   "scripts": {
     "lint": "standard --env jest",
     "lint:fix": "standard --fix --env jest",
     "check:types": "tsc -p tsconfig.types.json",
     "check:package": "node scripts/verify-package.mjs",
     "smoke:package:node": "node scripts/smoke-node-package.mjs",
+    "smoke:package:bare": "node scripts/smoke-bare-package.mjs",
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
-    "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage"
+    "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage",
+    "regtest:up": "node tests/regtest/setup.mjs",
+    "test:regtest": "node tests/regtest/run.mjs",
+    "test:regtest:assets": "node tests/regtest/assets.mjs",
+    "test:regtest:reopen": "node tests/regtest/reopen.mjs",
+    "test:regtest:lsp": "node tests/regtest/lsp.mjs",
+    "test:regtest:imports": "node tests/regtest/imports.mjs"
   },
   "dependencies": {
+    "@noble/secp256k1": "2.3.0",
     "@tetherto/wdk-wallet": "1.0.0-beta.14",
     "bare-node-runtime": "^1.5.0",
     "bip39": "3.1.0",
     "sodium-universal": "5.0.1"
   },
   "peerDependencies": {
-    "@utexo/rgb-lightning-node-bare": ">=0.1.0-beta.14 <0.2.0",
-    "@utexo/rgb-lightning-node-nodejs": ">=0.1.0-beta.10 <0.2.0"
+    "@utexo/webrgb": "0.1.0",
+    "@utexo/rgb-lightning-node-bare": "0.2.0-beta.3",
+    "@utexo/rgb-lightning-node-nodejs": "0.2.0-beta.3"
   },
   "peerDependenciesMeta": {
+    "@utexo/webrgb": {
+      "optional": true
+    },
     "@utexo/rgb-lightning-node-bare": {
       "optional": true
     },
@@ -47,6 +62,7 @@
     }
   },
   "devDependencies": {
+    "@utexo/webrgb": "0.1.0",
     "cross-env": "7.0.3",
     "jest": "29.7.0",
     "standard": "17.1.2",
@@ -62,6 +78,14 @@
     }
   },
   "exports": {
+    "./webrgb": {
+      "types": "./webrgb.d.ts",
+      "default": "./src/webrgb.js"
+    },
+    "./lsp-info": {
+      "types": "./lsp-info.d.ts",
+      "default": "./src/lsp-info.js"
+    },
     ".": {
       "types": "./index.d.ts",
       "bare": "./bare.js",
