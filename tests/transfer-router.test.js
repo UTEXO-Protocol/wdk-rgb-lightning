@@ -163,6 +163,40 @@ describe('WalletAccountRgbLightning.transfer', () => {
     const sent = account.sendRgbAsset.mock.calls[0][0]
     expect(sent.recipient_groups[0].recipients[0].transport_endpoints).toEqual(['rpc://wallet-proxy/json-rpc'])
   })
+
+  it('rejects an unsafe amount on the BOLT11 path instead of rounding it', async () => {
+    const account = makeAccount()
+    await expect(account.transfer({ recipient: BOLT11, amount: 2n ** 64n - 1n }))
+      .rejects.toThrow('non-negative safe integer')
+    expect(account.sendPayment).not.toHaveBeenCalled()
+  })
+
+  it('accepts bigint amounts within the safe range on the BOLT11 path', async () => {
+    const account = makeAccount()
+    await account.transfer({ recipient: BOLT11, amount: 1000n })
+    expect(account.sendPayment).toHaveBeenCalledWith({ invoice: BOLT11, amt_msat: 1000 })
+  })
+
+  it('rejects an unsafe amount on the keysend path instead of rounding it', async () => {
+    const account = makeAccount()
+    await expect(account.transfer({ recipient: LN_PUBKEY, amount: 2n ** 64n - 1n }))
+      .rejects.toThrow('non-negative safe integer')
+    expect(account.keysend).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unsafe amount on the RGB path instead of rounding it', async () => {
+    const account = makeAccount()
+    await expect(account.transfer({ recipient: RGB_INVOICE, amount: 2n ** 64n - 1n, token: 'asset123', feeRate: 1 }))
+      .rejects.toThrow('non-negative safe integer')
+    expect(account.sendRgbAsset).not.toHaveBeenCalled()
+  })
+
+  it('accepts bigint amounts within the safe range on the RGB path', async () => {
+    const account = makeAccount()
+    await account.transfer({ recipient: RGB_INVOICE, amount: 5n, token: 'asset123', feeRate: 1 })
+    const sent = account.sendRgbAsset.mock.calls[0][0]
+    expect(sent.recipient_groups[0].recipients[0].assignment_amount).toBe(5)
+  })
 })
 
 describe('WalletAccountRgbLightning.quoteTransfer', () => {

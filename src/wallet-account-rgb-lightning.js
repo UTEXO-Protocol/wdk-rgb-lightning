@@ -35,6 +35,25 @@ import {
 export { PENDING_ADDRESS }
 
 /**
+ * transfer() amounts cross into native u64 fields via Number(). Reject
+ * anything outside the safe-integer range instead of silently rounding it —
+ * an RGB asset amount above 2^53 base units is realistic, and the node would
+ * move a different quantity than requested. Same guard sendTransaction()
+ * applies to on-chain values.
+ *
+ * @param {unknown} amount - The caller-supplied amount.
+ * @param {string} what - Field name for the error message.
+ * @returns {number} The exact amount.
+ */
+function toSafeTransferAmount (amount, what) {
+  const numeric = Number(amount)
+  if (!Number.isSafeInteger(numeric) || numeric < 0) {
+    throw new TypeError(`${what} must be a non-negative safe integer`)
+  }
+  return numeric
+}
+
+/**
  * Seed-isolated via RLN's `NativeExternalSigner`: the WDK secret manager
  * owns the BIP-39 mnemonic; the manager derives a 32-byte VLS node
  * entropy from it and attaches a `NativeExternalSigner` to RLN. RLN's
@@ -725,7 +744,9 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     switch (kind) {
       case 'bolt11': {
         const req = { invoice: recipient }
-        if (amount !== undefined && amount !== null) req.amt_msat = Number(amount)
+        if (amount !== undefined && amount !== null) {
+          req.amt_msat = toSafeTransferAmount(amount, 'transfer(bolt11): amount (msats)')
+        }
         if (assetId) req.asset_id = assetId
         const r = await this.sendPayment(req)
         return { hash: r?.payment_hash ?? '', fee: BigInt(r?.fee_msat ?? 0n) }
@@ -734,7 +755,10 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
         if (amount === undefined || amount === null) {
           throw new Error('transfer(keysend): amount (msats) is required')
         }
-        const req = { dest_pubkey: recipient, amt_msat: Number(amount) }
+        const req = {
+          dest_pubkey: recipient,
+          amt_msat: toSafeTransferAmount(amount, 'transfer(keysend): amount (msats)')
+        }
         if (assetId) req.asset_id = assetId
         const r = await this.keysend(req)
         return { hash: r?.payment_hash ?? '', fee: BigInt(r?.fee_msat ?? 0n) }
@@ -766,6 +790,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
         if (amount === undefined || amount === null) {
           throw new Error('transfer(rgb): amount (asset units) is required')
         }
+        const safeAmount = toSafeTransferAmount(amount, 'transfer(rgb): amount (asset units)')
         const decoded = await this.decodeRgbInvoice(recipient)
         const recipientId = decoded?.recipient_id
         if (!recipientId) {
@@ -791,7 +816,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
             recipients: [{
               recipient_id: recipientId,
               assignment_kind: 'Fungible',
-              assignment_amount: Number(amount),
+              assignment_amount: safeAmount,
               transport_endpoints: endpoints
             }]
           }]
