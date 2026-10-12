@@ -12,10 +12,12 @@ to the application, not this WDK core API upgrade.
 
 October 12 follow-up: the exact merged beta47 Bare-host funded burn and
 independent proof validation now pass. Separate fresh contract-import and
-asset-bound invoice checks also pass, including amount-omitted `Any`.
+asset-bound invoice checks also pass, including amount-omitted `Any`. The first
+mint to that bound `Any` invoice settles 1,000,000 BFA units and preserves the
+same settled/spendable/token balances across a separate-process reopen.
 See the [dated current qualification](./RELEASE-0.15-TRACKER.md#october-12-native-and-app-qualification-follow-up)
 for exact identities and scope. The earlier funded sequence used an unbound
-invoice; it does not qualify the new first-mint bootstrap flow. Actual Android
+invoice; the later host first-mint check is separately qualified. Actual Android
 16-KiB same-process signer reopen fails again. The historical results and
 remaining gates below are preserved, not closed by these later checks.
 

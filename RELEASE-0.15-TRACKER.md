@@ -127,9 +127,14 @@ and adapter identities are the October 12 inputs above.
   rejection, idempotence and bound invoices, including an amount-omitted `Any`
   invoice matching the PR83 receive request shape. The genesis artifact SHA-256
   is `5adf806811bad26748b9c124c179ec583c77ae7b40b0c79d45dec679fd44ddcf`.
-  First-mint settlement through this new bound `Any` path remains pending;
-  import/invoice results do not qualify mobile WalletConnect. No unbound
-  fallback or IFA relabeling is introduced.
+  The subsequent first mint to that bound `Any` invoice now settles 1,000,000
+  BFA units and retains exactly 1,000,000 settled/spendable units and token
+  balance after a separate-process reopen. Both snapshots match the invoice's
+  recipient, `requested_assignment: Any` and settled txid
+  `5aaeb75099d30e6d60378ac7ae118beae36153cf2c5d7e91fa7eec97458984ff`.
+  This qualifies the host fresh-contract first-receive path, not same-process
+  recovery, mobile BFA receipt or mobile WalletConnect. No unbound fallback or
+  IFA relabeling is introduced.
 - Iris app regression coverage passes **233 suites / 2,602 tests** with
   `--watchman=false`; configured thresholds are unchanged. The BFA-focused
   app checks pass **8 suites / 187 tests**. They exercise app bootstrap ordering
@@ -146,8 +151,11 @@ and adapter identities are the October 12 inputs above.
 
 Host evidence: `/tmp/iris-bridge-implementation-20261012/docs/engineering/bfa-wdk-qualification-20261012.md`
 and `.devstack/bfa-beta47/wdk-qualification/` in that checkout. Fresh bootstrap
-evidence: `.devstack/bfa-beta47/wdk-bootstrap/bootstrap-con-export.json` and
-`invoice-any.json`. App coverage:
+evidence: `.devstack/bfa-beta47/wdk-bootstrap/bootstrap-con-export.json`,
+`invoice-any.json`, `snapshot-settled.json` and `snapshot-reopened.json`.
+Independent exact-identity/invoice/transfer/balance assertions pass in
+`/tmp/iris-bridge-audit-20261012/wdk-first-any-independent-verification.log`.
+App coverage:
 `/tmp/iris-bridge-audit-20261012/iris-bfa-bootstrap-combined-coverage.log`.
 Production export scan: `iris-export-final-bfa.log` in that audit directory.
 Android failure: `android-same-process-reopen-failure.xml` and
