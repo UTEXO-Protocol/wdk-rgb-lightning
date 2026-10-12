@@ -175,10 +175,11 @@ trip, not mobile burn, WalletConnect, physical hardware or production. P01
 same-process recovery and P04 pending accounting remain failed.
 
 After the app's exact `Bfa` send-decoder correction and final fixture/script
-freeze, including the bridge allocation-readiness gate, combined coverage passes
-**235 suites / 2,690 tests** with `--watchman=false` and unchanged thresholds.
+freeze, including the bridge allocation-readiness gate and local fixture
+nonce-preservation checks, combined coverage passes **235 suites / 2,727 tests**
+with `--watchman=false` and unchanged thresholds.
 Typecheck, uncached lint and diff
-checks pass; 819 app/script/ops/config files have identical pre/post-run hashes.
+checks pass; 820 app/script/ops/config files have identical pre/post-run hashes.
 The readiness gate reuses explicit Settings setup, never auto-spends Bitcoin,
 and does not qualify a fresh Android bridge blind mint. These regression results
 do not close the observed native runtime failures.
@@ -191,8 +192,9 @@ evidence: `.devstack/bfa-beta47/wdk-bootstrap/bootstrap-con-export.json`,
 Independent exact-identity/invoice/transfer/balance assertions pass in
 `/tmp/iris-bridge-audit-20261012/wdk-first-any-independent-verification.log`.
 App coverage:
-`/tmp/iris-bridge-audit-20261012/iris-bfa-bootstrap-combined-coverage.log`.
-Production export scan: `iris-export-final-bfa.log` in that audit directory.
+`/tmp/iris-bridge-audit-20261012/iris-fixture-nonce-final-coverage.log`.
+Production export scan: `iris-export-final-readiness.log` in that audit directory;
+the later fixture-only nonce correction does not change production app source.
 Android failure: `android-same-process-reopen-failure.xml` and
 `metro-8093-restart.log` in the same audit directory. Wallet/seed files in the
 private fixture trees must not be committed or published wholesale.
