@@ -100,6 +100,23 @@ export interface SendPaymentRequest {
   asset_amount?: number
 }
 
+/** Native burn request. Numbers must be safe integers; strings preserve the full u64 range. */
+export interface BurnAssetRequest {
+  asset_id: string
+  amount: number | DecimalString
+  /** Required for BFA: 32-byte hexadecimal recipient, without a 0x prefix. */
+  burn_recipient?: string | null
+  /** Positive integer sat/vB, not a fractional fee rate. */
+  fee_rate: number | DecimalString
+  /** Integer from 0 through 255. */
+  min_confirmations: number
+}
+
+export interface BurnAssetResponse {
+  txid: string
+  batch_transfer_idx: number
+}
+
 export type Network = 'mainnet' | 'testnet' | 'regtest' | 'signet'
 
 /** Supported package operations, independent of online/funded state. */
@@ -111,13 +128,15 @@ export interface RgbLightningCapabilities {
   bfaAssetListing: true
   /** Package supports BFA validation; unlock still requires eth_rpc_url. */
   bfaValidation: true
-  burn: false
+  /** True for a full account; false for its read-only facade. Not a readiness check. */
+  burn: boolean
 }
 
 export interface BfaCapabilities {
   /** Supported by the pinned native build, not a live endpoint or balance check. */
   bfa: true
-  burn: false
+  /** Burning requires a full account and a valid native BFA setup. */
+  burn: boolean
   consignment: true
 }
 
@@ -640,6 +659,8 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   failTransfers(request: object): Promise<object>
   createRgbInvoice(request: CreateRgbInvoiceRequest | object): Promise<object>
   sendRgbAsset(request: SendRgbAssetRequest | object): Promise<object>
+  /** Burns once through the external signer. Reconcile uncertain outcomes before retrying; no Ethereum payout. */
+  burnAsset(request: BurnAssetRequest): Promise<BurnAssetResponse>
   /** Validated contract metadata only; creates no balance. Requires the approved import extension. */
   importRgbContract(request: { contract_base64: string; expected_asset_id: string }): Promise<RgbImportResult>
   /** Metadata for an already accepted transfer, not ownership acceptance. */

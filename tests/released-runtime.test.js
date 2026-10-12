@@ -5,6 +5,7 @@ import WalletAccount from '../src/wallet-account-rgb-lightning.js'
 import { NodeRgbLightningBinding } from '../src/node-binding.js'
 import { BareRgbLightningBinding } from '../src/bare-binding.js'
 import rln from '@utexo/rgb-lightning-node-nodejs'
+import bare from '@utexo/rgb-lightning-node-bare'
 
 const rpc = { bitcoind_rpc_username: 'user', bitcoind_rpc_password: 'secret-do-not-print', bitcoind_rpc_host: 'localhost', bitcoind_rpc_port: 18443 }
 const legacy = { indexer_url: 'electrum://localhost:50001' }
@@ -151,6 +152,25 @@ describe('released account boundaries', () => {
     const spy = jest.spyOn(rln, 'getRuntimeInfo').mockReturnValue({
       ...runtime, capabilities: runtime.capabilities.filter(value => value !== 'external-signer-eth-rpc-v1')
     })
+    try { expect(() => new NodeRgbLightningBinding({ dataDir: '/unused', network: 'regtest' })).toThrow('Incompatible') } finally { spy.mockRestore() }
+  })
+  it.each([[NodeRgbLightningBinding, rln], [BareRgbLightningBinding, bare]])('requires the merged burn capability before creating %p handles', (Binding, native) => {
+    const runtime = native.getRuntimeInfo()
+    const spy = jest.spyOn(native, 'getRuntimeInfo').mockReturnValue({
+      ...runtime, capabilities: runtime.capabilities.filter(value => value !== 'external-signer-burn-v1')
+    })
+    const create = jest.spyOn(native.SdkNode, 'create')
+    try {
+      expect(() => new Binding({ dataDir: '/unused', network: 'regtest' })).toThrow('Incompatible')
+      expect(create).not.toHaveBeenCalled()
+    } finally { spy.mockRestore(); create.mockRestore() }
+  })
+  it.each([
+    { rln_commit: 'a17b685615750536f0320db1cd3f3ba68a8f1c57' },
+    { lightning_commit: '6d6d061f840264296e7de2b1c64dac6c0dd7eb26' },
+    { adapter_sha256: '93d62bb91c0ab90a7ccc4a1382a9da84498e38506170ce74d3863292f0c9f2f4' }
+  ])('rejects stale native identity even when burn is advertised: %p', stale => {
+    const spy = jest.spyOn(rln, 'getRuntimeInfo').mockReturnValue({ ...rln.getRuntimeInfo(), ...stale })
     try { expect(() => new NodeRgbLightningBinding({ dataDir: '/unused', network: 'regtest' })).toThrow('Incompatible') } finally { spy.mockRestore() }
   })
   it('rejects fee caps before obtaining a native node', async () => {

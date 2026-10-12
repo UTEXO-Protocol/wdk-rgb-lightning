@@ -41,7 +41,7 @@ try {
     wallets.push(wallet)
     await step(`${name}: fresh contract import before funding`, async () => {
       const started = await wallet.start(port)
-      assert.equal(started.runtime.rln_commit, 'a17b685615750536f0320db1cd3f3ba68a8f1c57')
+      assert.equal(started.runtime.rln_commit, '8777d71d7781b408fcce89c9c965ae29e8ad2300')
       const imported = await wallet.call('importRgbContract', [request])
       assert.equal(imported.asset_id, fixture.asset_id)
       assert.equal(imported.already_imported, false)

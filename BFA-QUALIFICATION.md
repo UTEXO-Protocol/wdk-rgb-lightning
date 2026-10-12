@@ -3,6 +3,13 @@
 Branch: `release/rln-0.15.0-beta.3` in WDK, Node.js and Bare.
 Candidate package version: `0.2.0-beta.3`. Not published or approved for production.
 
+This is historical evidence for the #192 source below. The October 12 core
+burn API uses a newer exact source and reports burn support on full accounts;
+see [the release tracker](./RELEASE-0.15-TRACKER.md#october-12-core-burn-upgrade).
+These funded results and the older unsupported-burn comparison are not claims
+about that new build. WebRGB/WalletConnect and durable bridge recovery belong
+to the application, not this WDK core API upgrade.
+
 ## Inputs
 
 - RLN: merged PR #192, commit `a17b685615750536f0320db1cd3f3ba68a8f1c57`.

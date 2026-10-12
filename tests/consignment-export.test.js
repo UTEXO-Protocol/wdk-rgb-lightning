@@ -40,7 +40,7 @@ test('writable and read-only accounts export bytes without exposing filesystem p
   await expect(account.getConsignment(assetId, txid)).rejects.toBe(error)
 })
 
-test('BFA response groups and balances are preserved without enabling unsupported burn', async () => {
+test('BFA response groups and balances are preserved alongside the explicit burnAsset API', async () => {
   const bfa = { asset_id: assetId, balance: { spendable: '18446744073709551615' }, precision: 6 }
   const account = new WalletAccountRgbLightning({
     binding: {
@@ -50,4 +50,5 @@ test('BFA response groups and balances are preserved without enabling unsupporte
   await expect(account.listAssets(['Bfa'])).resolves.toEqual({ nia: null, bfa: [bfa] })
   await expect(account.getTokenBalance(assetId)).resolves.toBe(18446744073709551615n)
   expect(account.burn).toBeUndefined()
+  expect(typeof account.burnAsset).toBe('function')
 })

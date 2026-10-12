@@ -46,7 +46,7 @@ try {
   await prepareChain()
   const init = await step('native identity and real strict unlock through RN IPC', async () => {
     const value = process.argv.includes('--attached') ? (await events()).findLast(item => item.method === 'init' && item.ok).result : await call('init')
-    assert.equal(value.runtime.rln_commit, 'af03c7f1a65135a429f05a5820600338215954dc')
+    assert.equal(value.runtime.rln_commit, '8777d71d7781b408fcce89c9c965ae29e8ad2300')
     assert.equal(value.runtime.target, platform === 'ios' ? 'aarch64-apple-ios-sim' : 'aarch64-linux-android')
     assert.equal(value.network.network, 'Regtest')
     assert.equal(value.node.channel_asset_max_amount, '18446744073709551615')

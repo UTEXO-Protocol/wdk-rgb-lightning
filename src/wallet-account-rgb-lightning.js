@@ -21,6 +21,7 @@ import { LspClient } from './lsp-client.js'
 import { UtexoLsp } from './utexo-lsp.js'
 import { normalizeUnlockRequest, normalizeAutoUnlockRequest, sameUnlockRequest } from './node-unlock-request.js'
 import { exactUnsignedNumber, validatePaymentRequest, validateRefreshResult } from './released-native-contract.js'
+import { validateBurnRequest, validateBurnResponse } from './burn-contract.js'
 import { receiveAddress, joinAddressOperations, stopAddressOperations } from './receive-address.js'
 import {
   validateImportRgbContractRequest, validateImportRgbContractResult,
@@ -78,6 +79,11 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   }
 
   isDisposed () { return this._closed || Boolean(this._shutdownInFlight) || super.isDisposed() }
+
+  /** Package support, not wallet readiness or bridge payout qualification. */
+  getCapabilities () { return { ...super.getCapabilities(), burn: true } }
+
+  async getBfaCapabilities () { return { bfa: true, burn: true, consignment: true } }
 
   // ==========================================================================
   // Lifecycle
@@ -712,6 +718,27 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * @param {Object} request - JsonSendRgbRequest (see above).
    */
   async sendRgbAsset (request) { return this._node.sendRgb(request) }
+
+  /**
+   * Burn asset units with RLN's native snake_case request. BFA requires a
+   * 32-byte hex burn_recipient. Does not perform an Ethereum payout.
+   * Never retries: reconcile uncertain failures using native transfer history.
+   * @param {import('../index.js').BurnAssetRequest} request
+   * @returns {Promise<import('../index.js').BurnAssetResponse>}
+   */
+  async burnAsset (request) {
+    const validated = validateBurnRequest(request)
+    if (this._unlockInFlight) throw new AccountLockedError('Await account unlock before burning assets')
+    const node = this._node
+    if (typeof node.burn !== 'function') {
+      const error = new Error('The installed RGB Lightning native binding does not expose burn()')
+      error.code = 'ERR_RLN_UNSUPPORTED_CAPABILITY'
+      throw error
+    }
+    // Node/Bare burn is synchronous; RLN holds the wallet mutex through
+    // prepare/sign/end. Do not defer dispatch or automatically replay failures.
+    return validateBurnResponse(node.burn(validated))
+  }
 
   /** @param {Object} request - JsonInflateRequest */
   async inflate (request) { return this._node.inflate(request) }

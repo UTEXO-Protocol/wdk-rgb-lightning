@@ -5,8 +5,12 @@ export async function smokeWalletPolicy (WalletManager, WebRgbProvider, Lightnin
   try {
     const account = await manager.getAccount()
     const caps = account.getCapabilities()
-    if (caps.network !== 'mainnet' || caps.lightning || caps.burn || !caps.bfaValidation || !caps.consignmentExport) {
+    if (caps.network !== 'mainnet' || caps.lightning || !caps.burn || !caps.bfaValidation || !caps.consignmentExport) {
       throw new Error('Incorrect mainnet capabilities')
+    }
+    const readOnly = await account.toReadOnlyAccount()
+    if (readOnly.getCapabilities().burn || readOnly.burnAsset !== undefined || typeof account.burnAsset !== 'function') {
+      throw new Error('Incorrect burn account authority')
     }
     for (const method of ['listChannels', 'listPayments', 'createInvoice', 'sendPayment', 'createLsp', 'bootstrapLsp']) {
       let rejected = false

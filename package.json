@@ -26,6 +26,7 @@
     "lint": "standard --env jest",
     "lint:fix": "standard --fix --env jest",
     "check:types": "tsc -p tsconfig.types.json",
+    "check:webrgb-peer": "node scripts/check-webrgb-peer.mjs",
     "check:package": "node scripts/verify-package.mjs",
     "smoke:package:node": "node scripts/smoke-node-package.mjs",
     "smoke:package:bare": "node scripts/smoke-bare-package.mjs",
@@ -46,7 +47,7 @@
     "sodium-universal": "5.0.1"
   },
   "peerDependencies": {
-    "@utexo/webrgb": "0.1.0",
+    "@utexo/webrgb": "^0.1.0",
     "@utexo/rgb-lightning-node-bare": "0.2.0-beta.3",
     "@utexo/rgb-lightning-node-nodejs": "0.2.0-beta.3"
   },

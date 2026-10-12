@@ -97,7 +97,7 @@ try {
     await step(`${name}: Ethereum RPC unlock, strict signer and funding`, async () => {
       const info = await wallet.start(port, 'TransactionSync', {}, { eth_rpc_url: 'http://127.0.0.1:29545' })
       assert.ok(info.runtime.capabilities.includes('external-signer-eth-rpc-v1'))
-      assert.deepEqual(await wallet.call('getBfaCapabilities'), { bfa: true, burn: false, consignment: true })
+      assert.deepEqual(await wallet.call('getBfaCapabilities'), { bfa: true, burn: true, consignment: true })
       await rpc('sendtoaddress', [await wallet.call('getAddress'), 1], 'miner')
       await mine()
       await wallet.call('createUtxos', [{ up_to: false, num: 10, size: 100000, fee_rate: 2, skip_sync: false }])

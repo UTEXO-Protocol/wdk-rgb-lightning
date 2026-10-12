@@ -27,15 +27,16 @@ RLN rejects **issuance and inflation in external-signer mode**, which this
 module always uses. Issue assets in a separate on-chain wallet, such as
 [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], then transfer them to this wallet.
 
-> Status: unpublished `0.2.0-beta.3` candidate for RLN `0.15.0-beta.3` plus merged PR #192.
+> Status: unpublished `0.2.0-beta.3` candidate with merged RLN dev through PR #200.
 > Not approved for production rollout. See [RELEASE-0.15-TRACKER.md](./RELEASE-0.15-TRACKER.md).
 > Current verification and release decisions: [PRODUCTION-GATES.md](./PRODUCTION-GATES.md).
 
 ## Upgrade Restrictions
 
 This breaking line requires both runtime and package identity to match RLN
-`a17b685615750536f0320db1cd3f3ba68a8f1c57`. This is the exact merge of
-[PR #192](https://github.com/UTEXO-Protocol/rgb-lightning-node/pull/192),
+`8777d71d7781b408fcce89c9c965ae29e8ad2300`. This includes external-signer burn
+and rgb-lib `v0.3.0-beta.47-bfa` from
+[PR #200](https://github.com/UTEXO-Protocol/rgb-lightning-node/pull/200),
 not the older release binary or a floating `dev` build. Install the exact native
 candidate `0.2.0-beta.3` for your runtime. These versions are not yet published.
 
@@ -118,7 +119,7 @@ mainnet, so an unknown on-chain hash returns `null`.
 ```js
 const capabilities = account.getCapabilities()
 // { network, signer: 'external', lightning, consignmentExport: true,
-//   bfaAssetListing: true, bfaValidation: true, burn: false }
+//   bfaAssetListing: true, bfaValidation: true, burn: true }
 
 try {
   await account.listChannels()
@@ -130,7 +131,9 @@ try {
 `getNetwork()` reads the configured network without unlocking.
 `getCapabilities()` describes this package/signer combination, not wallet
 readiness, balance or successful qualification. `getBfaCapabilities()` returns
-`{ bfa: true, burn: false, consignment: true }`. Configure `eth_rpc_url` when
+`{ bfa: true, burn: true, consignment: true }` on a full account. The read-only
+facade reports `burn: false` in both capability methods and has no `burnAsset`.
+Configure `eth_rpc_url` when
 unlocking to enable native validation of BFA bridge events:
 
 ```js
@@ -150,10 +153,48 @@ Choose the Ethereum RPC for the chain containing the asset's bridge contract.
 Omitting the field, or supplying `null`, keeps the non-BFA unlock behavior.
 No endpoint is inferred or substituted. A capability flag does not establish
 endpoint health, chain identity or the validity of any particular consignment.
-Consignment export uses the existing account API. External-signer burn remains
-unsupported upstream; no burn method or persistent burn journal is added.
-See [BFA qualification and RN comparison](./BFA-QUALIFICATION.md) for test results
-and remaining gates.
+Consignment export uses the existing account API. Historical
+[BFA qualification and RN comparison](./BFA-QUALIFICATION.md) results apply to
+their recorded source, not automatically to this new native graph.
+
+### Native Asset Burn
+
+`account.burnAsset(request)` invokes the native `SdkNode.burn` once. It accepts
+the existing RLN C-FFI request, not a WebRGB or WalletConnect request:
+
+```js
+const { txid, batch_transfer_idx } = await account.burnAsset({
+  asset_id: assetId,
+  amount: '1000000',
+  fee_rate: 2,
+  min_confirmations: 3,
+  burn_recipient: recipientHex // BFA: 32-byte hex, without a 0x prefix
+})
+```
+
+`amount` and `fee_rate` must be positive safe-integer numbers or canonical
+decimal strings up to `18446744073709551615`. Native wrappers encode strings
+as exact u64 JSON numbers. `min_confirmations` is an integer from 0 to 255;
+the application owns its confirmation policy. Omit `burn_recipient` (or use
+`null`) for assets that do not require it. WDK does not infer a recipient,
+encode EVM addresses, choose a chain, or perform an Ethereum payout.
+
+Await `unlock()` first. Burns are rejected during activation or after shutdown
+starts. Node/Bare native calls are synchronous; RLN serializes preparation,
+signing and completion under the RGB wallet mutex. The successful response
+contains the native `txid` and `batch_transfer_idx`, not proof of settlement.
+
+Failures may retain an `Initiated` transfer and input reservations. WDK passes
+native errors through, never retries or automatically frees inputs. Reconcile
+transfer history and on-chain state before requesting another burn, including
+after a malformed or lost response. A subsequent call is a new burn, not an
+idempotent retry. Persistent operation records, user approvals, transport and
+bridge recovery belong to the application; none are added here. Export an
+available proof separately with `getConsignment(assetId, txid)`.
+
+The runtime gate requires the exact new source/adapter identity plus
+`external-signer-burn-v1`. API availability does not qualify a funded wallet,
+bridge, payout or device. See the [release tracker](./RELEASE-0.15-TRACKER.md).
 
 ## WebRGB integration
 
@@ -161,7 +202,8 @@ The optional `@utexo/wdk-rgb-lightning/webrgb` export adapts a native WDK accoun
 to WebRGB's receiving/read subset. It does not run RLN in a browser, inject
 `window.rgb`, or establish WalletConnect sessions. It has no runtime dependency
 on WebRGB or WalletConnect. TypeScript consumers of this subpath should install
-the optional type peer `@utexo/webrgb@0.1.0`; ordinary WDK consumers do not need it.
+the optional type peer `@utexo/webrgb@^0.1.0`; the unchanged read subset is
+checked against `0.1.0` and `0.1.2`. Ordinary WDK consumers do not need it.
 
 See [WEBRGB.md](./WEBRGB.md) for session authorization, approval handling, API
 mapping and native-runtime integration. The subset matches the non-burn scope
@@ -329,6 +371,7 @@ are async and forward to the active binding.
 | Payments | `sendPayment(request)`, `keysend(request)`, `listPayments()`, `getPayment(hash, type)` |
 | RGB assets | `listAssets(filter?)`, `getAssetBalance(id)`, `getAssetMetadata(id)`, `listTransfers(id)`, `listTransfersByTxid(txid)`, `refreshTransfers(req)`, `failTransfers(req)` |
 | RGB invoices/transfers | `createRgbInvoice(request)`, `decodeRgbInvoice(invoice)`, `sendRgbAsset(request)`, `getAssetMedia(digest)`, `postAssetMedia(request)` |
+| RGB burn | `burnAsset({ asset_id, amount, burn_recipient?, fee_rate, min_confirmations })` returns `{ txid, batch_transfer_idx }`; no automatic retry or bridge payout |
 | RGB issuance (unsupported in this mode) | `issueAssetNia(request)`, `issueAssetUda(request)`, `issueAssetCfa(request)`, `issueAssetIfa(request)`, `inflate(request)` forward the released `UnsupportedInExternalSignerMode` error; use a separate on-chain wallet |
 | BTC | `getBalance(skipSync?)`, `getBalanceDetails(skipSync?)`, `sendTransaction({ to, value, ... })`, `sendBtc(nativeRequest)`, `getTransactions(skipSync?)`, `getTransactionsByTxid(txid)`, `listUnspents(skipSync?)`, `createUtxos(request)`, `estimateFee(blocks)` |
 | WDK-standard | `index`, `path`, `keyPair`, `sign(message)`, `verify(message, signature)`, `transfer(options)`, `quoteTransfer(options)`, `quoteSendTransaction(tx)`, `getTransactionReceipt(hash)`, `toReadOnlyAccount()` |

@@ -6,6 +6,18 @@ evidence listed here, not by a general CI success.
 
 ## Candidate
 
+October 12 source/API update: WDK now requires RLN
+`8777d71d7781b408fcce89c9c965ae29e8ad2300`, rust-lightning
+`fc5c4c64db36a9b6aa8cd878ca1225a977e67106`, shared adapter
+`f6d2959e1ceff0400cbd372759c4957cd5a52964f4ec646a79ee15c21b2291c0`, and
+`external-signer-burn-v1`. Core `burnAsset` is available to full accounts.
+The native candidate label and package versions are unchanged. See the
+[API/admission audit and WDK tests](./RELEASE-0.15-TRACKER.md#october-12-core-burn-upgrade).
+No funded, recovery, packed-native or device gate is closed by WDK unit tests.
+
+The baseline and engineering results below describe the earlier #192 graph;
+they must be rerun or explicitly requalified against the new native inputs.
+
 - WDK runtime baseline: `0d44024e4949f399cbd24fd55c4d5c9b48dfda02`.
   This follow-up adds qualification documentation and the pending-balance
   acceptance test, without changing runtime behavior.
@@ -78,8 +90,8 @@ and final artifact approval remain open.
 | ID | Decision | Current boundary |
 | --- | --- | --- |
 | S01 | On-chain-only release, or non-mainnet Lightning as well? | Mainnet Lightning already fails with `LIGHTNING_DISABLED_ON_MAINNET`. Signet Lightning APIs remain available, but strict outbound settlement, mature BTC force-close sweep, RGB commitment acceptance and channel recovery are not qualified. On-chain-only scope removes those channel gates, not P01-P06. |
-| S02 | Keep the #192 native source or adopt newer merged upstream work? | RLN #194 (external burn), #195 (no LDK startup on mainnet), and #200 (rgb-lib beta.47-bfa plus new rust-lightning) have merged to `dev`. They are absent from this candidate. Moving to #200 is 24 commits and changes the dependency graph; it is not only a burn toggle. Review the full delta, regenerate adapters/locks, rebuild and rerun qualification before selecting it. |
-| S03 | Include burn in this release? | Burn remains unavailable in the current pin. The upstream path merged as #194 at `f1105c207f4750a4258ae7b0df45d7e4caa04b4f`. Enabling it also requires Node/Bare C-FFI exposure, WDK APIs, durable operation recovery and funded verification. No burn capability is falsely advertised. |
+| S02 | Keep the #192 native source or adopt newer merged upstream work? | The October 12 exact pin adopts dev through #200, including #194 burn, #195 mainnet startup and rgb-lib beta.47-bfa/new rust-lightning. The dependency graph changed, not only a capability flag. Native builds, security review and funded/recovery/device qualification remain separate from WDK API tests. |
+| S03 | Include burn in this release? | Generic WDK `burnAsset` and native capability gating are implemented. Full accounts report support; read-only accounts do not. Durable bridge operation recovery, sessions, approval and transport are Iris/application responsibilities and are not added to WDK. Funded verification and uncertain-outcome recovery remain release gates. |
 | S04 | Which asset schemas and deployments are supported? | Mainnet IFA is rejected by the current upstream library. Local six-decimal IFA/NIA fixtures are not production USDT. Mainnet BFA needs an approved bridge/token/contract identity and Ethereum RPC configuration, plus P06 closure. |
 | S05 | Is VSS part of this release? | Deferred by request. No device-loss or VSS recovery claim. The source contains VSS APIs but that does not qualify the service or recovery policy. |
 | S06 | Retain the breaking 0.2 API boundary? | Thirteen legacy custom on-chain operations and related unreleased semantics remain explicit unsupported capabilities. No broad behavior fork is added. WDK base-contract upgrades are a separate change from this native release. |

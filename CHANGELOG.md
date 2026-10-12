@@ -10,11 +10,22 @@ while pre-`1.0`.
 
 ### 0.2.0-beta.3 Candidate
 
-- Build RLN from merged PR #192 at `a17b685615750536f0320db1cd3f3ba68a8f1c57`.
+- Require merged RLN `8777d71d7781b408fcce89c9c965ae29e8ad2300`, including
+  external-signer burn and rgb-lib beta.47-bfa, plus its exact native adapter
+  and `external-signer-burn-v1` capability. Earlier #192 qualification remains
+  historical evidence, not a qualification of the new dependency graph.
+- Add `burnAsset(request)` with native snake_case fields, exact u64 inputs,
+  typed results and lifecycle admission checks. Full accounts advertise burn;
+  read-only accounts do not. No automatic retries, journal or bridge payout.
+- Widen the optional WebRGB type peer to `^0.1.0`, verified against `0.1.0` and
+  `0.1.2`; preserve the receiving/read subset without adding a transport or
+  extending the provider. Iris's normal install remains pending final native
+  Git pins and resolution of its npm override error.
 - Accept optional `eth_rpc_url` on external unlock and preserve endpoint identity
   when coalescing concurrent requests. Omitted/null keep non-BFA behavior.
 - Require the matching native candidate and compiled external Ethereum RPC
-  capability. BFA validation is available; external-signer burn remains disabled.
+  capability. BFA validation and burn still require valid native configuration
+  and separate funded/recovery qualification.
 - Add BFA qualification evidence and comparison with the React Native SDK.
 
 ### 0.2.0-beta.2 Candidate

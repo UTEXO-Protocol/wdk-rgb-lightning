@@ -6,15 +6,97 @@ Current release decisions and the latest verification are maintained
 in [PRODUCTION-GATES.md](./PRODUCTION-GATES.md). Dated historical results below
 retain their original source and scope.
 
-## Current BFA Source Candidate
+## October 12 Core Burn Upgrade
 
-PR #192 is merged. The current native source is
-`a17b685615750536f0320db1cd3f3ba68a8f1c57`; both native packages and WDK are
-`0.2.0-beta.3`. Optional `eth_rpc_url` now reaches the external signer unlock path,
-and BFA validation is advertised separately from unsupported burn.
-See [BFA-QUALIFICATION.md](./BFA-QUALIFICATION.md) for current tests and the RN
-comparison. The sections below retain earlier candidate evidence; they do not
-qualify every target or recovery case against this new build.
+Current source: RLN `8777d71d7781b408fcce89c9c965ae29e8ad2300`, including
+external-signer burn and rgb-lib beta.47-bfa. The native candidate still reports
+`rln_version: 0.15.0-beta.3`; exact commit/adapter identity, not that version
+label alone, selects this build. Node/Bare/WDK package versions stay
+`0.2.0-beta.3`. Source updates stay on the existing release branch; no merge or
+publication is part of this follow-up.
+
+- rust-lightning: `fc5c4c64db36a9b6aa8cd878ca1225a977e67106`.
+- rgb-lib beta.47-bfa: `74a096a5bfbba7744af16c36c3595a24464c134c`.
+- Shared native adapter: `f6d2959e1ceff0400cbd372759c4957cd5a52964f4ec646a79ee15c21b2291c0`.
+- WDK requires `external-signer-burn-v1` before creating native handles.
+
+The coordinated API is `account.burnAsset(request)` -> `SdkNode.burn(request)`
+on both runtimes. The snake_case fields are `asset_id`, `amount`, optional
+`burn_recipient`, `fee_rate`, and `min_confirmations`; the result is `txid` plus
+`batch_transfer_idx`. Safe numbers and canonical decimal u64 strings preserve
+amounts exactly. Full accounts report burn support; read-only accounts do not
+expose burn and report it unavailable. No WebRGB/provider, WalletConnect,
+session, approval, journal or bridge-transport behavior is added or extended.
+
+### Admission And API Audit
+
+Reviewed merged `bindings/c-ffi/src/json_types.rs` (burn and send DTOs),
+`src/uniffi_api/mod.rs::SdkNode::burn`, `src/sdk/mod.rs::burn`, and
+`src/rgb.rs::UnlockedAppState::rgb_burn`, plus both JS native wrappers.
+The C-FFI DTO file is unchanged from the reviewed external-burn source.
+Neither `JsonBurnRequest`, `JsonSendBtcRequest` nor `JsonSendRgbRequest` gains
+a public `sweep` parameter. RGB-lib's added internal `burn_begin` argument is
+supplied by RLN (`false`); no WDK request remapping is needed. RGB send's legacy
+`skip_sync` remains accepted but ignored by C-FFI, as before.
+
+WDK validates and snapshots the request before native access; unlock-in-flight
+and shutdown admissions reject without queueing a later burn. Existing
+`_node`/binding closed checks apply. Production Node/Bare `burn` is synchronous,
+so JS cannot interleave another account operation during native execution.
+RLN holds its RGB wallet mutex throughout begin/sign/end against competing
+wallet operations and checks unlocked state. No WDK-wide scheduler refactor
+is needed for this synchronous contract. An asynchronous native binding would
+require a fresh lifecycle/serialization review, not silently reuse this claim.
+
+Errors preserve native reconciliation information and are never replayed.
+Malformed responses also fail without retry. Applications must reconcile
+uncertain outcomes before another request; WDK provides no durable idempotency
+or bridge recovery. The mutex is not an application operation journal.
+
+### WDK Verification
+
+- Focused Jest and full Jest run with `--watchman=false --runInBand`: focused
+  **287 tests / 5 suites**, full **970 tests / 26 suites passed**.
+- TypeScript declarations and lint pass. Lint uses an in-checkout cache because
+  the sandbox cannot write the default home-directory Standard cache.
+- The focused burn suite has **103 tests** and **100% statement, branch,
+  function and line coverage** for `src/burn-contract.js`. Package allowlist
+  verification passes with 44 packed files; `git diff --check` passes.
+- Tests cover full/read-only capabilities, mainnet on-chain admission, missing
+  capability/stale identity, exact u64 strings and unsafe numbers, request and
+  response validation, no replay, unlock/shutdown admission, and unchanged
+  optional WebRGB method/type surface.
+- Native compilation, packed native loading, funded burn, failure recovery and
+  device qualification for this graph are separate native/app-agent work.
+  WDK Jest mocks are not evidence of native settlement or production readiness.
+
+### Optional WebRGB Peer Compatibility
+
+The optional peer is widened from exact `0.1.0` to `^0.1.0`; the development
+baseline remains `0.1.0`. `0.1.2` adds provider methods outside WDK's declared
+`Pick<RgbProvider, WebRgbMethod | 'enabled'>` subset; its selected signatures
+and runtime helpers are unchanged. Both versions pass strict declarations and
+read-subset runtime compatibility with `npm run check:webrgb-peer -- <peer-dir>`.
+The `0.1.2` input was the installed package in
+`/tmp/iris-bridge-implementation-20261012/node_modules/@utexo/webrgb`.
+No WebRGB/provider source or declaration is extended, and no WalletConnect
+dependency is added. A normal WDK install with `--legacy-peer-deps=false`
+passes (`--offline --ignore-scripts --no-audit --no-fund`). Iris's normal install
+has **not passed**: its old Bare Git pin identifies a beta.2 package instead of
+the required beta.3, and npm also failed to resolve the app's root override
+reference `$brace-expansion` during Git dependency installation. The parent
+must update the native Git pin and resolve that app install issue before
+claiming normal peer verification. `legacy-peer-deps` is not a compatibility fix.
+
+Native packages remain exact optional peers at `0.2.0-beta.3` in WDK's manifest
+and lockfile; WDK has no native Git dependency pin to update. Its runtime gate
+requires the new exact source/adapter/capability even while the package version
+is unchanged. Iris owns its native/WDK Git commit references and must update
+them after the final package commits. These source edits do not qualify older
+installed native artifacts merely because their package version matches.
+
+All dated results below, including [BFA-QUALIFICATION.md](./BFA-QUALIFICATION.md),
+retain their original source and scope. They do not qualify this new graph.
 
 ## October 10 Public Android Packaging
 
@@ -131,7 +213,7 @@ remain open, not implicitly fixed by upstream merges or package unit tests.
 | Android final linked 16-KiB layout | Bare toolchain/package | Closed for the public staging integration verified October 10; consumers must adopt it explicitly. Generic bare-link output still damages RELRO/DYNAMIC. See P05 in PRODUCTION-GATES.md. |
 | Private BFA build dependencies | Source access and package delivery | ORG_READ_TOKEN is configured and scoped initialization works. Source access is resolved; license/notices and publication approval remain separate. |
 | BFA Ethereum RPC with external signer | RLN #192 | Resolved in current source candidate; see BFA report. |
-| External burn | Source selection and package API | Unsupported in this pin. Upstream #194 merged to dev; adopting it requires new native inputs and wrapper/WDK/recovery work. |
+| External burn | Source selection and package API | Core WDK API and exact native gate added October 12; funded/native/app-recovery qualification remains separate. No WDK bridge journal or provider extension. |
 | BFA receive lock-event selection | rgb-lib #103 | Unmerged; BFA funding not qualified |
 | Stock Lightning, virtual channels, APay restart durability, HODL concurrency | Applicable upstream behavior | Not qualified by matching-RLN happy-path tests |
 | VSS fencing, device-loss and channel recovery | RLN/VSS and release qualification | #172 fixes partial-store refill, not every recovery scenario |
