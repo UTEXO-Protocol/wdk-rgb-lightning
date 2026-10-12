@@ -17,9 +17,17 @@ mint to that bound `Any` invoice settles 1,000,000 BFA units and preserves the
 same settled/spendable/token balances across a separate-process reopen.
 See the [dated current qualification](./RELEASE-0.15-TRACKER.md#october-12-native-and-app-qualification-follow-up)
 for exact identities and scope. The earlier funded sequence used an unbound
-invoice; the later host first-mint check is separately qualified. Actual Android
-16-KiB same-process signer reopen fails again. The historical results and
-remaining gates below are preserved, not closed by these later checks.
+invoice; the later host first-mint check is separately qualified. A subsequent
+actual Android 16-KiB first receipt after contract bootstrap settles exactly
+1,000,000 BFA units through an asset-bound Witness invoice. Its pending UI
+incorrectly doubles to 2.00 USDT before settling to 1.00: P04 remains failed
+on beta47. After explicit RGB output setup, Android sends 250,000 units to a
+bound host Witness invoice; the host confirms settlement and spendability at
+three confirmations, while Android shows 0.75 USDT without pending. This is
+regtest emulator round-trip evidence, not mobile burn, WalletConnect or fresh
+bridge blind-mint qualification. Same-process signer reopen still fails. The
+historical results and remaining gates below are preserved, not closed by these
+later checks.
 
 ## Inputs
 

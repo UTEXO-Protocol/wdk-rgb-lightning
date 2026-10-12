@@ -135,7 +135,7 @@ and adapter identities are the October 12 inputs above.
   This qualifies the host fresh-contract first-receive path, not same-process
   recovery, mobile BFA receipt or mobile WalletConnect. No unbound fallback or
   IFA relabeling is introduced.
-- Iris app regression coverage passes **233 suites / 2,602 tests** with
+- Earlier BFA-bootstrap app regression coverage passed **233 suites / 2,602 tests** with
   `--watchman=false`; configured thresholds are unchanged. The BFA-focused
   app checks pass **8 suites / 187 tests**. They exercise app bootstrap ordering
   and exact asset-bound receive, not native settlement or mobile recovery.
@@ -149,6 +149,41 @@ and adapter identities are the October 12 inputs above.
   by WalletConnect is not qualified. Force-stop recovery, successful native
   compilation and cold startup do not close this lifecycle failure.
 
+### October 12 Android BFA Round-Trip Addendum
+
+Actual Android 16-KiB Iris now passes fresh BFA contract bootstrap, exact
+asset-bound Witness invoice creation and its first 1,000,000-unit receipt.
+The only funded RGB receipt in this run is txid
+`c943361dc98ed402cf312cbe88b4ded1a267337aaa0f774cd573a3514aaa5a96`.
+The app initially displayed 1.00 USDT pending, then 2.00 pending after refresh.
+After settlement it displays the correct 1.00 USDT without `Includes pending`;
+the funded BTC balance is also correct at 2,000,000 sats. **P04 remains failed
+on the current beta47 runtime**, not merely a historical gate. No UI cap or
+native accounting change was applied. This Android pending evidence is UI-level,
+not a new raw-native pending-balance capture.
+
+After the BFA decoder correction and explicit RGB output setup, Android made
+one PIN-authorized send of 250,000 units to a bound host Witness invoice:
+`deaddec68fd4f7672e7f52f31a7f418caf4ca1b6fd63514d6e09ce7c7e067985`.
+The reported native network fee is 5,100 sats. Refreshed Android displays 0.75
+USDT without pending. The exact-source host receiver independently reaches
+`ReceiveWitness` / `Settled` at three confirmations, with 250,000 units in
+settled, future, spendable and token balances. Invoice recipient, proxy recipient,
+asset and transaction match. Normal Iris sends remain Witness-only; no Blind-send
+policy expansion was made. This qualifies the observed regtest emulator round
+trip, not mobile burn, WalletConnect, physical hardware or production. P01
+same-process recovery and P04 pending accounting remain failed.
+
+After the app's exact `Bfa` send-decoder correction and final fixture/script
+freeze, including the bridge allocation-readiness gate, combined coverage passes
+**235 suites / 2,690 tests** with `--watchman=false` and unchanged thresholds.
+Typecheck, uncached lint and diff
+checks pass; 819 app/script/ops/config files have identical pre/post-run hashes.
+The readiness gate reuses explicit Settings setup, never auto-spends Bitcoin,
+and does not qualify a fresh Android bridge blind mint. These regression results
+do not close the observed native runtime failures.
+WDK implementation pin `c941925` and both native implementation pins are unchanged.
+
 Host evidence: `/tmp/iris-bridge-implementation-20261012/docs/engineering/bfa-wdk-qualification-20261012.md`
 and `.devstack/bfa-beta47/wdk-qualification/` in that checkout. Fresh bootstrap
 evidence: `.devstack/bfa-beta47/wdk-bootstrap/bootstrap-con-export.json`,
@@ -161,6 +196,15 @@ Production export scan: `iris-export-final-bfa.log` in that audit directory.
 Android failure: `android-same-process-reopen-failure.xml` and
 `metro-8093-restart.log` in the same audit directory. Wallet/seed files in the
 private fixture trees must not be committed or published wholesale.
+Current Android pending/settled captures: `android-bfa-witness-double-count.xml`
+and `android-bfa-receive-settled.xml` in that audit directory. Send captures:
+`android-bfa-send-review.xml`, `android-bfa-send-submitted.xml` and
+`android-bfa-send-settled-balance.xml`. Host receiver evidence in the bootstrap
+directory: `android-return-witness-250k.json`, `android-return-confirmations.json`
+and `snapshot-android-return-settled.json`. Independent assertions pass in
+`wdk-android-return-independent-verification.log` in the audit directory.
+Latest frozen app checks: `iris-bridge-readiness-combined-coverage.log`,
+`iris-bridge-readiness-final-typecheck.log` and `iris-bridge-readiness-final-lint.log`.
 
 All dated earlier results below, including the historical body of
 [BFA-QUALIFICATION.md](./BFA-QUALIFICATION.md), retain their original source and
