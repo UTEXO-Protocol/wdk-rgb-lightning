@@ -81,12 +81,16 @@ The `0.1.2` input was the installed package in
 `/tmp/iris-bridge-implementation-20261012/node_modules/@utexo/webrgb`.
 No WebRGB/provider source or declaration is extended, and no WalletConnect
 dependency is added. A normal WDK install with `--legacy-peer-deps=false`
-passes (`--offline --ignore-scripts --no-audit --no-fund`). Iris's normal install
-has **not passed**: its old Bare Git pin identifies a beta.2 package instead of
-the required beta.3, and npm also failed to resolve the app's root override
-reference `$brace-expansion` during Git dependency installation. The parent
-must update the native Git pin and resolve that app install issue before
-claiming normal peer verification. `legacy-peer-deps` is not a compatibility fix.
+passes (`--offline --ignore-scripts --no-audit --no-fund`). At the initial review,
+Iris's normal install had **not passed**: its old Bare Git pin identified a beta.2
+package instead of the required beta.3, and npm could not resolve the app's root
+override reference `$brace-expansion` during Git dependency installation.
+The subsequent normal install passed with the final WDK/Bare implementation
+pins below and literal override versions. Evidence:
+`/tmp/iris-bridge-audit-20261012/iris-install-final-pins.log`.
+The optional WalletConnect keyvaluestorage/AsyncStorage peer warning remains;
+this install result is not a clean dependency-audit or mobile-runtime claim.
+`legacy-peer-deps` is not a compatibility fix.
 
 Native packages remain exact optional peers at `0.2.0-beta.3` in WDK's manifest
 and lockfile; WDK has no native Git dependency pin to update. Its runtime gate
@@ -95,8 +99,66 @@ is unchanged. Iris owns its native/WDK Git commit references and must update
 them after the final package commits. These source edits do not qualify older
 installed native artifacts merely because their package version matches.
 
-All dated results below, including [BFA-QUALIFICATION.md](./BFA-QUALIFICATION.md),
-retain their original source and scope. They do not qualify this new graph.
+### October 12 Native And App Qualification Follow-up
+
+Implementation pins remain WDK `c941925ab8a9b2d75356d223d5eed74c3dd74647`,
+Bare `cc62bf3a1765d89cb8b0b990ea16a47936f799de` and Node
+`c30cf547fb2960f737b1463f3410445f43932b1b`. Later documentation-only commits do
+not replace those pins or change artifact identities. Exact RLN/LDK/rgb-lib
+and adapter identities are the October 12 inputs above.
+
+- All seven [Bare hosted build jobs](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/38213919881)
+  passed, including Android production staging. All five
+  [Node runtime matrix jobs](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/actions/runs/38213891152)
+  passed. Complete local seven-target Bare and five-target Node artifact gates,
+  provenance, symbol checks and applicable Android ELF checks pass. The canceled
+  duplicate Node run is not evidence. Exact target/runtime results and hashes:
+  [final native report](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/1a55402a557a42455c8132345c05e99167c34607/NATIVE-UPGRADE-20261012.md).
+- The exact Bare Darwin ARM64 addon with WDK `c941925` and fixture-only Bare
+  1.34.1 received 1,000,000 BFA, sent 250,000, burned 100,000, and reopened in
+  fresh processes with balances 650,000/250,000. The 8,881-byte exported proof
+  has SHA-256 `edf380a96e3cbd265451ae798f413564b30c8efb7560cc5f0b1091408dfaded9`.
+  Independent beta47 consensus validation used live Bitcoin resolution,
+  `IssuedAmountCheckExt` and Anvil FundsIn; missing events, wrong burn amount
+  and wrong recipient were rejected. This is Bare-host evidence, not Node-funded,
+  EVM-payout, mobile, same-process-reopen or production qualification.
+- That funded host sequence initially used an unbound invoice. A separate fresh
+  wallet now proves exact BFA public-contract import, zero balance, wrong-ID
+  rejection, idempotence and bound invoices, including an amount-omitted `Any`
+  invoice matching the PR83 receive request shape. The genesis artifact SHA-256
+  is `5adf806811bad26748b9c124c179ec583c77ae7b40b0c79d45dec679fd44ddcf`.
+  First-mint settlement through this new bound `Any` path remains pending;
+  import/invoice results do not qualify mobile WalletConnect. No unbound
+  fallback or IFA relabeling is introduced.
+- Iris app regression coverage passes **233 suites / 2,602 tests** with
+  `--watchman=false`; configured thresholds are unchanged. The BFA-focused
+  app checks pass **8 suites / 187 tests**. They exercise app bootstrap ordering
+  and exact asset-bound receive, not native settlement or mobile recovery.
+  Final BFA-source typecheck, uncached lint and production iOS/Android export
+  credential-canary scans also pass; export scans are not mobile execution.
+- **P01 / Q01 remain failing/open:** actual Android 16-KiB Iris reproduced
+  same-process signer reopen failure after backgrounding for the system share
+  sheet. Native returned `FFI panic in rln_native_external_signer_new_with_storage`
+  with `Database already open. Cannot acquire lock.` Iris fails closed with
+  restart guidance; no reset was performed. External-browser return required
+  by WalletConnect is not qualified. Force-stop recovery, successful native
+  compilation and cold startup do not close this lifecycle failure.
+
+Host evidence: `/tmp/iris-bridge-implementation-20261012/docs/engineering/bfa-wdk-qualification-20261012.md`
+and `.devstack/bfa-beta47/wdk-qualification/` in that checkout. Fresh bootstrap
+evidence: `.devstack/bfa-beta47/wdk-bootstrap/bootstrap-con-export.json` and
+`invoice-any.json`. App coverage:
+`/tmp/iris-bridge-audit-20261012/iris-bfa-bootstrap-combined-coverage.log`.
+Production export scan: `iris-export-final-bfa.log` in that audit directory.
+Android failure: `android-same-process-reopen-failure.xml` and
+`metro-8093-restart.log` in the same audit directory. Wallet/seed files in the
+private fixture trees must not be committed or published wholesale.
+
+All dated earlier results below, including the historical body of
+[BFA-QUALIFICATION.md](./BFA-QUALIFICATION.md), retain their original source and
+scope. P02/P03/P04/P06, native security, recovery, public deployment and
+distribution gates remain open until separately requalified; the new source,
+artifact matrix and host happy path do not close them.
 
 ## October 10 Public Android Packaging
 

@@ -10,6 +10,15 @@ These funded results and the older unsupported-burn comparison are not claims
 about that new build. WebRGB/WalletConnect and durable bridge recovery belong
 to the application, not this WDK core API upgrade.
 
+October 12 follow-up: the exact merged beta47 Bare-host funded burn and
+independent proof validation now pass. Separate fresh contract-import and
+asset-bound invoice checks also pass, including amount-omitted `Any`.
+See the [dated current qualification](./RELEASE-0.15-TRACKER.md#october-12-native-and-app-qualification-follow-up)
+for exact identities and scope. The earlier funded sequence used an unbound
+invoice; it does not qualify the new first-mint bootstrap flow. Actual Android
+16-KiB same-process signer reopen fails again. The historical results and
+remaining gates below are preserved, not closed by these later checks.
+
 ## Inputs
 
 - RLN: merged PR #192, commit `a17b685615750536f0320db1cd3f3ba68a8f1c57`.
