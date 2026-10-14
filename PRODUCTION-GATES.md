@@ -168,17 +168,24 @@ A beta.50 version number alone does not close a native behavior or security gate
   separate from ordinary mint/burn and independent burn-proof happy paths.
 - All seven Bare targets and the earlier five-target `9c864985` Node hosted
   matrix pass. The [final pre-loader Node matrix](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/actions/runs/38559279576)
-  at `82eeb4cea5038c007b44036307834156a26c71d5` is still in progress as this
-  report is written; its source CI passes. Complete local artifact imports and
-  matrix reports are maintained in the native reports;
-  this does not qualify mobile app execution or resolve P01/P02/P03/P04/P06.
+  at `82eeb4cea5038c007b44036307834156a26c71d5` now passes all five targets,
+  including actual GNU/musl runtimes; its source CI passes. Both GNU binaries
+  independently require a maximum GLIBC 2.34. Original hosted Darwin arm64
+  and x64 artifacts also pass actual macOS 27 / Node 22.23.3 canaries (Rosetta
+  for x64). The complete final five-target local artifact gate passes and is
+  independently rerun: original hosted sidecars/archives remain preserved;
+  the central set records two separately qualified local Darwin builds and
+  three original hosted Linux binaries, without restamping. Origins, checksums
+  and actual runtime versions are recorded in the native report and
+  `native-node-final-admission-artifact-origins.json`.
+  This does not qualify mobile app execution or resolve P01/P02/P03/P04/P06.
 - The earlier `9c864985` Node host passes 14 four-schema steps, 11 normal BFA
   mint/send/burn steps, six cold-copy steps, eight BTC reorg steps and eight
   default interrupted-BTC steps. It also fails P01/P03/P04. These dated results
   are retained alongside the final-wrapper rerun.
 - A separate locked/rebuilt beta.50 validator passes the Bare and Node burn
-  proofs with live Bitcoin and FundsIn resolution. The final Node wrapper's fresh exported
-  proof also passes; proof SHA-256
+  proofs with live Bitcoin and FundsIn resolution. The final Node wrapper's
+  fresh exported proof also passes; proof SHA-256
   `d213c151309dc65f507f8637136de3dcd564113fdbbee17c42ced11309474ffb`.
   Missing FundsIn events reject in consensus validation; wrong recipient and
   wrong amount reject against the expected proof metadata. Its source/lock
@@ -195,8 +202,9 @@ A beta.50 version number alone does not close a native behavior or security gate
 - The local index retains all 40 October 14 runs, including historical wrappers,
   precondition failures and corrected test expectations. Latest exact Node
   results replace their scope only; they do not erase failed Bare timings.
-- Complete final Node matrix/imports and app/device qualification remain
-  separate gates. Earlier passes below do not qualify beta.4.
+- Complete artifact gates do not qualify app/device behavior, resolve the
+  observed native failures or approve production. Earlier passes below do not
+  qualify beta.4.
 
 ### October 12 Qualification (Historical)
 
