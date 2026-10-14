@@ -1,4 +1,4 @@
-name: wdk-rln-013-qualification
+name: wdk-rln-017-qualification
 services:
   bitcoind:
     build:
@@ -38,7 +38,7 @@ services:
       - --electrum-rpc-addr=0.0.0.0:50001
       - --db-dir=/data
     ports: ["127.0.0.1:29302:3002"]
-    volumes: ["indexer015:/data"]
+    volumes: ["indexer017:/data"]
     depends_on:
       bitcoind:
         condition: service_healthy
@@ -59,7 +59,7 @@ services:
       - --db-dir=/data
       - --skip-block-download-wait
     ports: ["127.0.0.1:29401:50001"]
-    volumes: ["electrs015:/data", "./electrs.toml:/config/electrs.toml:ro"]
+    volumes: ["electrs017:/data", "./electrs.toml:/config/electrs.toml:ro"]
     depends_on:
       bitcoind:
         condition: service_healthy
@@ -125,7 +125,7 @@ services:
         condition: service_healthy
 volumes:
   bitcoin:
-  indexer015:
-  electrs015:
+  indexer017:
+  electrs017:
   rln:
   lsp:

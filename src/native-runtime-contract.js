@@ -6,7 +6,7 @@ export const REQUIRED_NATIVE_RUNTIME = Object.freeze({
   rln_version: '0.17.0-beta.3',
   rln_commit: 'ecc69f20308231400561f6f060fea88acfa40cc4',
   lightning_commit: '79b9eb5166546c62692d3a672986f385c7fe047d',
-  adapter_sha256: 'a091d7d81831702f2b1a1479d32614f3ee17dae248318e98cbf8dadd00d211d9'
+  adapter_sha256: 'bbec56a1ef9c05feb9d50a9edab556837be872f482bf1183493a4f449f45275d'
 })
 const CAPABILITIES = ['canonical-unlock-v1', 'persistent-native-signer', 'refresh-transfers-v1', 'apay-address', 'decoded-invoice-cltv', 'tagged-rgb-assignment', 'pending-blinded-v1', 'rgb-contract-import-v1', 'rgb-transfer-metadata-import-v1', 'consignment-export-v1', 'mainnet-lightning-rejection-v1', 'external-signer-eth-rpc-v1', 'external-signer-burn-v1']
 

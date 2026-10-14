@@ -33,8 +33,7 @@ try {
     run('docker', [...compose, 'build', '--build-arg', `CARGO_BUILD_JOBS=${buildJobs}`, service])
   }
   const rln = checkout('rln', 'https://github.com/UTEXO-Protocol/rgb-lightning-node.git', 'ecc69f20308231400561f6f060fea88acfa40cc4', true)
-  fs.copyFileSync(path.join(here, 'source-credential.sh'), path.join(rln, 'source-credential.sh'))
-  run('docker', ['build', '--build-arg', `CARGO_BUILD_JOBS=${buildJobs}`, '--secret', 'id=org_read_token,env=ORG_READ_TOKEN', '-f', path.join(here, 'Rln.Dockerfile'), '-t', 'wdk-qualification/rln:0.17.0-beta.3', rln])
+  run('docker', ['build', '--build-arg', `CARGO_BUILD_JOBS=${buildJobs}`, '--secret', 'id=org_read_token,env=ORG_READ_TOKEN', '--secret', `id=source_credential,src=${path.join(here, 'source-credential.sh')}`, '-f', path.join(here, 'Rln.Dockerfile'), '-t', 'wdk-qualification/rln:0.17.0-beta.3', rln])
   if (!onchainOnly) {
     const lspCommit = 'b865c8868e202ba90055d4924382eada62c52cd6'
     const lsp = checkout('lsp', 'https://github.com/UTEXO-Protocol/utexo-lsp.git', lspCommit)

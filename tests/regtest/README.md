@@ -33,8 +33,9 @@ select Esplora with `RGB_INDEXER_URL=http://127.0.0.1:29302`.
 The latest explorer release has upstream dependency advisories, including critical
 ones. It is a loopback-only disposable test tool, not production infrastructure.
 All credentials in Compose are public test fixtures. Never expose these ports,
-reuse these credentials, or deploy this Compose file on a public host. The RLN
-HTTP daemon intentionally has authentication disabled only in this local fixture.
+reuse these credentials, or deploy this Compose file on a public host. The dedicated `wdk-rln-017-qualification` project uses new versioned indexer
+volumes; it does not reuse, migrate or remove earlier qualification volumes.
+The RLN HTTP daemon intentionally has authentication disabled only in this local fixture.
 Its internal LSP/APay requests use an explicit test-only bearer token.
 
 ## Setup
@@ -60,7 +61,8 @@ npm run test:regtest:reopen
 
 Use Bare >=1.33.0 for the WDK dependency graph. Setup requires `ORG_READ_TOKEN`
 with read access to the three private upstream BFA repos, passed only via a
-BuildKit secret. Setup builds the exact pinned daemon from a clean checkout. Without
+BuildKit secret. The helper script is also a BuildKit secret mount, so
+upstream Docker ignore rules cannot omit it and it is not copied into image layers. Setup builds the exact pinned daemon from a clean checkout. Without
 `--onchain-only`, it also builds the pinned LSP. Rust Docker builds default to
 two jobs (`CARGO_BUILD_JOBS` may select a positive integer); service image builds
 run serially to keep memory use bounded on a development VM. For an on-chain-only

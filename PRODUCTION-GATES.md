@@ -11,7 +11,7 @@ October 14 source upgrade: WDK requires RLN `v0.17.0-beta.3`
 `79b9eb5166546c62692d3a672986f385c7fe047d`, rgb-lib
 `v0.3.0-beta.50-bfa` (`1b951af0c8233308c919975552487be19ad2a930`), and the
 shared native adapter
-`a091d7d81831702f2b1a1479d32614f3ee17dae248318e98cbf8dadd00d211d9`.
+`bbec56a1ef9c05feb9d50a9edab556837be872f482bf1183493a4f449f45275d`.
 WDK and exact native peers are unpublished `0.2.0-beta.4` candidates. The
 compiled runtime version is `0.17.0-beta.3`. The existing branch name is retained.
 
@@ -51,9 +51,22 @@ A beta.50 version number alone does not close a native behavior or security gate
   Selected normal/build dependency reachability and disposition are pending;
   lock-wide counts are not a statement that all ten are selected or reachable.
   D01 remains open. The October 9 five-finding audit below is historical.
-- The beta.50 Rust issuer build, native artifacts, packed native consumers,
-  funded/recovery and app/device qualification are pending completion. Earlier
-  passes below do not qualify beta.4.
+- The test-only beta.50 Rust issuer builds successfully with Rust 1.94.0,
+  `--locked --release`, two jobs and a separate target directory (6m 22s).
+  Executable SHA-256: `a6f6d837a4cca94ed7770a15ab3d3b3317b67a9254c8fcc8f5674396b9c4d351`;
+  issuer lock SHA-256: `a143ff86b80c6d730a23e0aea2a51e4e210453aaf2a4270d982fa27f8c9bb373`.
+  Compilation is not a funded BFA acceptance result.
+- Earlier [WDK source CI](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/actions/runs/38535330952)
+  passed at `ffc21385cf4b507428e0efe0b9c5eca9ffd0d82c` with the first beta.4
+  adapter identity; final-source CI is tracked separately after the build-profile
+  correction. It is not a native packed-consumer result.
+- The final adapter binds a reproducible native build-profile correction for
+  Rust 1.94 proc-macro loading on macOS 27: compile-time build dependencies use
+  `strip = "none"`; final library stripping and Android protection gates are
+  unchanged. C-FFI/source behavior and the WDK API are unchanged. Exact adapter
+  provenance still changes, and older beta.4 artifacts are rejected.
+- Native artifacts, packed native consumers, funded/recovery and app/device
+  qualification are pending completion. Earlier passes below do not qualify beta.4.
 
 ### October 12 Qualification (Historical)
 
@@ -175,7 +188,7 @@ alone is not evidence of an unauthenticated TCP endpoint in this integration.
 
 | ID | Gate | Evidence / required decision |
 | --- | --- | --- |
-| D01 | Native dependency security review | RustSec refreshed October 9 to `7eebec69c352c7191b1f13eb95dd510eeca5d1de`. Both locks still report five vulnerabilities. rkyv/rsa are absent from the selected normal/build graph. `rustls-webpki 0.101.7` is selected through minreq/esplora-client. The inspected minreq server-certificate path supplies no CRLs, so the CRL parsing advisory is not shown reachable there. URI/wildcard name-constraint advisories still require documented security disposition or an approved correction. There are also three unmaintained-crate warnings and two yanked lock entries; selected `chacha20 0.10.1` needs disposition. A clean npm audit does not close native findings. No advisory is suppressed. |
+| D01 | Native dependency security review | Current October 14 lock audits report ten vulnerabilities each; selected graph reachability/disposition is pending, as recorded above. Historical October 9 audit at `7eebec69c352c7191b1f13eb95dd510eeca5d1de` reported five vulnerabilities in each earlier lock. rkyv/rsa are absent from the selected normal/build graph. `rustls-webpki 0.101.7` is selected through minreq/esplora-client. The inspected minreq server-certificate path supplies no CRLs, so the CRL parsing advisory is not shown reachable there. URI/wildcard name-constraint advisories still require documented security disposition or an approved correction. There are also three unmaintained-crate warnings and two yanked lock entries; selected `chacha20 0.10.1` needs disposition. A clean npm audit does not close native findings. No advisory is suppressed. |
 | D02 | Redistribution and notices | Private-source read access is resolved. It is not redistribution approval. Review licenses/notices for the exact selected native graph and approve distribution of the bundled binaries. Dependency metadata is retained locally for this review. |
 | D03 | Final artifacts and publication | Review exact final tarballs, hashes, provenance and supported runtime floors, then approve registry versions/dist-tags and publication order: Node/Bare peers before WDK. No registry publication, tag or merge is authorized by a successful test. |
 

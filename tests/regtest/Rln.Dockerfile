@@ -5,10 +5,11 @@ WORKDIR /src
 COPY . .
 ARG CARGO_BUILD_JOBS=2
 RUN --mount=type=secret,id=org_read_token,required=true \
+    --mount=type=secret,id=source_credential,target=/run/source-credential.sh,required=true \
     CARGO_NET_GIT_FETCH_WITH_CLI=true \
     GIT_CONFIG_COUNT=3 \
     GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= \
-    GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!sh /src/source-credential.sh' \
+    GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1='!sh /run/source-credential.sh' \
     GIT_CONFIG_KEY_2=credential.useHttpPath GIT_CONFIG_VALUE_2=true \
     cargo build --release --locked --bin rgb-lightning-node -j "$CARGO_BUILD_JOBS"
 FROM node:22-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37
