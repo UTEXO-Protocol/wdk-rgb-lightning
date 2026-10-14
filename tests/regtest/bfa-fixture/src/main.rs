@@ -2,9 +2,50 @@ use rgb_lib::keys::{generate_keys, WitnessVersion};
 use rgb_lib::wallet::{
     DatabaseType, OnlineOptions, Recipient, RgbWalletOpsOnline, SinglesigKeys, Wallet, WalletData,
 };
-use rgb_lib::{AssetSchema, BitcoinNetwork};
+use rgb_lib::{AssetSchema, BitcoinNetwork, FileContent, RgbTransfer};
+use schemata::{MS_BURNED_ASSET, MS_BURN_RECIPIENT, TS_BURN};
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
+
+// Read public proof metadata without importing it or treating it as consensus validation.
+fn inspect_burn(path: &str) -> Result<Value, Box<dyn std::error::Error>> {
+    let consignment = RgbTransfer::load_file(path)?;
+    let burns: Vec<_> = consignment
+        .bundles
+        .iter()
+        .flat_map(|anchored| anchored.bundle.known_transitions.iter())
+        .filter(|known| known.transition.transition_type == TS_BURN)
+        .collect();
+    if burns.len() != 1 {
+        return Err("fresh burn fixture proof must contain exactly one burn transition".into());
+    }
+    let burn = burns[0];
+    let amount_bytes = burn
+        .transition
+        .metadata
+        .get(&MS_BURNED_ASSET)
+        .ok_or("missing burned-asset metadata")?
+        .as_unconfined()
+        .as_slice();
+    let amount = u64::from_le_bytes(amount_bytes.try_into()?);
+    let recipient = burn
+        .transition
+        .metadata
+        .get(&MS_BURN_RECIPIENT)
+        .ok_or("missing burn-recipient metadata")?
+        .as_unconfined()
+        .as_slice();
+    if recipient.len() != 32 {
+        return Err("burn recipient must contain 32 bytes".into());
+    }
+    Ok(json!({
+        "asset_id": burn.transition.contract_id.to_string(),
+        "opid": format!("{:x}", burn.opid),
+        "amount": amount.to_string(),
+        "burn_recipient": recipient,
+        "consensus_validated": false,
+    }))
+}
 
 // Test issuer only. Keys never leave this process; all funds are disposable regtest funds.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -33,6 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .to_owned())
             };
             match request["method"].as_str().ok_or("method required")? {
+                "inspect_burn" => inspect_burn(&text("consignment")?),
                 "address" => Ok(json!(wallet.get_address()?)),
                 "online" => {
                     online = Some(wallet.go_online(OnlineOptions {

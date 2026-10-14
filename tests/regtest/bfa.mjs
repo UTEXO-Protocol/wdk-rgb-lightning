@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { spawn, execFileSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { WalletProcess, mine, prepareChain, rpc, until } from './harness.mjs'
@@ -15,6 +16,9 @@ assert.ok(fs.statSync(binary).isFile(), 'BFA_FIXTURE_BIN must be a built executa
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wdk-bfa-'))
 fs.chmodSync(root, 0o700)
 const runtime = process.argv.includes('--bare') ? 'bare' : 'node'
+const burnEnabled = process.argv.includes('--burn')
+// Explicit public Anvil recipient, left-padded to the BFA 32-byte payout target.
+const burnRecipient = '0'.repeat(24) + 'f39fd6e51aad88f6f4ce6ab8827279cfffb92266'
 const results = []
 const wallets = []
 let sequence = 0
@@ -175,12 +179,92 @@ try {
     assert.equal(raw.bytes_hex, fs.readFileSync(location.path).toString('hex'))
     return sent
   })
+  let aliceRemaining = 975
+  let burnEvidence
+  if (burnEnabled) {
+    burnEvidence = await step('one BFA burn, exact amount, confirmed transaction and public proof', async () => {
+      const before = await alice.call('getAssetBalance', [asset.asset_id])
+      assert.deepEqual(before, { settled: 975, future: 975, spendable: 975 })
+      assert.equal((await alice.call('listTransfers', [asset.asset_id])).filter(item => item.kind === 'Burn').length, 0)
+      // This is the only burn submission. Uncertain outcomes fail without replay.
+      const burned = await alice.call('burnAsset', [{
+        asset_id: asset.asset_id,
+        amount: '100',
+        burn_recipient: burnRecipient,
+        fee_rate: 2,
+        min_confirmations: 1
+      }])
+      assert.match(burned.txid, /^[a-f0-9]{64}$/)
+      assert.ok(Number.isInteger(burned.batch_transfer_idx) && burned.batch_transfer_idx > 0)
+      await mine()
+      const transfer = await until('single BFA burn settled', async () => {
+        await alice.call('refreshTransfers', [{ skip_sync: false }])
+        const items = (await alice.call('listTransfers', [asset.asset_id, burned.txid])).filter(item => item.kind === 'Burn')
+        assert.equal(items.length, 1)
+        return items[0].status === 'Settled' && items[0]
+      })
+      assert.equal(transfer.txid, burned.txid)
+      assert.equal(transfer.requested_assignment, 'Fungible(100)')
+      assert.equal((await alice.call('listTransfers', [asset.asset_id])).filter(item => item.kind === 'Burn').length, 1)
+      const transaction = await rpc('getrawtransaction', [burned.txid, true])
+      assert.equal(transaction.txid, burned.txid)
+      assert.ok(transaction.confirmations >= 1)
+      assert.ok(transaction.vout.some(output => output.scriptPubKey.type === 'nulldata'))
+      const aliceBalance = await alice.call('getAssetBalance', [asset.asset_id])
+      const bobBalance = await bob.call('getAssetBalance', [asset.asset_id])
+      assert.deepEqual(aliceBalance, { settled: 875, future: 875, spendable: 875 })
+      assert.deepEqual(bobBalance, { settled: 25, future: 25, spendable: 25 })
+      const exported = await alice.call('getConsignment', [asset.asset_id, burned.txid])
+      const raw = await alice.call('getConsignment', [asset.asset_id, burned.txid], 'native')
+      const location = await alice.call('getConsignmentPath', [asset.asset_id, burned.txid], 'native')
+      assert.match(exported.bytes_hex, /^(?:[a-f0-9]{2})+$/)
+      assert.equal(exported.bytes_hex, raw.bytes_hex)
+      assert.equal(raw.bytes_hex, fs.readFileSync(location.path).toString('hex'))
+      const bytes = Buffer.from(exported.bytes_hex, 'hex')
+      const publicProofPath = path.join(root, 'burn-consignment.rgb')
+      fs.writeFileSync(publicProofPath, bytes, { mode: 0o600 })
+      const proof = await fixture('inspect_burn', { consignment: publicProofPath })
+      assert.equal(proof.asset_id, asset.asset_id)
+      assert.match(proof.opid, /^[a-f0-9]{64}$/)
+      assert.equal(proof.amount, '100')
+      assert.equal(Buffer.from(proof.burn_recipient).toString('hex'), burnRecipient)
+      assert.equal(proof.consensus_validated, false)
+      const evidence = {
+        asset_id: asset.asset_id,
+        ...burned,
+        opid: proof.opid,
+        amount: proof.amount,
+        burn_recipient: burnRecipient,
+        transfer,
+        bitcoin_transaction: transaction,
+        alice_balance: aliceBalance,
+        bob_balance: bobBalance,
+        proof_file: publicProofPath,
+        proof_bytes: bytes.length,
+        proof_sha256: createHash('sha256').update(bytes).digest('hex'),
+        independent_consensus_validated: false,
+        evm_payout_verified: false
+      }
+      fs.writeFileSync(path.join(root, 'burn-public-evidence.json'), JSON.stringify(evidence, null, 2), { mode: 0o600 })
+      aliceRemaining = 875
+      return evidence
+    })
+  }
   await step('BFA balances survive cold process restart', async () => {
-    for (const [wallet, amount] of [[alice, 975], [bob, 25]]) {
+    for (const [wallet, amount] of [[alice, aliceRemaining], [bob, 25]]) {
       await wallet.crashRestart()
       assert.equal((await wallet.call('getAssetBalance', [asset.asset_id])).settled, amount)
       await wallet.call('refreshTransfers', [{ skip_sync: false }])
       assert.equal((await wallet.call('getAssetBalance', [asset.asset_id])).spendable, amount)
+    }
+    if (burnEvidence) {
+      const after = await alice.call('getConsignment', [asset.asset_id, burnEvidence.txid])
+      assert.equal(createHash('sha256').update(Buffer.from(after.bytes_hex, 'hex')).digest('hex'), burnEvidence.proof_sha256)
+      const burns = (await alice.call('listTransfers', [asset.asset_id])).filter(item => item.kind === 'Burn')
+      assert.equal(burns.length, 1)
+      assert.equal(burns[0].txid, burnEvidence.txid)
+      assert.equal(burns[0].requested_assignment, 'Fungible(100)')
+      assert.equal(burns[0].status, 'Settled')
     }
   })
   const cases = [

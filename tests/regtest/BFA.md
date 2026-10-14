@@ -78,6 +78,30 @@ transfer history, exact consignment bytes and cold process restart. Mints with
 no matching lock or only wrong-amount locks must fail without crediting funds.
 The fixed RPC endpoints must be local; the test checks both chain identities.
 
+## Optional On-Chain Burn Lane
+
+```sh
+node tests/regtest/bfa.mjs --burn
+BARE_BIN=/absolute/path/to/bare node tests/regtest/bfa.mjs --bare --burn
+```
+
+After the normal 1,000-unit mint and 25-unit witness send, this lane submits one
+100-unit burn with an explicit public Anvil recipient. It verifies the confirmed
+Bitcoin transaction, one settled burn record, exact 875/25 remaining balances,
+and identical WDK/native/on-disk consignment bytes. A read-only beta.50 helper
+decodes the exported proof's asset ID, burn OpId, exact u64 amount and committed
+32-byte recipient. The burn API exposes no operation-ID input; the actual OpId
+is read from the proof. No uncertain outcome is automatically retried.
+
+Cold process restart must preserve balances, one burn record and the exact proof
+hash. The retained evidence contains `burn-consignment.rgb` and
+`burn-public-evidence.json`; those specific files contain public proof/transaction
+data. The surrounding evidence directory also contains private wallet state and
+must never be uploaded wholesale. Metadata inspection is not independent BFA
+consensus validation or EVM payout qualification; its evidence records both as
+unverified. The default and `--probe-event-selection` acceptance checks remain
+unchanged, and the two flags may be combined.
+
 ## Event-Selection Acceptance Test
 
 ```sh

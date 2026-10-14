@@ -4864,6 +4864,7 @@ name = "wdk-bfa-fixture"
 version = "0.1.0"
 dependencies = [
  "rgb-lib",
+ "rgb-schemas",
  "serde_json",
 ]
 
