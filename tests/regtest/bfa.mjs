@@ -184,7 +184,7 @@ try {
   if (burnEnabled) {
     burnEvidence = await step('one BFA burn, exact amount, confirmed transaction and public proof', async () => {
       const before = await alice.call('getAssetBalance', [asset.asset_id])
-      assert.deepEqual(before, { settled: 975, future: 975, spendable: 975 })
+      assert.deepEqual(before, { settled: 975, future: 975, spendable: 975, offchain_inbound: 0, offchain_outbound: 0 })
       assert.equal((await alice.call('listTransfers', [asset.asset_id])).filter(item => item.kind === 'Burn').length, 0)
       // This is the only burn submission. Uncertain outcomes fail without replay.
       const burned = await alice.call('burnAsset', [{
@@ -212,8 +212,8 @@ try {
       assert.ok(transaction.vout.some(output => output.scriptPubKey.type === 'nulldata'))
       const aliceBalance = await alice.call('getAssetBalance', [asset.asset_id])
       const bobBalance = await bob.call('getAssetBalance', [asset.asset_id])
-      assert.deepEqual(aliceBalance, { settled: 875, future: 875, spendable: 875 })
-      assert.deepEqual(bobBalance, { settled: 25, future: 25, spendable: 25 })
+      assert.deepEqual(aliceBalance, { settled: 875, future: 875, spendable: 875, offchain_inbound: 0, offchain_outbound: 0 })
+      assert.deepEqual(bobBalance, { settled: 25, future: 25, spendable: 25, offchain_inbound: 0, offchain_outbound: 0 })
       const exported = await alice.call('getConsignment', [asset.asset_id, burned.txid])
       const raw = await alice.call('getConsignment', [asset.asset_id, burned.txid], 'native')
       const location = await alice.call('getConsignmentPath', [asset.asset_id, burned.txid], 'native')
@@ -258,7 +258,17 @@ try {
       assert.equal((await wallet.call('getAssetBalance', [asset.asset_id])).spendable, amount)
     }
     if (burnEvidence) {
+      assert.deepEqual(await alice.call('getAssetBalance', [asset.asset_id]), {
+        settled: 875, future: 875, spendable: 875, offchain_inbound: 0, offchain_outbound: 0
+      })
+      assert.deepEqual(await bob.call('getAssetBalance', [asset.asset_id]), {
+        settled: 25, future: 25, spendable: 25, offchain_inbound: 0, offchain_outbound: 0
+      })
       const after = await alice.call('getConsignment', [asset.asset_id, burnEvidence.txid])
+      const raw = await alice.call('getConsignment', [asset.asset_id, burnEvidence.txid], 'native')
+      const location = await alice.call('getConsignmentPath', [asset.asset_id, burnEvidence.txid], 'native')
+      assert.equal(after.bytes_hex, raw.bytes_hex)
+      assert.equal(raw.bytes_hex, fs.readFileSync(location.path).toString('hex'))
       assert.equal(createHash('sha256').update(Buffer.from(after.bytes_hex, 'hex')).digest('hex'), burnEvidence.proof_sha256)
       const burns = (await alice.call('listTransfers', [asset.asset_id])).filter(item => item.kind === 'Burn')
       assert.equal(burns.length, 1)
