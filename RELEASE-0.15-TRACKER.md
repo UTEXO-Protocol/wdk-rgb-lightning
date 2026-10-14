@@ -26,7 +26,18 @@ Exact adapter identity and fresh verification results are recorded in
 [PRODUCTION-GATES.md](./PRODUCTION-GATES.md). October 12 and earlier results
 below are historical, scoped to their recorded graph. Existing failures and
 open gates require independent exact-source requalification; none is erased
-by upgrading sources or rebuilding artifacts.
+by upgrading sources or rebuilding artifacts. Both exact-core beta.50 wrappers
+freshly reproduce P01 (same-process signer database lock), P03 (stale settled
+RGB after disconnection), P04 (pending witness double-counting) and P06 (earlier
+wrong lock defeats a later valid BFA lock). Bare also reproduces P02 at 100ms
+and in a clean widened interrupted-send run at 10ms, despite other timing passes.
+The final Node pre-loader correction (`3647ddc8` wrapper / `07c989d1` recipe)
+is rebuilt and independently requalified on the macOS ARM64 host: 13 serial
+cases produce nine passes and the same four failures. Its seven interrupted-
+send delays pass without closing Bare's 10ms failure. Ordinary funded
+mint/send/burn, independent burn-proof validation and bounded disk-full
+passes on both wrappers do not close these gates. Exact logs, security
+reachability and boundaries remain in the production-gate register.
 
 ## October 12 Core Burn Upgrade (Historical)
 

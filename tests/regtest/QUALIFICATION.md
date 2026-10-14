@@ -1,5 +1,10 @@
 # Released-Runtime Qualification: 2026-09-24
 
+This report is historical. Current RLN `v0.17.0-beta.3` / rgb-lib beta.50-bfa
+qualification and remaining failures are recorded in
+[PRODUCTION-GATES.md](../../PRODUCTION-GATES.md#october-14-qualification).
+Later source upgrades do not replace the graph recorded below.
+
 Candidate: all three packages `0.2.0-beta.1`, targeting RLN
 `af03c7f1a65135a429f05a5820600338215954dc` / `v0.13.0-beta.3`.
 See [stack and commands](./README.md). This is a fresh-wallet, VSS-disabled,

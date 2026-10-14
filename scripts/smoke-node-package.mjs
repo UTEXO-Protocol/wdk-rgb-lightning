@@ -146,6 +146,8 @@ try {
     import { WebRgbProvider } from '${packageJson.name}/webrgb'
     import { smokeWalletPolicy } from ${JSON.stringify(path.join(rootDir, 'scripts/smoke-wallet-policy.mjs'))}
 
+    console.log('Packed Node runtime: ' + process.version + ' ' + process.platform + '/' + process.arch)
+
     const metadata = (
       await import('${packageJson.name}/package', {
         with: { type: 'json' }

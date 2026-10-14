@@ -75,7 +75,10 @@ try {
   `
   const smokePath = path.join(temporaryRoot, 'smoke.mjs')
   writeFileSync(smokePath, program)
-  run(process.execPath, [path.join(temporaryRoot, 'node_modules/bare-runtime/bin/bare'), smokePath], { cwd: temporaryRoot })
+  const bareLauncher = path.join(temporaryRoot, 'node_modules/bare-runtime/bin/bare')
+  console.log('Packed Bare CLI runtime version:')
+  run(process.execPath, [bareLauncher, '--version'], { cwd: temporaryRoot })
+  run(process.execPath, [bareLauncher, smokePath], { cwd: temporaryRoot })
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true })
 }

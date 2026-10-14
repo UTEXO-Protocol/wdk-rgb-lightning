@@ -1,4 +1,11 @@
-# BFA Source Candidate
+# BFA Qualification History
+
+Current unpublished candidate: `0.2.0-beta.4`, RLN `v0.17.0-beta.3` and
+rgb-lib beta.50-bfa. Exact current funded, burn-proof and event-order results
+are in [PRODUCTION-GATES.md](./PRODUCTION-GATES.md#october-14-qualification).
+The dated beta.3 evidence below retains its original graph and scope.
+
+## Historical BFA Source Candidate
 
 Branch: `release/rln-0.15.0-beta.3` in WDK, Node.js and Bare.
 Candidate package version: `0.2.0-beta.3`. Not published or approved for production.
@@ -15,7 +22,7 @@ independent proof validation now pass. Separate fresh contract-import and
 asset-bound invoice checks also pass, including amount-omitted `Any`. The first
 mint to that bound `Any` invoice settles 1,000,000 BFA units and preserves the
 same settled/spendable/token balances across a separate-process reopen.
-See the [dated current qualification](./RELEASE-0.15-TRACKER.md#october-12-native-and-app-qualification-follow-up)
+See the [dated October 12 qualification](./RELEASE-0.15-TRACKER.md#october-12-native-and-app-qualification-follow-up)
 for exact identities and scope. The earlier funded sequence used an unbound
 invoice; the later host first-mint check is separately qualified. A subsequent
 actual Android 16-KiB first receipt after contract bootstrap settles exactly
