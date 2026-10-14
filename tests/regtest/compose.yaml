@@ -64,7 +64,7 @@ services:
       bitcoind:
         condition: service_healthy
   rln:
-    image: wdk-qualification/rln:0.15.0-beta.3
+    image: wdk-qualification/rln:0.17.0-beta.3
     profiles: ["lsp"]
     command: ["/data", "--network", "regtest", "--daemon-listening-port", "3001", "--ldk-peer-listening-port", "9735", "--disable-authentication", "--reuse-addresses", "--lsp-base-url", "http://lsp:8080", "--lsp-bearer-token", "disposable-local-apay-only"]
     ports: ["127.0.0.1:29301:3001", "127.0.0.1:29735:9735"]

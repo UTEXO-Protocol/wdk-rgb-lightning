@@ -5,9 +5,14 @@ channels, or unmerged upstream behavior patches are used. These tests exercise
 the real WDK and native packages, not the Jest mocks. Run scenarios serially:
 they share a chain, service volumes and fixed loopback ports.
 
+These services are isolated qualification tooling for funded, reorg and fault
+scenarios. Other projects should use the separately provisioned shared Utexo
+stand and its consumer documentation. Never run chain-rewind, state-reset or
+adverse-recovery scenarios against that shared stand.
+
 ## Pinned Stack
 
-Base services selected on 2026-09-24; RLN source updated on 2026-10-07.
+Base services selected on 2026-09-24; RLN source updated on 2026-10-14.
 This is a reproducible local stack, not a claim
 that a remotely deployed LSP runs the same commit.
 
@@ -17,7 +22,7 @@ that a remotely deployed LSP runs the same commit.
 | RGB Electrum | romanz/electrs 0.12.0, 37501cc4b94aea99e50670a6524fa3ad4ac9aabb | TCP 127.0.0.1:29401 |
 | Esplora | mempool/electrs 3.3.0, image digest pinned | HTTP 127.0.0.1:29302 |
 | RGB proxy | 0.3.0, image digest pinned | HTTP 127.0.0.1:29300 |
-| RLN | 0.15.0-beta.3 plus merged #192, a17b685615750536f0320db1cd3f3ba68a8f1c57 | HTTP 127.0.0.1:29301 |
+| RLN | v0.17.0-beta.3, ecc69f20308231400561f6f060fea88acfa40cc4 | HTTP 127.0.0.1:29301 |
 | LSP | main b865c8868e202ba90055d4924382eada62c52cd6; no release tag | HTTP 127.0.0.1:29380 |
 | Explorer | btc-rpc-explorer 3.5.1, 8ed77ab225f5507c521b570d5240624de597ad44 | HTTP 127.0.0.1:29303 |
 
@@ -55,8 +60,11 @@ npm run test:regtest:reopen
 
 Use Bare >=1.33.0 for the WDK dependency graph. Setup requires `ORG_READ_TOKEN`
 with read access to the three private upstream BFA repos, passed only via a
-BuildKit secret. Setup builds the released daemon
-and pinned LSP from clean checkouts when public container images are unavailable.
+BuildKit secret. Setup builds the exact pinned daemon from a clean checkout. Without
+`--onchain-only`, it also builds the pinned LSP. Rust Docker builds default to
+two jobs (`CARGO_BUILD_JOBS` may select a positive integer); service image builds
+run serially to keep memory use bounded on a development VM. For an on-chain-only
+run, use `npm run regtest:up -- --onchain-only` and omit the LSP scenarios.
 It does not patch their runtime behavior. The LSP scenario issues its own fixture
 asset, updates only this Compose project's LSP asset allowlist, and leaves the
 service running. Each wallet gets a new random seed and owner-only test directory.

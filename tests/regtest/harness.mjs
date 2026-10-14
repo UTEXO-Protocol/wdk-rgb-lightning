@@ -211,7 +211,7 @@ export class WalletProcess {
       ...unlockExtra
     }
     const result = await this.call('init', [this.config, this.seed, this.unlock], 'control')
-    assert.equal(result.runtime.rln_commit, '8777d71d7781b408fcce89c9c965ae29e8ad2300')
+    assert.equal(result.runtime.rln_commit, 'ecc69f20308231400561f6f060fea88acfa40cc4')
     assert.equal(result.network.network.toLowerCase(), 'regtest')
     assert.equal(result.node.channel_asset_max_amount, '18446744073709551615')
     this.pubkey = result.node.pubkey

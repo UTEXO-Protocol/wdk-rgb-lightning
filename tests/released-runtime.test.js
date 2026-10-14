@@ -165,13 +165,32 @@ describe('released account boundaries', () => {
       expect(create).not.toHaveBeenCalled()
     } finally { spy.mockRestore(); create.mockRestore() }
   })
-  it.each([
-    { rln_commit: 'a17b685615750536f0320db1cd3f3ba68a8f1c57' },
-    { lightning_commit: '6d6d061f840264296e7de2b1c64dac6c0dd7eb26' },
-    { adapter_sha256: '93d62bb91c0ab90a7ccc4a1382a9da84498e38506170ce74d3863292f0c9f2f4' }
-  ])('rejects stale native identity even when burn is advertised: %p', stale => {
-    const spy = jest.spyOn(rln, 'getRuntimeInfo').mockReturnValue({ ...rln.getRuntimeInfo(), ...stale })
-    try { expect(() => new NodeRgbLightningBinding({ dataDir: '/unused', network: 'regtest' })).toThrow('Incompatible') } finally { spy.mockRestore() }
+  it.each([NodeRgbLightningBinding, BareRgbLightningBinding])('rejects the preceding release graph before creating %p handles', Binding => {
+    const native = Binding === NodeRgbLightningBinding ? rln : bare
+    const runtime = native.getRuntimeInfo()
+    const create = jest.spyOn(native.SdkNode, 'create')
+    const spy = jest.spyOn(native, 'getRuntimeInfo')
+    try {
+      for (const stale of [
+        { abi_version: 0 },
+        { rln_version: '0.15.0-beta.3' },
+        { rln_commit: '8777d71d7781b408fcce89c9c965ae29e8ad2300' },
+        { lightning_commit: 'fc5c4c64db36a9b6aa8cd878ca1225a977e67106' },
+        { adapter_sha256: 'f6d2959e1ceff0400cbd372759c4957cd5a52964f4ec646a79ee15c21b2291c0' }
+      ]) {
+        spy.mockReturnValue({ ...runtime, ...stale })
+        expect(() => new Binding({ dataDir: '/unused', network: 'regtest' }))
+          .toThrow(expect.objectContaining({ code: 'ERR_RLN_RUNTIME_MISMATCH' }))
+      }
+      for (const key of ['abi_version', 'rln_version', 'rln_commit', 'lightning_commit', 'adapter_sha256']) {
+        const incomplete = { ...runtime }
+        delete incomplete[key]
+        spy.mockReturnValue(incomplete)
+        expect(() => new Binding({ dataDir: '/unused', network: 'regtest' }))
+          .toThrow(expect.objectContaining({ code: 'ERR_RLN_RUNTIME_MISMATCH' }))
+      }
+      expect(create).not.toHaveBeenCalled()
+    } finally { spy.mockRestore(); create.mockRestore() }
   })
   it('rejects fee caps before obtaining a native node', async () => {
     const binding = { ensureNode: jest.fn() }

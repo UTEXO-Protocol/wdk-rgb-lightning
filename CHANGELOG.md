@@ -8,6 +8,19 @@ while pre-`1.0`.
 
 ## [Unreleased]
 
+### 0.2.0-beta.4 Candidate
+
+- Target the exact RLN `v0.17.0-beta.3` source `ecc69f20308231400561f6f060fea88acfa40cc4`,
+  compatible rust-lightning `79b9eb5166546c62692d3a672986f385c7fe047d`, and
+  rgb-lib `v0.3.0-beta.50-bfa` (`1b951af0c8233308c919975552487be19ad2a930`).
+- Require exact beta.4 native peers and compiled runtime provenance before handle
+  creation. Reject the preceding graph even when its capability list matches.
+- Refresh isolated qualification tooling to the same RLN/rgb-lib graph. Preserve
+  the existing on-chain API and Iris's on-chain-only scope. No new BFA Lightning
+  API, registry publication, release tag or merge is included.
+- Retain dated beta.3 evidence and unresolved production gates; a source upgrade
+  or a passing mock suite does not qualify native settlement or recovery.
+
 ### 0.2.0-beta.3 Candidate
 
 - Require merged RLN `8777d71d7781b408fcce89c9c965ae29e8ad2300`, including

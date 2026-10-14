@@ -27,18 +27,23 @@ RLN rejects **issuance and inflation in external-signer mode**, which this
 module always uses. Issue assets in a separate on-chain wallet, such as
 [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], then transfer them to this wallet.
 
-> Status: unpublished `0.2.0-beta.3` candidate with merged RLN dev through PR #200.
+> Status: unpublished `0.2.0-beta.4` candidate targeting RLN `v0.17.0-beta.3`.
 > Not approved for production rollout. See [RELEASE-0.15-TRACKER.md](./RELEASE-0.15-TRACKER.md).
 > Current verification and release decisions: [PRODUCTION-GATES.md](./PRODUCTION-GATES.md).
 
 ## Upgrade Restrictions
 
-This breaking line requires both runtime and package identity to match RLN
-`8777d71d7781b408fcce89c9c965ae29e8ad2300`. This includes external-signer burn
-and rgb-lib `v0.3.0-beta.47-bfa` from
-[PR #200](https://github.com/UTEXO-Protocol/rgb-lightning-node/pull/200),
-not the older release binary or a floating `dev` build. Install the exact native
-candidate `0.2.0-beta.3` for your runtime. These versions are not yet published.
+This breaking line requires the exact RLN `v0.17.0-beta.3` source
+`ecc69f20308231400561f6f060fea88acfa40cc4`, rust-lightning
+`79b9eb5166546c62692d3a672986f385c7fe047d`, and rgb-lib
+`v0.3.0-beta.50-bfa` (`1b951af0c8233308c919975552487be19ad2a930`).
+Install the exact native candidate `0.2.0-beta.4` for your runtime. Its compiled
+source, adapter and capabilities are checked before native handles are created;
+an older beta.3 artifact is rejected. These package versions are not yet published.
+
+Upstream's new BFA Lightning support does not change Iris's on-chain-only scope
+or add a WDK BFA channel guarantee. Native artifacts and funded/runtime tests
+must be qualified for this graph; earlier results retain their recorded identity.
 
 This candidate is scoped to fresh wallets: the deployment owner confirmed there
 are no live wallets to migrate. No legacy-wallet migration compatibility is
@@ -49,8 +54,8 @@ after activity.
 There is no snapshot/FullSync overlay, prepared-send/UTXO inventory, native
 operation control, address receipt or VSS delete-all API. Native
 routing fee caps are unavailable and are rejected before payment submission.
-Contract and transfer-consignment metadata import APIs are included in released
-RLN 0.15 (PR #128); no import backport is used. They validate asset identity and
+Contract and transfer-consignment metadata import APIs are included upstream
+(PR #128); no import backport is used. They validate asset identity and
 never credit funds; normal receive/settlement remains required.
 Current overlay-dependent app versions cannot adopt this line unchanged.
 
@@ -63,7 +68,7 @@ preserve `utxo.exists`, including false, and `pending_blinded`. Both are require
 an absent reservation count is not treated as zero. No spendability is inferred
 from absence.
 
-Fresh RLN 0.15 results and release gates are recorded in
+Current RLN 0.17 verification and release gates are recorded in
 [the release tracker](./RELEASE-0.15-TRACKER.md). The earlier
 [qualification report](./tests/regtest/QUALIFICATION.md) records RLN 0.13, not
 qualification of these artifacts. Strict outgoing signing, same-process reopen,
@@ -72,11 +77,12 @@ byte-preserving packaging integration described below; raw `bare-link` output
 is not supported for this candidate.
 Permissive regtest diagnostics are not production qualification.
 
-Released RGB-lib does not revisit settled transfers during refresh: after a
+Earlier qualified RGB-lib graphs did not revisit settled transfers during refresh: after a
 one-confirmation RGB transfer is disconnected by a reorg, `getAssetBalance`
 continues reporting its units as settled/spendable, even after cold restart.
-These fields are **not a reorg-safe current-confirmation guarantee**. This is a
-reproduced upstream limitation, not repaired by this package. The tests do not
+Until exact-source requalification closes P03, these fields are **not a reorg-safe
+current-confirmation guarantee**. The earlier upstream limitation was not
+repaired by this package. The historical tests do not
 demonstrate permanent asset loss or every reorg/conflicting-spend case.
 
 The upgrade does not establish the integrator's zero-channel root cause.
@@ -103,7 +109,7 @@ matrices are not implied by the recorded passes.
 
 ## Mainnet policy and capabilities
 
-RLN 0.15 disables Lightning **on mainnet only**. Account channel, peer, invoice
+RLN disables Lightning **on mainnet only**. Account channel, peer, invoice
 (including BOLT11 decoding), payment, HODL, APay and onion-message methods reject
 with `LightningDisabledError`, code `LIGHTNING_DISABLED_ON_MAINNET`, before
 native execution. Lightning recipients in `transfer` and `quoteTransfer`,
@@ -241,12 +247,12 @@ module-load differs.
 ## Installation
 
 ```sh
-npm install @utexo/wdk-rgb-lightning@0.2.0-beta.3
+npm install @utexo/wdk-rgb-lightning@0.2.0-beta.4
 
 # Plus the native binding matching your runtime (optional peer deps):
-npm install @utexo/rgb-lightning-node-nodejs@0.2.0-beta.3   # Node host
+npm install @utexo/rgb-lightning-node-nodejs@0.2.0-beta.4   # Node host
 # or
-npm install @utexo/rgb-lightning-node-bare@0.2.0-beta.3     # Bare / React Native host
+npm install @utexo/rgb-lightning-node-bare@0.2.0-beta.4     # Bare / React Native host
 ```
 
 Both bindings are declared as **optional** peer dependencies — install only

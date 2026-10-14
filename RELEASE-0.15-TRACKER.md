@@ -1,14 +1,36 @@
-# RLN 0.15 release tracker
+# RLN release tracker (existing 0.15 branch)
 
-Target: `release/rln-0.15.0-beta.3`, branched from `release/rln-0.13.0-beta.3` in WDK, Node.js and Bare. Package candidate: `0.2.0-beta.3`. No npm publication is part of this change.
+Target: `release/rln-0.15.0-beta.3`, branched from `release/rln-0.13.0-beta.3` in WDK, Node.js and Bare. Current package candidate: `0.2.0-beta.4`; current SDK target: `v0.17.0-beta.3`. No npm publication is part of this change.
 
 Current release decisions and the latest verification are maintained
 in [PRODUCTION-GATES.md](./PRODUCTION-GATES.md). Dated historical results below
 retain their original source and scope.
 
-## October 12 Core Burn Upgrade
+## October 14 RLN 0.17 Upgrade
 
-Current source: RLN `8777d71d7781b408fcce89c9c965ae29e8ad2300`, including
+The existing release branch and PR are retained. The new graph is RLN
+`ecc69f20308231400561f6f060fea88acfa40cc4` (`v0.17.0-beta.3`), rust-lightning
+`79b9eb5166546c62692d3a672986f385c7fe047d`, and rgb-lib
+`v0.3.0-beta.50-bfa` / `1b951af0c8233308c919975552487be19ad2a930`.
+WDK and exact native peers advance to the unpublished `0.2.0-beta.4` candidate.
+The runtime version now matches the actual SDK tag. No merge or publication is
+included. No new BFA Lightning API or Iris Lightning feature is enabled.
+
+WDK's fail-closed constructor guard, packed smoke tests, regtest worker and mobile
+qualification fixture all require the new graph. The isolated peer daemon and
+BFA issuer helper are pinned to the same RLN/rgb-lib versions. Qualification
+services use their own ports and volumes; they must not reset or mutate a shared
+consumer stand to make an adverse-recovery test pass.
+
+Exact adapter identity and fresh verification results are recorded in
+[PRODUCTION-GATES.md](./PRODUCTION-GATES.md). October 12 and earlier results
+below are historical, scoped to their recorded graph. Existing failures and
+open gates require independent exact-source requalification; none is erased
+by upgrading sources or rebuilding artifacts.
+
+## October 12 Core Burn Upgrade (Historical)
+
+October 12 source: RLN `8777d71d7781b408fcce89c9c965ae29e8ad2300`, including
 external-signer burn and rgb-lib beta.47-bfa. The native candidate still reports
 `rln_version: 0.15.0-beta.3`; exact commit/adapter identity, not that version
 label alone, selects this build. Node/Bare/WDK package versions stay

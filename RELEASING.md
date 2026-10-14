@@ -6,11 +6,12 @@ GitHub release.
 
 ## 0.2 Candidate Hold
 
-The RLN 0.13.0-beta.3 branches are draft implementation candidates, not release
+The existing release branches now target RLN 0.17.0-beta.3 and remain draft
+implementation candidates, not release
 approval. Do not create a release tag, publish, promote, or merge as part of this
-task. Resolve every release gate in [UPGRADE-TRACKER.md](./UPGRADE-TRACKER.md).
+task. Resolve every release gate in [PRODUCTION-GATES.md](./PRODUCTION-GATES.md).
 
-Both exact native peers (`0.2.0-beta.1`) must first pass their complete platform,
+Both exact native peers (`0.2.0-beta.4`) must first pass their complete platform,
 packed-consumer, migration and runtime gates. Their manual artifact workflows
 cannot publish. WDK's existing staged/OIDC/manual release workflow is unchanged;
 it must not bypass unpublished-peer or registry-provenance checks.

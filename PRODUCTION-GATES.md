@@ -1,4 +1,4 @@
-# Release qualification: 0.2.0-beta.3
+# Release qualification: 0.2.0-beta.4
 
 Working branch: `release/rln-0.15.0-beta.3`. This register separates engineering
 verification from decisions about release scope. An item is closed only by the
@@ -6,16 +6,58 @@ evidence listed here, not by a general CI success.
 
 ## Candidate
 
-October 12 source/API update: WDK now requires RLN
-`8777d71d7781b408fcce89c9c965ae29e8ad2300`, rust-lightning
-`fc5c4c64db36a9b6aa8cd878ca1225a977e67106`, shared adapter
-`f6d2959e1ceff0400cbd372759c4957cd5a52964f4ec646a79ee15c21b2291c0`, and
-`external-signer-burn-v1`. Core `burnAsset` is available to full accounts.
-The native candidate label and package versions are unchanged. See the
-[API/admission audit and WDK tests](./RELEASE-0.15-TRACKER.md#october-12-core-burn-upgrade).
-No funded, recovery, packed-native or device gate is closed by WDK unit tests.
+October 14 source upgrade: WDK requires RLN `v0.17.0-beta.3`
+(`ecc69f20308231400561f6f060fea88acfa40cc4`), rust-lightning
+`79b9eb5166546c62692d3a672986f385c7fe047d`, rgb-lib
+`v0.3.0-beta.50-bfa` (`1b951af0c8233308c919975552487be19ad2a930`), and the
+shared native adapter
+`a091d7d81831702f2b1a1479d32614f3ee17dae248318e98cbf8dadd00d211d9`.
+WDK and exact native peers are unpublished `0.2.0-beta.4` candidates. The
+compiled runtime version is `0.17.0-beta.3`. The existing branch name is retained.
 
-### October 12 Latest Qualification
+The runtime gate rejects stale versions, source/LDK/adapter identities and
+missing required capabilities before handle creation. The on-chain WDK API
+is unchanged, including `external-signer-burn-v1`; Iris remains on-chain only.
+No BFA channel support, merge, publication or production approval is inferred.
+
+### October 14 Qualification
+
+Fresh tests for this exact graph are recorded here as they complete. Native
+artifact, funded, adverse-recovery and mobile results require their own evidence;
+October 12 successes and failures below retain their original source and scope.
+P01/P02/P03/P04/P06, D01/D02/D03 and Q01/Q02/Q03/Q04 remain release gates until
+individually requalified or explicitly resolved within the supported scope.
+A beta.50 version number alone does not close a native behavior or security gate.
+
+- Normal peer-checked `npm ci --ignore-scripts` passes on Node 22.23.3/npm 10.9.9.
+- Production `npm audit --omit=dev` reports zero findings. Full development
+  audit reports 33 findings (28 high, five moderate), propagated from
+  [braces GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
+  and [sprintf-js GHSA-hp3w-g68c-fv3c](https://github.com/advisories/GHSA-hp3w-g68c-fv3c).
+  Both primary advisories list no patched version as checked October 14;
+  registry latest `braces 3.0.3` / `sprintf-js 1.1.3` remain affected. No finding
+  is suppressed, and a production-only audit is not a clean full-audit claim.
+- Full WDK coverage passes **26 suites / 969 tests** on Node 22.23.3, including
+  rejection of every preceding identity field and missing fields on both native
+  bindings before `SdkNode.create`. Runtime admission and burn-contract modules
+  each retain 100% statement, branch, function and line coverage.
+- Strict declarations, Standard lint, the unchanged WebRGB 0.1.0 read/type subset,
+  package-content allowlist (44 packed files), three fault-harness process-group
+  tests and `git diff --check` pass. None of these mock/packaging checks proves
+  native settlement or mobile lifecycle recovery.
+- Fresh native lock audits report ten vulnerabilities in each lock against
+  RustSec database `6aed84668c23d7f535077a9fe918bf1fa0f6a5bc`. These include
+  five new Quinn 0.11.16 findings plus the earlier rkyv/rsa/webpki findings.
+  Selected normal/build dependency reachability and disposition are pending;
+  lock-wide counts are not a statement that all ten are selected or reachable.
+  D01 remains open. The October 9 five-finding audit below is historical.
+- The beta.50 Rust issuer build, native artifacts, packed native consumers,
+  funded/recovery and app/device qualification are pending completion. Earlier
+  passes below do not qualify beta.4.
+
+### October 12 Qualification (Historical)
+
+The following results qualify beta.3 and its recorded graph, not beta.4.
 
 Implementation pins: WDK `c941925ab8a9b2d75356d223d5eed74c3dd74647`, Bare
 `cc62bf3a1765d89cb8b0b990ea16a47936f799de`, Node
@@ -70,22 +112,22 @@ The baseline and engineering results in this subsection describe the earlier
 | Funded regtest checks | Happy paths pass; acceptance failures retained | Both optimized CI host addons pass four schemas, BFA receive/send/balance/history/export, cold restart and invalid-mint rejection. Both pass 12 external-unlock cases. BFA event-order acceptance fails; unlocked reopen and pending witness balance failures reproduce. |
 | Android remaining runtime flows | Pending | Existing evidence covers debug BTC send/receive and settled RGB receive on a 16-KiB emulator. RGB send and interactive release-artifact qualification remain open. |
 
-## Hard Failures
+## Native Behavior Gates
 
-These are candidate failures, not missing CI credentials. Approval alone does
-not fix them. Closure requires a verified correction or a narrower supported
-configuration that removes the affected behavior.
-P01 and P04 have fresh October 12 Android reproductions. The other historical
-failures remain release gates pending exact-source requalification, not assertions
-that every new upstream graph has been retested and fails identically.
+The failures below were observed on their recorded earlier graph; they remain
+blocking release gates pending exact-source beta.4 requalification. They are not
+claims that beta.50 was already retested and failed identically. Approval alone
+does not fix them. Closure requires a verified upstream correction or a narrower
+supported configuration that removes the affected behavior. P01 and P04 include
+October 12 Android reproductions on the beta.47 graph.
 
 | ID | Gate and origin | Network / feature | Required closure |
 | --- | --- | --- | --- |
-| P01 | Persistent signer database lock after unlock, shutdown and same-process recreation. Native RLN/VLS lifetime, not a Jest or app-only failure. | Historical Signet/mainnet on both wrappers; reproduced October 12 in actual Android 16-KiB Iris regtest | Correct ownership/teardown upstream, or qualify real process isolation with secure lock/unlock and crash recovery. Do not keep an unlocked signer alive after app lock or reset its database. The earlier CI-built Node addon reproduced this even without funding. The October 12 system-share-sheet/background return reproduces the lock error; cold restart and build success are not closure. |
+| P01 | Persistent signer database lock after unlock, shutdown and same-process recreation. Native RLN/VLS lifetime, not a Jest or app-only failure. | Historical Signet/mainnet on both wrappers; reproduced October 12 in actual Android 16-KiB Iris regtest | Correct ownership/teardown upstream, or qualify real process isolation with secure lock/unlock and crash recovery. Do not keep an unlocked signer alive after app lock or reset its database. The earlier CI-built Node addon reproduced this even without funding. The October 12 beta.47 system-share-sheet/background return reproduced the lock error; cold restart and build success are not closure. |
 | P02 | Process death during BTC send can leave an orphaned input reservation. RLN external-signer begin/sign/end integration with rgb-lib. | BTC sends on both networks | Expose and qualify reconciliation/abort recovery. Prove no unintended replay and retained spendability after interrupted submission. The missing custom prepared-send UX is separate from this underlying recovery requirement. |
 | P03 | RGB settlement remains stale after a receipt is disconnected by a reorg. Pinned rgb-lib behavior. | RGB on both networks | Prove rollback, cold restart and reconfirmation against an approved upstream graph. Additional confirmations reduce exposure but are not evidence that rollback works. |
-| P04 | Incoming witness `future` balance double-counts one receipt before settlement. Historical raw native evidence contains the duplicate amount; WDK passes it through. Current beta47 Android reproduces the UI symptom: one 1,000,000-unit receipt becomes 2.00 pending, then settles to the correct 1.00 USDT. | RGB pending balances on both networks; reproduced October 12 in Android 16-KiB regtest | Fix native accounting, or explicitly omit unqualified pending projections while retaining truthful settled/spendable balances. Do not cap or divide pending amounts. Correct settled balance is not closure. Run `tests/regtest/pending-balance.mjs` on both runtimes and requalify the mobile pending sequence. |
-| P06 | The BFA validator selects an earlier wrong-amount lock instead of a later valid lock for the same mint. Pinned consensus/rgb-lib behavior. | BFA receipt on either network | Merge and propagate the correction represented by rgb-lib #103, then pass the funded event-order acceptance test. #103 remains open as checked October 9. Ordinary BFA receipt/send passes are not sufficient. |
+| P04 | Incoming witness `future` balance double-counts one receipt before settlement. Historical raw native evidence contains the duplicate amount; WDK passes it through. October 12 beta47 Android reproduced the UI symptom: one 1,000,000-unit receipt becomes 2.00 pending, then settles to the correct 1.00 USDT. | RGB pending balances on both networks; reproduced October 12 in Android 16-KiB regtest | Fix native accounting, or explicitly omit unqualified pending projections while retaining truthful settled/spendable balances. Do not cap or divide pending amounts. Correct settled balance is not closure. Run `tests/regtest/pending-balance.mjs` on both runtimes and requalify the mobile pending sequence. |
+| P06 | The BFA validator selects an earlier wrong-amount lock instead of a later valid lock for the same mint. Pinned consensus/rgb-lib behavior. | BFA receipt on either network | Qualify beta.50 with the funded valid-after-wrong-lock event-order acceptance test and independently verify the applicable upstream correction (tracked as rgb-lib #103). The October 9 issue-status observation is historical. Ordinary BFA receipt/send passes are not sufficient. |
 
 Existing recovery evidence and reproduction commands are in
 [the release tracker](./RELEASE-0.15-TRACKER.md),
@@ -119,7 +161,7 @@ and final artifact approval remain open.
 | ID | Decision | Current boundary |
 | --- | --- | --- |
 | S01 | On-chain-only release, or non-mainnet Lightning as well? | Mainnet Lightning already fails with `LIGHTNING_DISABLED_ON_MAINNET`. Signet Lightning APIs remain available, but strict outbound settlement, mature BTC force-close sweep, RGB commitment acceptance and channel recovery are not qualified. On-chain-only scope removes those channel gates, not P01-P06. |
-| S02 | Keep the #192 native source or adopt newer merged upstream work? | The October 12 exact pin adopts dev through #200, including #194 burn, #195 mainnet startup and rgb-lib beta.47-bfa/new rust-lightning. The dependency graph changed, not only a capability flag. Native builds, security review and funded/recovery/device qualification remain separate from WDK API tests. |
+| S02 | Keep the #192 native source or adopt newer merged upstream work? | The October 14 exact pin adopts v0.17.0-beta.3 with rgb-lib beta.50-bfa and rust-lightning79b9eb5. The dependency graph changed, not only a capability flag. Native builds, security review and funded/recovery/device qualification remain separate from WDK API tests. |
 | S03 | Include burn in this release? | Generic WDK `burnAsset` and native capability gating are implemented. Full accounts report support; read-only accounts do not. Exact-source Bare-host funded burn/proof passes as scoped above; Node-funded, mobile, payout and uncertain-outcome recovery remain gates. Durable bridge operation recovery, sessions, approval and transport are Iris/application responsibilities and are not added to WDK. |
 | S04 | Which asset schemas and deployments are supported? | Mainnet IFA is rejected by the current upstream library. Local six-decimal IFA/NIA fixtures are not production USDT. Mainnet BFA needs an approved bridge/token/contract identity and Ethereum RPC configuration, plus P06 closure. |
 | S05 | Is VSS part of this release? | Deferred by request. No device-loss or VSS recovery claim. The source contains VSS APIs but that does not qualify the service or recovery policy. |
@@ -151,7 +193,8 @@ Only disposable local fixtures are used for this qualification.
 
 ## Evidence Index
 
-Local artifacts and command logs: `/tmp/wdk-release-ci-20261009/`.
+Current October 14 local command logs: `../release-evidence/wdk/` (outside the package checkout).
+Historical command logs: `/tmp/wdk-release-ci-20261009/` (not restored after the system reset).
 No wallet directories or seeds are committed.
 
 Android follow-up: `/tmp/rln-android-link-20261010/`. `public-staging.json` and

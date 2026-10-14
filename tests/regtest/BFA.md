@@ -4,9 +4,9 @@ Use the Bitcoin, Electrs, Esplora and proxy services from [README.md](./README.m
 Keep scenarios serial. No real-network funds are used. The issuer below is a
 test-only rgb-lib process, not a WDK issuance API.
 
-Build and install the exact Node/Bare `0.2.0-beta.3` peers first. Runtime checks
-require RLN commit `a17b685615750536f0320db1cd3f3ba68a8f1c57` and reject the older
-`v0.15.0-beta.3` release binary. Bare requires a `BARE_BIN` executable >=1.33.0.
+Build and install the exact Node/Bare `0.2.0-beta.4` peers first. Runtime checks
+require RLN `v0.17.0-beta.3` commit `ecc69f20308231400561f6f060fea88acfa40cc4`
+and reject older native artifacts. Bare requires a `BARE_BIN` executable >=1.33.0.
 
 ## External Unlock
 
@@ -33,8 +33,8 @@ CARGO_TARGET_DIR=/tmp/wdk-bfa-fixture-target cargo +1.94.0 build \
 export BFA_FIXTURE_BIN=/tmp/wdk-bfa-fixture-target/release/wdk-bfa-fixture
 ```
 
-Use contracts from rgb-lib tag `v0.3.0-beta.42-bfa`, exact commit
-`aaf5b52f63ff2ee966707f099aacadd5f2e6037f`. Set `RGB_LIB_SOURCE` to that checkout.
+Use contracts from rgb-lib tag `v0.3.0-beta.50-bfa`, exact commit
+`1b951af0c8233308c919975552487be19ad2a930`. Set `RGB_LIB_SOURCE` to that checkout.
 The commands below use Anvil's public test account, not a private wallet key.
 Use a new container name if the default name already exists; do not delete an
 existing container or volume to make the test pass.
@@ -85,11 +85,11 @@ node tests/regtest/bfa.mjs --probe-event-selection
 ```
 
 This also creates two locks for the same mint OpId: amount 1 first, then the
-correct amount 1000. The receive must settle. The pinned upstream validator
-currently fails this assertion. This is an intentionally failing acceptance
-test, not a skipped or expected-failure pass. The proposed correction is
-[rgb-lib #103](https://github.com/UTEXO-Protocol/rgb-lib/pull/103); it is not
-included in the production candidate.
+correct amount 1000. The receive must settle. The earlier beta.42 graph failed this assertion (tracked in
+[rgb-lib #103](https://github.com/UTEXO-Protocol/rgb-lib/pull/103)). The beta.50
+candidate must pass this exact acceptance check before P06 can close. A failure
+is retained as a failing gate, never converted to a skipped or expected-failure
+pass. Ordinary single-event mint success is insufficient evidence.
 
 Every run prints its evidence directory and retains results and native state.
 Do not commit wallet directories. To stop the separate fixture without deleting
