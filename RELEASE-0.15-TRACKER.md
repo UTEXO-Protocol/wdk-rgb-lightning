@@ -1,5 +1,13 @@
 # RLN release tracker (existing 0.15 branch)
 
+October 15: the current native overlay adds explicit terminal signer shutdown
+and owned task/listener cleanup. WDK shuts down the node before revocation and
+keeps failed-cleanup handles for retry. Both new compiled lifecycle capabilities
+are mandatory. Current acceptance and remaining gates are recorded in
+[PRODUCTION-GATES.md](PRODUCTION-GATES.md); earlier dated results below do not
+qualify the repaired artifacts. Iris remains on-chain only, and wallet migration
+is excluded because Iris has not shipped. No merge or publication is authorized.
+
 Target: `release/rln-0.15.0-beta.3`, branched from `release/rln-0.13.0-beta.3` in WDK, Node.js and Bare. Current package candidate: `0.2.0-beta.4`; current SDK target: `v0.17.0-beta.3`. No npm publication is part of this change.
 
 Current release decisions and the latest verification are maintained

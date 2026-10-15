@@ -165,6 +165,18 @@ describe('released account boundaries', () => {
       expect(create).not.toHaveBeenCalled()
     } finally { spy.mockRestore(); create.mockRestore() }
   })
+  it.each([[NodeRgbLightningBinding, rln], [BareRgbLightningBinding, bare]])('requires complete native lifecycle support before creating %p handles', (Binding, native) => {
+    const runtime = native.getRuntimeInfo()
+    const spy = jest.spyOn(native, 'getRuntimeInfo')
+    const create = jest.spyOn(native.SdkNode, 'create')
+    try {
+      for (const missing of ['native-signer-shutdown-v1', 'owned-session-cleanup-v1']) {
+        spy.mockReturnValue({ ...runtime, capabilities: runtime.capabilities.filter(value => value !== missing) })
+        expect(() => new Binding({ dataDir: '/unused', network: 'regtest' })).toThrow('Incompatible')
+        expect(create).not.toHaveBeenCalled()
+      }
+    } finally { spy.mockRestore(); create.mockRestore() }
+  })
   it.each([NodeRgbLightningBinding, BareRgbLightningBinding])('rejects the preceding release graph before creating %p handles', Binding => {
     const native = Binding === NodeRgbLightningBinding ? rln : bare
     const runtime = native.getRuntimeInfo()

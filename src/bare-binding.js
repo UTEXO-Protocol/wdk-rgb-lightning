@@ -105,6 +105,8 @@ export class BareRgbLightningBinding {
     this._node = null
     /** @type {NativeExternalSigner | null} */
     this._signer = null
+    /** @type {NativeExternalSigner[]} Failed rollback handles retained for shutdown retry. */
+    this._pendingSignerCleanup = []
     /** @type {Buffer | undefined} Zeroizable retained copy for idempotency checks. */
     this._seedHex = undefined
     /** @type {Buffer | undefined} Temporary legacy seed retained until first unlock. */
@@ -179,7 +181,7 @@ export class BareRgbLightningBinding {
    */
   unlock (unlockRequest) {
     unlockRequest = normalizeUnlockRequest(unlockRequest)
-    const node = this.ensureNode()
+    let node = this.ensureNode()
     if (!this._signer) {
       throw new Error('attachExternalSigner(seedHex) must be called before unlock()')
     }
@@ -213,10 +215,19 @@ export class BareRgbLightningBinding {
         this._config.permissiveSignerPolicy ?? false
       )
       try {
+        // A failed unlock may still have attached the primary signer. Retire
+        // that node before revocation; a cancelled native node cannot be reused.
+        node.shutdown()
+        this._node = null
+        this._signer.shutdown()
         this._signer.destroy()
       } catch (primaryDestroyError) {
+        this._closed = true
+        this._pendingSignerCleanup.push(fallbackSigner)
         try {
+          fallbackSigner.shutdown()
           fallbackSigner.destroy()
+          this._pendingSignerCleanup.pop()
         } catch (fallbackDestroyError) {
           throw new AggregateError(
             [primaryDestroyError, fallbackDestroyError],
@@ -229,6 +240,7 @@ export class BareRgbLightningBinding {
       wipeSecret(this._seedHex)
       this._seedHex = fallbackSeed
       this._fallbackSeedHex = undefined
+      node = this.ensureNode()
       node.unlockWithNativeExternalSigner(this._signer, unlockRequest)
     }
   }
@@ -334,9 +346,9 @@ export class BareRgbLightningBinding {
   }
 
   /**
-   * Stop the node and destroy the signer. The operation is idempotent.
+   * Stop the node, revoke the signer and release its handle. Idempotent.
    *
-   * @throws {Error} - If native node shutdown or signer destruction fails.
+   * @throws {Error} - If native node shutdown, signer revocation or handle release fails.
    */
   shutdown () {
     this._closed = true
@@ -347,8 +359,17 @@ export class BareRgbLightningBinding {
     }
     this._sdkInitDone = false
     if (this._signer) {
+      // Node shutdown drains operations and flushes state while signing is
+      // still available. Revocation then releases private state in all clones.
+      this._signer.shutdown()
       this._signer.destroy()
       this._signer = null
+    }
+    while (this._pendingSignerCleanup.length) {
+      const signer = this._pendingSignerCleanup[0]
+      signer.shutdown()
+      signer.destroy()
+      this._pendingSignerCleanup.shift()
     }
     wipeSecret(this._seedHex)
     wipeSecret(this._fallbackSeedHex)

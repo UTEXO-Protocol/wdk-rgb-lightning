@@ -6,6 +6,21 @@ evidence listed here, not by a general CI success.
 
 ## Candidate
 
+October 15 lifecycle repair supersedes the October 14 native adapter identity
+below. Both native peers now expose explicit terminal signer shutdown and own
+session task/listener cleanup; WDK drains its node before revoking/freeing the
+signer and retains failed cleanup handles for retry. Exact overlay identity is
+enforced by `src/native-runtime-contract.js`; required capabilities include
+`native-signer-shutdown-v1` and `owned-session-cleanup-v1`.
+
+Focused native qualification passes 29 lifecycle/signer/startup/VSS tests and
+14 C-FFI tests. WDK passes 26 suites / 977 tests, lint, types and package checks.
+Rebuilt artifacts, repeated real same-process reopening and funded iOS 27
+acceptance are in progress. P01 remains open until those tests demonstrate
+closure for this exact implementation. Historical failures below retain their
+original identities. Iris stays on-chain only; no wallet migration is required
+because Iris has not shipped. No merge or publication is part of this repair.
+
 October 14 source upgrade: WDK requires RLN `v0.17.0-beta.3`
 (`ecc69f20308231400561f6f060fea88acfa40cc4`), rust-lightning
 `79b9eb5166546c62692d3a672986f385c7fe047d`, rgb-lib
