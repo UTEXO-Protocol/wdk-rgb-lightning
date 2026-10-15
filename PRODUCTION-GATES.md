@@ -4,6 +4,51 @@ Working branch: `release/rln-0.15.0-beta.3`. This register separates engineering
 verification from decisions about release scope. An item is closed only by the
 evidence listed here, not by a general CI success.
 
+## Merged-main source and package admission
+
+Bare #22 and Node #24 are merged into `main`. The current WDK source manifest
+records Bare `6bfd8726a644d79fc914929db3de19eec3c57a21` and Node
+`04b641dce121ac690d5d0866eeba4fa76aebe7a5`, both package `0.2.0-beta.4`.
+There is no native release-branch package dependency: exact optional npm peers
+remain the publication contract. Prepublication source installs and PR source
+admission use these reviewed snapshots of main; Android documentation now links
+native main as well. Both native postmerge contract CIs and the final Node
+five-target matrix `38718172040` pass. The older dated 4/5 observations below
+remain historical observations, not the current matrix result.
+
+Fresh exact-main source checkouts pass clean-tree, package, RLN/LDK/overlay and
+C-FFI-lock admission. Complete original seven-target Bare and five-target Node
+artifacts are admitted byte-for-byte against the unchanged main runtime sources.
+Their original CI/source labels are preserved; no main-native rebuild is claimed.
+
+WDK fixes two release-admission defects: optional WebRGB was incorrectly treated
+as a native peer, and the verifier expected a release tag instead of the actual
+immutable RLN source ref. Native registry admission now checks the two exact
+peers, their merged-main gitHead and complete declared graph. A separate PR job
+fetches and verifies native main without installing or publishing native code.
+Failed account/default-signer/named-signer manager cleanup also retains ownership
+for retry; successful cleanup runs once. Public signer and partial-failure
+regressions cover that behavior.
+
+The current complete WDK suite passes **29 suites / 1,044 tests**, lint, types,
+WebRGB compatibility and harness process-ownership checks. Production npm audit
+reports **zero vulnerabilities**. That audit covers the WDK npm dependency tree,
+not the selected Rust/native dependency disposition D01.
+
+Release-only packing stamps the exact clean Git HEAD into a temporary manifest,
+using committed source bytes and file modes. npm 12 is required before any
+pack invocation; lifecycle hooks are disabled. Regression fixtures require
+identical isolated tarballs and reject dirty/untracked source, conflicting
+identity, unsafe npm and ignored packaged inputs.
+
+Source/package qualification does not waive registry or production gates.
+Both native `0.2.0-beta.4` npm releases are currently absent; the real registry
+verifier must continue failing HTTP 404 until those exact peers are published.
+P02/P03/P04/P06 and D01 below remain native financial/security blockers for
+production. App signing/mobile/public-endpoint gates are separate. Preparing a
+mergeable library candidate is not aggregate production or publication approval.
+See [RELEASING.md](./RELEASING.md) for the ordered release prerequisites.
+
 ## Candidate
 
 October 15 lifecycle repair supersedes the October 14 native adapter identity
@@ -439,7 +484,7 @@ recorded here is not a claim that every newer upstream revision has the same bug
 ### P05: Supported Android Packaging
 
 Closed for consumers applying the public
-[Bare Android staging hook](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/release/rln-0.15.0-beta.3/android/README.md),
+[Bare Android staging hook](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/main/android/README.md),
 with BareKit 0.15.5, NDK 27.1.12297006 and one JS-loaded RLN version. No incoming
 native RLN dependency is supported. Installation alone does not apply the hook;
 existing app-specific staging must be replaced, not combined with it.

@@ -27,6 +27,8 @@
     "lint:fix": "standard --fix --env jest",
     "check:types": "tsc -p tsconfig.types.json",
     "check:webrgb-peer": "node scripts/check-webrgb-peer.mjs",
+    "check:native-sources": "node scripts/verify-native-peer-sources.mjs",
+    "check:peer-releases": "node scripts/verify-peer-releases.mjs",
     "check:package": "node scripts/verify-package.mjs",
     "smoke:package:node": "node scripts/smoke-node-package.mjs",
     "smoke:package:bare": "node scripts/smoke-bare-package.mjs",

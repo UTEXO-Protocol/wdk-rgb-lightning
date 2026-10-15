@@ -10,6 +10,17 @@ while pre-`1.0`.
 
 ### 0.2.0-beta.4 Candidate
 
+- Adopt merged native `main` snapshots: Bare `6bfd8726a644d79fc914929db3de19eec3c57a21`
+  and Node `04b641dce121ac690d5d0866eeba4fa76aebe7a5`. Record source pins in
+  `native-peer-sources.json`, verify main-source admission in PR CI, and retain
+  exact optional `0.2.0-beta.4` npm peers for publication.
+- Fix release admission to validate the two native peers independently from
+  optional WebRGB and require the actual immutable source manifest. Registry
+  publication remains a separate gate from merged-main source qualification.
+- Retain failed account/default-signer/registered-signer cleanup for manager
+  disposal retries, without repeating successfully completed cleanup.
+- Build release tarballs from a clean Git checkout with the reviewed commit in
+  the staged manifest, preserving source identity through npm staged publishing.
 - Target the exact RLN `v0.17.0-beta.3` source `ecc69f20308231400561f6f060fea88acfa40cc4`,
   compatible rust-lightning `79b9eb5166546c62692d3a672986f385c7fe047d`, and
   rgb-lib `v0.3.0-beta.50-bfa` (`1b951af0c8233308c919975552487be19ad2a930`).

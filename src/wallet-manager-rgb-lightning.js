@@ -250,32 +250,34 @@ export default class WalletManagerRgbLightning extends WalletManager {
     // app has explicitly shut down its external signer at the lock boundary.
     // RGB Lightning owns every account in this cache, so dispose them directly
     // without touching native identity state.
-    for (const account of Object.values(this._accounts)) {
+    for (const [index, account] of Object.entries(this._accounts)) {
       try {
         account.dispose()
+        delete this._accounts[index]
       } catch (error) {
         failures.push(error)
       }
     }
-    this._accounts = {}
 
     if (this._defaultSigner) {
       try {
         this._defaultSigner.dispose()
+        this._defaultSigner = undefined
       } catch (error) {
         failures.push(error)
       }
     }
-    this._defaultSigner = undefined
 
-    for (const signer of Object.values(this._signers)) {
+    // A failed disposer still owns a live resource. Keep it reachable for a
+    // later dispose() retry, while completed cleanup must never run twice.
+    for (const [name, signer] of Object.entries(this._signers)) {
       try {
         signer.dispose()
+        delete this._signers[name]
       } catch (error) {
         failures.push(error)
       }
     }
-    this._signers = {}
 
     try {
       this._binding?.shutdown()

@@ -3,6 +3,7 @@ coverage/
 tests/
 scripts/
 .github/
+.native-peers/
 jest.setup.js
 tsconfig.types.json
 RELEASING.md

@@ -89,6 +89,9 @@ jobs:
       - name: Check types
         run: npm run check:types
 
+      - name: Check optional WebRGB contract
+        run: npm run check:webrgb-peer
+
       - name: Run tests with coverage
         run: npm run test:coverage
 
@@ -96,11 +99,11 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
 
       - name: Verify native peer releases
-        run: node scripts/verify-peer-releases.mjs
+        run: npm run check:peer-releases
 
       - name: Build and verify package tarball
         id: pack
-        run: node scripts/verify-package.mjs --output-dir "$RUNNER_TEMP/package"
+        run: node scripts/verify-package.mjs --require-git-head --output-dir "$RUNNER_TEMP/package"
 
       - name: Smoke test Node package
         run: npm run smoke:package:node -- "${{ steps.pack.outputs.tarball }}"
@@ -187,9 +190,12 @@ jobs:
             echo "nodejs_range=$NODEJS_RANGE"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Reverify native peer releases
+        run: npm run check:peer-releases
+
       - name: Rebuild and verify package tarball
         id: pack
-        run: node scripts/verify-package.mjs --output-dir "$RUNNER_TEMP/package"
+        run: node scripts/verify-package.mjs --require-git-head --output-dir "$RUNNER_TEMP/package"
 
       - name: Verify published npm artifact
         run: |

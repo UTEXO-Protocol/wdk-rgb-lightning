@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { packReleasePackage } from './release-package.mjs'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const packageJson = JSON.parse(
@@ -45,7 +46,8 @@ function writeOutputs (report) {
     shasum: report.shasum,
     size: report.size,
     unpacked_size: report.unpackedSize,
-    file_count: report.fileCount
+    file_count: report.fileCount,
+    ...(report.gitHead ? { git_head: report.gitHead } : {})
   }
 
   appendFileSync(
@@ -64,40 +66,6 @@ const outputDir = requestedOutputDir
 
 mkdirSync(outputDir, { recursive: true })
 
-const npmExecutable = process.platform === 'win32' ? 'npm.cmd' : 'npm'
-const pack = spawnSync(
-  npmExecutable,
-  ['pack', '--json', '--pack-destination', outputDir],
-  {
-    cwd: rootDir,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe']
-  }
-)
-
-if (pack.status !== 0) {
-  throw new Error(`npm pack failed:\n${pack.stderr || pack.stdout}`)
-}
-
-let packResult
-try {
-  packResult = JSON.parse(pack.stdout)
-} catch (error) {
-  throw new Error(`npm pack returned invalid JSON:\n${pack.stdout}`, {
-    cause: error
-  })
-}
-
-const packedPackages = Array.isArray(packResult)
-  ? packResult
-  : Object.values(packResult)
-
-if (packedPackages.length !== 1) {
-  throw new Error('npm pack must return exactly one package')
-}
-
-const packed = packedPackages[0]
-const packedFiles = new Set(packed.files.map(file => file.path))
 const requiredRootFiles = [
   'BFA-QUALIFICATION.md',
   'WEBRGB.md',
@@ -105,6 +73,7 @@ const requiredRootFiles = [
   'UPGRADE-TRACKER.md',
   'RELEASE-0.15-TRACKER.md',
   'PRODUCTION-GATES.md',
+  'native-peer-sources.json',
   'CHANGELOG.md',
   'LICENSE',
   'README.md',
@@ -122,29 +91,52 @@ const requiredRuntimeFiles = [
 ]
 const requiredFiles = [...requiredRootFiles, ...requiredRuntimeFiles]
 
-for (const requiredFile of requiredFiles) {
-  if (!packedFiles.has(requiredFile)) {
-    throw new Error(`Package is missing required file: ${requiredFile}`)
+function validatePacked (packed) {
+  const packedFiles = new Set(packed.files.map(file => file.path))
+  for (const requiredFile of requiredFiles) {
+    if (!packedFiles.has(requiredFile)) {
+      throw new Error(`Package is missing required file: ${requiredFile}`)
+    }
+  }
+
+  const allowedRootFiles = new Set(requiredRootFiles)
+  const unexpectedFiles = [...packedFiles].filter(file => {
+    if (allowedRootFiles.has(file)) return false
+    return !file.startsWith('assets/') && !file.startsWith('src/')
+  })
+
+  if (unexpectedFiles.length > 0) {
+    throw new Error(
+    `Package contains unexpected files:\n${unexpectedFiles.sort().join('\n')}`
+    )
+  }
+
+  if (packed.name !== packageJson.name || packed.version !== packageJson.version) {
+    throw new Error(
+    `Packed identity ${packed.name}@${packed.version} does not match ` +
+    `${packageJson.name}@${packageJson.version}`
+    )
   }
 }
 
-const allowedRootFiles = new Set(requiredRootFiles)
-const unexpectedFiles = [...packedFiles].filter(file => {
-  if (allowedRootFiles.has(file)) return false
-  return !file.startsWith('assets/') && !file.startsWith('src/')
-})
-
-if (unexpectedFiles.length > 0) {
-  throw new Error(
-    `Package contains unexpected files:\n${unexpectedFiles.sort().join('\n')}`
-  )
-}
-
-if (packed.name !== packageJson.name || packed.version !== packageJson.version) {
-  throw new Error(
-    `Packed identity ${packed.name}@${packed.version} does not match ` +
-    `${packageJson.name}@${packageJson.version}`
-  )
+const npmExecutable = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+let packed
+let gitHead
+if (process.argv.includes('--require-git-head')) {
+  ({ packed, gitHead } = packReleasePackage({ directory: rootDir, outputDir, validatePacked, npmExecutable }))
+} else {
+  const pack = spawnSync(npmExecutable, ['pack', '--json', '--pack-destination', outputDir], {
+    cwd: rootDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']
+  })
+  if (pack.error || pack.status !== 0) throw new Error(`npm pack failed:\n${pack.stderr || pack.stdout || pack.error}`)
+  let packResult
+  try { packResult = JSON.parse(pack.stdout) } catch (cause) {
+    throw new Error(`npm pack returned invalid JSON:\n${pack.stdout}`, { cause })
+  }
+  const packages = Array.isArray(packResult) ? packResult : Object.values(packResult)
+  if (packages.length !== 1) throw new Error('npm pack must return exactly one package')
+  packed = packages[0]
+  validatePacked(packed)
 }
 
 const tarball = path.resolve(outputDir, packed.filename)
@@ -161,7 +153,8 @@ const report = {
   shasum: packed.shasum,
   size: packed.size,
   unpackedSize: packed.unpackedSize,
-  fileCount: packed.entryCount
+  fileCount: packed.entryCount,
+  ...(gitHead ? { gitHead } : {})
 }
 
 writeOutputs(report)

@@ -35,6 +35,23 @@ export async function smokeWalletPolicy (WalletManager, WebRgbProvider, Lightnin
     if (!rejected) throw new Error('Revoked WebRGB provider leaked an address')
     await account.shutdown()
     if (!account.isDisposed()) throw new Error('Closed account remains active')
+
+    const failure = new Error('Packed signer cleanup fixture')
+    let attempts = 0
+    let completed = 0
+    const retained = { dispose () { if (++attempts === 1) throw failure } }
+    manager.addSigner('retry', retained)
+    manager.addSigner('complete', { dispose () { completed++ } })
+    let observed
+    try { manager.dispose() } catch (error) { observed = error }
+    if (observed !== failure || manager.getSigner('retry') !== retained || completed !== 1) {
+      throw new Error('Packed manager discarded failed signer ownership')
+    }
+    manager.dispose()
+    if (attempts !== 2 || completed !== 1 || Object.keys(manager.getSigners()).length !== 0) {
+      throw new Error('Packed manager did not retry only unfinished cleanup')
+    }
+    console.log('Packed manager retained failed signer ownership and retried cleanup exactly once')
   } finally {
     manager.dispose()
   }

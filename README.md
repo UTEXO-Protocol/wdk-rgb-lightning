@@ -246,6 +246,12 @@ module-load differs.
 
 ## Installation
 
+The `0.2.0-beta.4` candidate consumes the merged **main** sources recorded in
+[`native-peer-sources.json`](./native-peer-sources.json): Bare PR #22 and Node
+PR #24. Published packages retain exact optional npm peers rather than floating
+Git branch dependencies. The commands below apply after those native versions
+and this WDK version are published.
+
 ```sh
 npm install @utexo/wdk-rgb-lightning@0.2.0-beta.4
 
@@ -265,8 +271,28 @@ before bundling the worklet. Standalone Bare requires >=1.33.0. See each binding
 README for target selection and prerequisites. The parser-only
 `@utexo/wdk-rgb-lightning/lsp-info` entry is pure JS.
 
+Before registry publication, build/pack the native peers from their recorded
+main commits and install those candidate tarballs alongside the WDK tarball.
+For a source installation, use the immutable snapshots of main:
+
+```sh
+# Install only the peer for your runtime; these commits are merged into main.
+npm install --save-exact github:UTEXO-Protocol/rgb-lightning-node-nodejs#04b641dce121ac690d5d0866eeba4fa76aebe7a5
+# or
+npm install --save-exact github:UTEXO-Protocol/rgb-lightning-node-bare#6bfd8726a644d79fc914929db3de19eec3c57a21
+```
+
+Git source installations invoke native builds unless complete verified artifacts
+are supplied. The PR's `Verify merged native main sources` check fetches `main`
+from both repositories and rejects a different commit, graph or dirty checkout.
+To repeat that source check locally with exact main checkouts:
+
+```sh
+npm run check:native-sources -- --bare-dir /absolute/bare-main --node-dir /absolute/node-main
+```
+
 For Android, use `react-native-bare-kit@0.15.5` and apply the native package's
-[Android staging hook](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/release/rln-0.15.0-beta.3/android/README.md)
+[Android staging hook](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/main/android/README.md)
 in the root Android Gradle build. The hook verifies the pinned original addon
 and packages it without the ELF rewrite that damages RELRO/DYNAMIC protection.
 Installing WDK or its Bare peer does not apply this hook automatically. This
@@ -408,8 +434,12 @@ Notes:
   account session so repeated `getAddress()` calls remain stable. Use
   `getNewAddress()` to allocate a new receive address under either policy.
   Allocation calls are serialized across full and read-only accounts, and
-  shutdown waits for in-flight allocation. This policy does not add FullScan
-  recovery or fix released RLN's same-process signer teardown limitation.
+  shutdown waits for in-flight allocation. The current native lifecycle repair
+  drains the node before explicit signer revocation and supports the qualified
+  same-process reopen cases. Failed cleanup remains retryable; manager disposal
+  retains failed account and signer owners while removing completed cleanup.
+  FullScan and interrupted-payment recovery require separate qualification;
+  see [PRODUCTION-GATES.md](./PRODUCTION-GATES.md).
 - **`sendTransaction()` uses WDK's `{ to, value, feeRate?,
   confirmationTarget? }` input and `{ hash, fee }` result.** `sendBtc()` is
   the explicit low-level escape hatch for RLN's native request format.

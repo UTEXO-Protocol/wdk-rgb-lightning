@@ -7,8 +7,14 @@ Start the [local stack](../regtest/README.md) first; run chain scenarios seriall
 
 ## Historical RLN 0.13 Profile
 
-The results below are historical, not qualification of the new RLN 0.15
-artifacts. The fixture now selects candidate 0.2.0-beta.2 for new runs.
+The results and framework scaffold below are historical, not qualification of
+the current RLN `0.17.0-beta.3` artifacts. The fixture's package declarations
+select candidate `0.2.0-beta.4`; changing those declarations does not upgrade or
+qualify the Expo 56/Bare Kit 0.14.5 scaffold. Current native peers come from the
+merged main commits in [native-peer-sources.json](../../native-peer-sources.json).
+Use the [current Bare integration instructions](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/main/android/README.md)
+for supported Android staging. No new mobile build is claimed by WDK source or
+host package checks.
 
 - Expo 56.0.21, React Native 0.85.3, React 19.2.3, Bare Kit 0.14.5.
 - Embedded Bare 1.29.4, uv 1.52.1, V8 14.8.178.31, reported by the worklet.
@@ -27,8 +33,8 @@ each generated fixture lockfile and build artifacts with that run's evidence.
 ## Build In An Isolated Directory
 
 Use a fresh copy of this directory, outside any real application. Install the
-candidate WDK and Bare tarballs from the corresponding draft branches, not older
-registry packages. All commands below run from that isolated copy. Replace
+candidate WDK and merged-main Bare tarballs, not older registry packages. All
+commands below run from that isolated copy of the historical scaffold. Replace
 absolute placeholder paths with actual built artifacts.
 
 ```sh

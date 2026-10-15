@@ -23,9 +23,12 @@ function run (command, args, options = {}) {
 }
 
 try {
-  const packDir = path.join(temporaryRoot, 'pack')
-  run(process.execPath, [path.join(root, 'scripts/verify-package.mjs'), '--output-dir', packDir])
-  const wdkTarball = path.join(packDir, `utexo-wdk-rgb-lightning-${pkg.version}.tgz`)
+  let wdkTarball = process.argv[2] && path.resolve(process.argv[2])
+  if (!wdkTarball) {
+    const packDir = path.join(temporaryRoot, 'pack')
+    run(process.execPath, [path.join(root, 'scripts/verify-package.mjs'), '--output-dir', packDir])
+    wdkTarball = path.join(packDir, `utexo-wdk-rgb-lightning-${pkg.version}.tgz`)
+  }
   writeFileSync(path.join(temporaryRoot, 'package.json'), JSON.stringify({
     private: true,
     allowScripts: { [`${nativePackage}@${nativeVersion}`]: true }

@@ -36,6 +36,9 @@ jobs:
       - name: Check types
         run: npm run check:types
 
+      - name: Check optional WebRGB contract
+        run: npm run check:webrgb-peer
+
       - name: Run tests
         run: npm test
 
@@ -44,3 +47,36 @@ jobs:
 
       - name: Check package contents
         run: npm run check:package
+
+  native-main-sources:
+    name: Verify merged native main sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout WDK candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.23.1'
+          package-manager-cache: false
+
+      - name: Checkout Bare main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: UTEXO-Protocol/rgb-lightning-node-bare
+          ref: main
+          path: .native-peers/bare
+          persist-credentials: false
+
+      - name: Checkout Node main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: UTEXO-Protocol/rgb-lightning-node-nodejs
+          ref: main
+          path: .native-peers/nodejs
+          persist-credentials: false
+
+      - name: Verify exact merged-main source and native graph
+        run: npm run check:native-sources -- --bare-dir .native-peers/bare --node-dir .native-peers/nodejs
