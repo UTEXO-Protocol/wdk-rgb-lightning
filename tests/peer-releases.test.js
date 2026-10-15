@@ -3,7 +3,8 @@ import { verifyNativePeerReleases } from '../scripts/verify-peer-releases.mjs'
 const bare = '@utexo/rgb-lightning-node-bare'
 const node = '@utexo/rgb-lightning-node-nodejs'
 
-// Release graph recorded by both native main manifests after PRs #22 and #24.
+// Release graph recorded after Bare lifecycle #22, distributions #24/#25 and
+// Node #24; the four-package split preserves native graph and fingerprints.
 // Deliberately independent of the verifier's expected-runtime object, so a
 // changed admission requirement must also update this release fixture.
 const nativeManifest = {
@@ -17,7 +18,7 @@ const nativeManifest = {
   cffiLockSha256: '5fcdc9ad9179d3230e48973cdfa514a863d13a837752027febf8ea04713bbeb5'
 }
 const mainCommits = {
-  [bare]: '6bfd8726a644d79fc914929db3de19eec3c57a21',
+  [bare]: '8b692da2e896e8acfef2bf15b1e501103100c070',
   [node]: '04b641dce121ac690d5d0866eeba4fa76aebe7a5'
 }
 

@@ -39,7 +39,10 @@ This breaking line requires the exact RLN `v0.17.0-beta.3` source
 `v0.3.0-beta.50-bfa` (`1b951af0c8233308c919975552487be19ad2a930`).
 Install the exact native candidate `0.2.0-beta.4` for your runtime. Its compiled
 source, adapter and capabilities are checked before native handles are created;
-an older beta.3 artifact is rejected. These package versions are not yet published.
+an older beta.3 artifact is rejected. Both native peers and all three Bare data
+companions are published and independently verified. Fresh public Bare installs
+pass normal, omitted-optional and ignored-script/manual-recovery qualification,
+including all four packages' cryptographic checks. WDK itself is unpublished. See [RELEASING.md](./RELEASING.md) for the exact release status.
 
 Upstream's new BFA Lightning support does not change Iris's on-chain-only scope
 or add a WDK BFA channel guarantee. Native artifacts and funded/runtime tests
@@ -246,11 +249,15 @@ module-load differs.
 
 ## Installation
 
-The `0.2.0-beta.4` candidate consumes the merged **main** sources recorded in
-[`native-peer-sources.json`](./native-peer-sources.json): Bare PR #22 and Node
-PR #24. Published packages retain exact optional npm peers rather than floating
-Git branch dependencies. The commands below apply after those native versions
-and this WDK version are published.
+The `0.2.0-beta.4` candidate consumes the reviewed **main** sources recorded in
+[`native-peer-sources.json`](./native-peer-sources.json): Bare
+`8b692da2e896e8acfef2bf15b1e501103100c070` (lifecycle PR #22 and distribution PRs #24/#25)
+and Node `04b641dce121ac690d5d0866eeba4fa76aebe7a5` (Node PR #24).
+Bare #25 merged after both contract CI jobs passed in
+[run 38768896810](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/38768896810).
+Published packages retain two exact optional npm peers. Prefer the published
+native versions once their registry verification is complete. The commands below
+apply after the selected native binding and this WDK version are published.
 
 ```sh
 npm install @utexo/wdk-rgb-lightning@0.2.0-beta.4
@@ -262,13 +269,42 @@ npm install @utexo/rgb-lightning-node-bare@0.2.0-beta.4     # Bare / React Nativ
 ```
 
 Both bindings are declared as **optional** peer dependencies — install only
-the one for your runtime after publication. Native installers verify packed
-prebuilds when present, otherwise build the exact locked source. Source builds
-require authorized access to private upstream BFA repositories, Rust 1.94.0, Git,
-CMake and the target SDK/toolchain. Complete verified release prebuilds and clean
-consumer installs are still publication gates. Bare mobile artifacts must exist
-before bundling the worklet. Standalone Bare requires >=1.33.0. See each binding's
-README for target selection and prerequisites. The parser-only
+the one for your runtime after publication. Bare itself requires three data
+packages at exact version `0.2.0-beta.4`; they are not additional WDK peers:
+
+| Required Bare dependency | Targets |
+| --- | --- |
+| `@utexo/rgb-lightning-node-bare-ios` | iOS device and both simulator slices |
+| `@utexo/rgb-lightning-node-bare-android-arm` | Android ARMv7 and ARM64 |
+| `@utexo/rgb-lightning-node-bare-android-x64` | Android x64 |
+
+npm installs all three on every host, including when optional dependencies are
+omitted. The wrapper contains Darwin only. Its postinstall admits every data
+package and all hashes before copying six mobile files into the canonical
+prebuild paths, then verifies all seven targets. The data packages have no hooks,
+executable entry points, dependencies or platform filters. All seven compiled
+files and 13 native build/runtime inputs remain unchanged.
+
+The already-published iOS package stays at source
+`15b0ff68d1b59fa88131cfb9be6fe48c30287e6b`, publication
+[run 38762929465](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/38762929465),
+with immutable integrity
+`sha512-BOfizU4fqvGyl4L2Q0YAikLEYGyOBDYQikYPPR7IgxnmKrddm3T1/Lv0YnQeYt1EsBOf2SGyLNJKOLaWOglrkg==`.
+The wrapper and new Android packages use the subsequently reviewed final main.
+Their package sources and real publication builders remain distinct from the
+original native build; splitting distribution does not claim a rebuild.
+
+Packed Bare installation fails if any required payload or identity is missing or
+incorrect; it does not fall back to a private source build. If install scripts
+were skipped, assemble and verify the installed package before bundling:
+
+```sh
+npm --prefix node_modules/@utexo/rgb-lightning-node-bare run hydrate-native
+```
+
+Complete verified native artifacts and clean consumer installs remain release
+gates. Standalone Bare requires >=1.33.0. See each binding's README for native
+prerequisites. The parser-only
 `@utexo/wdk-rgb-lightning/lsp-info` entry is pure JS.
 
 npm 12 requires approval before dependency install scripts run. Review and
@@ -277,19 +313,32 @@ not authorize a local tarball, which needs its exact file-source grant. The
 nonpublishing packed-consumer canaries in [RELEASING.md](./RELEASING.md) apply
 that restricted policy and require successful native artifact admission.
 
-Before registry publication, build/pack the native peers from their recorded
-main commits and install those candidate tarballs alongside the WDK tarball.
-For a source installation, use the immutable snapshots of main:
+Source builds require authorized access to private upstream BFA repositories,
+Rust 1.94.0, Git, CMake and the target SDK/toolchain. A Bare source build starts
+from an explicit checkout; installing a Git dependency is not a substitute for
+preparing the complete split distribution:
 
 ```sh
-# Install only the peer for your runtime; these commits are merged into main.
-npm install --save-exact github:UTEXO-Protocol/rgb-lightning-node-nodejs#04b641dce121ac690d5d0866eeba4fa76aebe7a5
-# or
-npm install --save-exact github:UTEXO-Protocol/rgb-lightning-node-bare#6bfd8726a644d79fc914929db3de19eec3c57a21
+git clone https://github.com/UTEXO-Protocol/rgb-lightning-node-bare.git /absolute/bare-main
+cd /absolute/bare-main
+git checkout --detach 8b692da2e896e8acfef2bf15b1e501103100c070
+npm ci --ignore-scripts
+# With the documented native SDKs and ORG_READ_TOKEN configured:
+node scripts/with-source-access.js npm run prepare-native -- --platform all
+npm run stage:payloads
+npm run check:distribution
 ```
 
-Git source installations invoke native builds unless complete verified artifacts
-are supplied. The PR's `Verify merged native main sources` check fetches `main`
+The complete Bare release target set requires macOS with the iOS SDK and Android
+NDK. Follow the native README to pack and verify all four archives; a local
+consumer must install all three actual payload archives alongside the wrapper,
+not depend on the repository's workspace links. The archive gate bounds each new
+upload to 128 MiB and requires the existing 146,197,231-byte iOS archive to match
+its immutable public SRI. Node source preparation follows its
+own [pinned README](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/blob/04b641dce121ac690d5d0866eeba4fa76aebe7a5/README.md).
+Neither build nor pack instructions publish a package.
+
+The PR's `Verify merged native main sources` check fetches `main`
 from both repositories and rejects a different commit, graph or dirty checkout.
 To repeat that source check locally with exact main checkouts:
 

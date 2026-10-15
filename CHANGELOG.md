@@ -10,10 +10,21 @@ while pre-`1.0`.
 
 ### 0.2.0-beta.4 Candidate
 
-- Adopt merged native `main` snapshots: Bare `6bfd8726a644d79fc914929db3de19eec3c57a21`
-  and Node `04b641dce121ac690d5d0866eeba4fa76aebe7a5`. Record source pins in
-  `native-peer-sources.json`, verify main-source admission in PR CI, and retain
-  exact optional `0.2.0-beta.4` npm peers for publication.
+- Adopt reviewed native `main` snapshots: Bare `8b692da2e896e8acfef2bf15b1e501103100c070`
+  after merged distribution PR #25 and Node `04b641dce121ac690d5d0866eeba4fa76aebe7a5`.
+  Record both pins in `native-peer-sources.json` and an independent release
+  fixture; retain two exact optional `0.2.0-beta.4` npm peers and verify main
+  source admission in PR CI.
+- Use Bare's three required exact-version data companions: immutable iOS,
+  Android ARMv7/ARM64 and Android x64. The wrapper contains Darwin only;
+  all six mobile files assemble into existing paths after complete admission.
+  All seven native binaries and 13 compiled/build inputs remain unchanged.
+  Existing iOS beta.4 stays at source `15b0ff68...` and its verified public SRI;
+  All native packages pass public source/byte/publisher verification and fresh
+  public Bare install/recovery/cryptographic qualification. Final WDK commit and
+  archive receipts are recorded on PR #45 after the source freeze.
+  Package source, actual publisher and original native build identities remain
+  separate; see RELEASING.md.
 - Fix release admission to validate the two native peers independently from
   optional WebRGB and require the actual immutable source manifest. Registry
   publication remains a separate gate from merged-main source qualification.
@@ -30,7 +41,7 @@ while pre-`1.0`.
   creation. Reject the preceding graph even when its capability list matches.
 - Refresh isolated qualification tooling to the same RLN/rgb-lib graph. Preserve
   the existing on-chain API and Iris's on-chain-only scope. No new BFA Lightning
-  API, registry publication, release tag or merge is included.
+  API, WDK registry publication, release tag or merge is included.
 - Retain dated beta.3 evidence and unresolved production gates; a source upgrade
   or a passing mock suite does not qualify native settlement or recovery.
 
@@ -45,8 +56,9 @@ while pre-`1.0`.
   read-only accounts do not. No automatic retries, journal or bridge payout.
 - Widen the optional WebRGB type peer to `^0.1.0`, verified against `0.1.0` and
   `0.1.2`; preserve the receiving/read subset without adding a transport or
-  extending the provider. Iris's normal install remains pending final native
-  Git pins and resolution of its npm override error.
+  extending the provider. At this earlier candidate's qualification, Iris's
+  normal install awaited final native pins and npm override correction; later
+  integration evidence is recorded separately in PRODUCTION-GATES.md.
 - Accept optional `eth_rpc_url` on external unlock and preserve endpoint identity
   when coalescing concurrent requests. Omitted/null keep non-BFA behavior.
 - Require the matching native candidate and compiled external Ethereum RPC

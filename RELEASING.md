@@ -6,10 +6,66 @@ GitHub release.
 
 ## 0.2.0-beta.4 source and publication gates
 
-Bare #22 and Node #24 are merged. This WDK candidate adopts their exact main
-commits in [native-peer-sources.json](./native-peer-sources.json); the published
-optional peers remain exact npm versions `0.2.0-beta.4`. Do not substitute a
-floating Git branch or an older npm peer for the reviewed runtime.
+Bare lifecycle #22, distributions #24/#25 and Node #24 are merged.
+The final Bare wrapper/Android package source is
+`8b692da2e896e8acfef2bf15b1e501103100c070`; Node remains
+`04b641dce121ac690d5d0866eeba4fa76aebe7a5`. The manifest and independent release
+fixture record these exact main sources. Both Bare #25 contract CI jobs pass in
+[run 38768896810](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/38768896810).
+The two optional WDK peers remain exact npm `0.2.0-beta.4`; floating branches or
+older native packages cannot substitute for the reviewed runtime.
+
+Bare's wrapper contains Darwin only and requires three exact-version data
+companions: `@utexo/rgb-lightning-node-bare-ios`,
+`@utexo/rgb-lightning-node-bare-android-arm` (ARMv7 and ARM64), and
+`@utexo/rgb-lightning-node-bare-android-x64`. They are required Bare dependencies,
+not additional WDK peers, and have no hooks, executable entry points, transitive
+dependencies or host filters. Complete validation precedes copying all six mobile
+files; assembly restores and verifies all seven canonical prebuild paths.
+All seven original native bytes and 13 compiled/build inputs remain unchanged.
+New wrapper/Android archives are bounded to 128 MiB by a conservative distribution
+policy. The existing iOS archive is immutable at 146,197,231 bytes and its full
+SRI below; do not republish it. Package source, real publication builder and
+original native build provenance are separate identities.
+
+The final assembly publisher is `7a306a12d7063260b55673cc201b7d007e47098f` on
+`ci/publish-native-beta4-payloads-20261015`; its reviewed workflow SHA256 is
+`45a9d6e9ad1463ceaeee78aa0fdd9142f47e466d961ed4792d9746bee7b2e900`. Verify-only
+[run 38771729970](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/38771729970)
+succeeds and independent inspection admits the actual four archives. This proves
+assembly, not registry publication. Android data publication in
+[run 38773164227](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/38773164227)
+has independently verified public metadata, exact bytes, source, PURL/digest,
+publication workflow and npm signature/SLSA checks. The run's bounded registry
+visibility wait timed out after both uploads succeeded; subsequent public
+verification passed without republishing. All three required data packages pass
+the fresh cryptographic audit. Wrapper-only
+[run 38775712257](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/38775712257)
+succeeds. Its public source, exact 49,385,350-byte archive, PURL/digest and audited
+publisher mapping are independently verified, with integrity
+`sha512-0+qm8qbFPfd3t3bDJDm4hXSCqa+4EwZ04wCN2QqeA1nEQZcGjvWWN311HD3aab9iMe0iid2Bs8oDwanm35Ygtg==`.
+All seven original Bare target hashes are assigned exactly once across the four
+public packages. All five native/data packages expose beta `0.2.0-beta.4`;
+the existing wrapper latest tags are preserved (Bare `0.1.0-beta.20`, Node
+`0.1.0-beta.16`). Fresh fully public Bare consumers pass normal installation,
+`--omit=optional`, and ignored-scripts plus manual `--platform all` recovery with
+an empty PATH. Node 24.18.0/npm 12.0.1/Bare 1.33.0 verifies all seven original
+hashes, real host signer reopen/lifetime/cleanup and signatures/SLSA for all four
+Bare packages (36 attestation entries across each complete consumer graph).
+These host package checks do not claim new iOS or Android execution.
+
+Native publication facts and final WDK qualification protocol:
+
+| Artifact or gate | Status |
+|---|---|
+| Node `0.2.0-beta.4` | Published from main `04b641d...`, run [38752777916](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/actions/runs/38752777916). Exact registry bytes/source/publication provenance verified. Frozen WDK `6758e4d` registry consumers pass Node 22.23.1 and 24.18.0 with npm 12.0.1: 93 registry signatures and 68 attestations verified in each. |
+| Bare iOS data companion `0.2.0-beta.4` | Published and independently verified from source `15b0ff68d1b59fa88131cfb9be6fe48c30287e6b`, [run 38762929465](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/38762929465). Exact bytes/source/PURL/digest/publisher mapping and cryptographic audit pass. Integrity: `sha512-BOfizU4fqvGyl4L2Q0YAikLEYGyOBDYQikYPPR7IgxnmKrddm3T1/Lv0YnQeYt1EsBOf2SGyLNJKOLaWOglrkg==`. |
+| Bare Android ARM and x64 data companions `0.2.0-beta.4` | Published from source `8b692da2e896e8acfef2bf15b1e501103100c070` in [run 38773164227](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/38773164227), attempt 1. Public exact bytes/source/PURL/digest/publisher mapping and npm cryptographic checks pass for both. Archive sizes: ARM 108,045,074 bytes; x64 58,903,340 bytes. |
+| Bare wrapper `0.2.0-beta.4` | Public from `8b692da2e896e8acfef2bf15b1e501103100c070`, successful [run 38775712257](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/38775712257), attempt 1. Independent byte/source/PURL/digest/publisher checks and fresh fully public Bare consumer/cryptographic checks pass. |
+| Final WDK archive and registry-native consumers | Freeze the reviewed WDK commit first, then record that exact HEAD/archive integrity, repeated-pack determinism and same-archive Node/Bare registry-consumer receipts on [PR #45](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/pull/45) and in external release evidence. Earlier `6758e4d` results retain their identity. |
+
+WDK remains unmerged and unpublished. Native publication is not WDK release or
+production approval; the native issues listed below remain open.
 
 Source/package merge readiness requires the PR build and merged-main source
 checks, lint/types/full unit coverage, production dependency audit, package
@@ -17,26 +73,53 @@ allowlist, and clean real Node/Bare packed-consumer checks. The source check is
 nonpublishing and needs no private native build credentials. It rejects native
 main drift so a new source change requires explicit pin review and qualification.
 
-Publication additionally requires **both native npm versions to exist first**,
-with the recorded main `gitHead`, RLN/LDK/overlay/lock metadata, complete admitted
-native artifacts, and their release provenance/signatures. Run
-`npm run check:peer-releases`; HTTP 404 or wrong provenance is a blocking result.
+Publication additionally requires **both native npm peers and all three required
+Bare data companions to exist first**, each with its approved package source
+`gitHead` (the existing iOS source remains `15b0ff68...`), matching
+RLN/LDK/overlay/lock metadata, complete admitted native artifacts and separate
+release provenance/signature verification. Run
+`npm run check:peer-releases`; HTTP 404 or wrong source/native-graph metadata is
+a blocking result.
 A merged GitHub PR and a candidate tarball do not satisfy that registry gate.
-Native artifact workflows themselves do not publish packages.
+Native artifact build workflows do not publish. A separately reviewed assembly
+publisher can publish the already admitted artifacts with their original build
+identity preserved.
 
 This command validates native registry identity and graph metadata, not tarball
 signatures or SLSA attestations. Those native artifact/release checks remain
-separate prerequisites; WDK's final Node install does not exercise the Bare peer.
+separate prerequisites; WDK's final Node install does not exercise the Bare peer
+or its data companions. Preserve successful `npm audit signatures` results from
+fresh registry consumers for Node and Bare, including all three required data
+packages. `check:peer-releases` validates the two WDK native peers; it does not
+replace independent companion metadata, archive and provenance checks.
 
 For prepublication qualification, the Node and Bare package canaries accept
 `RLN_NODE_PACKAGE_TARBALL` and `RLN_BARE_PACKAGE_TARBALL`, respectively. These
 exercise fresh consumer installations with real native code; they do not prove
 npm registry provenance. Preserve original native artifact provenance when the
-main merge changes only documentation. Do not relabel an earlier CI binary as a
-new main build. A cache-assisted build is not a bit-for-bit hermetic rebuild.
+main merge changes only documentation or byte-preserving distribution assembly.
+The package's registry `gitHead` identifies its merged main package source;
+SLSA provenance identifies the real publication workflow commit/ref/run. These
+can differ and must each be verified against the reviewed expectation. Do not
+relabel an earlier CI binary as a new main build. A cache-assisted build is not
+a bit-for-bit hermetic rebuild.
 The canaries authorize the exact native registry version or local tarball source
 under npm 12, require its postinstall admission, reject script-policy bypasses,
 and fail if any dependency install script remains unreviewed.
+
+With the final local WDK tarball in `WDK_TGZ`, repeat the nonpublishing registry
+checks after removing inherited `RLN_*` source/artifact/JS-only overrides:
+
+```sh
+npm run check:peer-releases
+npm run smoke:package:node -- "$WDK_TGZ" --verify-signatures
+npm run smoke:package:bare -- "$WDK_TGZ"
+```
+
+The Bare canary has no signature-verification flag; audit signatures separately
+in a fresh registry Bare consumer that includes all three required data packages. Verify
+native registry tarball integrities and exact source/publication provenance as
+separate checks. These commands do not stage or publish WDK.
 
 The unresolved native financial/security cases in
 [PRODUCTION-GATES.md](./PRODUCTION-GATES.md), including P02/P03/P04/P06 and D01,
@@ -80,7 +163,8 @@ Enable immutable releases for the repository.
 
 1. Freeze unrelated merges, including native or wallet changes not included in
    the release candidate.
-2. Confirm compatible native packages are already published. Native package
+2. Confirm compatible native packages, including all three required exact-version
+   Bare data companions, are already published and cryptographically verified. Native package
    versions are independent from the RGB Lightning SDK version.
 3. Run both clean real Node/Bare packed-consumer canaries against the recorded
    main native packages. Qualify supported mobile/runtime/network scopes
