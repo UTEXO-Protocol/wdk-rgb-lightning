@@ -30,7 +30,7 @@ Failed account/default-signer/named-signer manager cleanup also retains ownershi
 for retry; successful cleanup runs once. Public signer and partial-failure
 regressions cover that behavior.
 
-The current complete WDK suite passes **30 suites / 1,060 tests**, lint, types,
+The current complete WDK suite passes **30 suites / 1,065 tests**, lint, types,
 WebRGB compatibility and harness process-ownership checks. Production npm audit
 reports **zero vulnerabilities**. That audit covers the WDK npm dependency tree,
 not the selected Rust/native dependency disposition D01.

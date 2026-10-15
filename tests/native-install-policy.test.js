@@ -66,4 +66,21 @@ describe('native consumer install-script policy', () => {
     expect(() => assertNativePostinstall(admissionMarker, options)).toThrow('not observed')
     expect(() => assertNativePostinstall(identity.replace(version, '0.2.0-beta.3') + admissionMarker, options)).toThrow('not observed')
   })
+
+  it('accepts the actual npm 12 foreground lifecycle notice and native admission', () => {
+    const admissionMarker = 'Verified release-based native addon.'
+    const output = `${admissionMarker}\nnpm notice run ${packageName}@${version} postinstall\nnpm notice run node scripts/install-overlay-addon.js\n`
+    expect(() => assertNativePostinstall(output, { packageName, version, admissionMarker })).not.toThrow()
+  })
+
+  it.each([
+    'npm notice run @utexo/unrelated@0.2.0-beta.4 postinstall',
+    'npm notice run @utexo/rgb-lightning-node-nodejs@0.2.0-beta.3 postinstall',
+    'npm notice run @utexo/rgb-lightning-node-nodejs@0.2.0-beta.4 preinstall',
+    'prefix npm notice run @utexo/rgb-lightning-node-nodejs@0.2.0-beta.4 postinstall suffix'
+  ])('rejects a mismatched or partial npm lifecycle notice %p', header => {
+    const admissionMarker = 'Verified release-based native addon.'
+    expect(() => assertNativePostinstall(`${admissionMarker}\n${header}\n`, { packageName, version, admissionMarker }))
+      .toThrow('not observed')
+  })
 })

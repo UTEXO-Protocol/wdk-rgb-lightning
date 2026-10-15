@@ -271,6 +271,12 @@ before bundling the worklet. Standalone Bare requires >=1.33.0. See each binding
 README for target selection and prerequisites. The parser-only
 `@utexo/wdk-rgb-lightning/lsp-info` entry is pure JS.
 
+npm 12 requires approval before dependency install scripts run. Review and
+authorize the exact native package source; a registry `name@version` grant does
+not authorize a local tarball, which needs its exact file-source grant. The
+nonpublishing packed-consumer canaries in [RELEASING.md](./RELEASING.md) apply
+that restricted policy and require successful native artifact admission.
+
 Before registry publication, build/pack the native peers from their recorded
 main commits and install those candidate tarballs alongside the WDK tarball.
 For a source installation, use the immutable snapshots of main:

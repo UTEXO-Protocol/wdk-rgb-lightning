@@ -34,7 +34,11 @@ export function assertInstallScriptConfiguration ({ npmMajor, ignoreScripts, dan
 }
 
 export function assertNativePostinstall (output, { packageName, version, admissionMarker }) {
-  if (!output.includes(`> ${packageName}@${version} postinstall`) || !output.includes(admissionMarker)) {
+  const identity = `${packageName}@${version} postinstall`
+  const observed = output.split(/\r?\n/).some(line =>
+    line === `npm notice run ${identity}` || line === `> ${identity}`
+  )
+  if (!observed || !output.includes(admissionMarker)) {
     throw new Error('Native postinstall and successful artifact admission were not observed')
   }
 }
