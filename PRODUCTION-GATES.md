@@ -9,11 +9,12 @@ evidence listed here, not by a general CI success.
 October 15 lifecycle repair supersedes the October 14 native adapter identity
 below. Both native peers now expose explicit terminal signer shutdown and own
 session task/listener cleanup; WDK drains its node before revoking/freeing the
-signer and retains failed cleanup handles for retry. Exact overlay identity is
+signer and retains failed cleanup handles for retry. Terminal metadata pools
+close on their owning runtime; nonterminal REST lock keeps its database. Exact overlay identity is
 enforced by `src/native-runtime-contract.js`; required capabilities include
 `native-signer-shutdown-v1` and `owned-session-cleanup-v1`.
 
-Focused native qualification passes 29 lifecycle/signer/startup/VSS tests and
+Focused native qualification passes 31 lifecycle/signer/startup/VSS tests and
 14 C-FFI tests. WDK passes 26 suites / 977 tests, lint, types and package checks.
 Rebuilt artifacts, repeated real same-process reopening and funded iOS 27
 acceptance are in progress. P01 remains open until those tests demonstrate
