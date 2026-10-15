@@ -20,8 +20,8 @@ Focused native qualification passes 31 lifecycle/signer/startup/VSS cases and
 14 C-FFI tests. WDK passes 26 suites / 977 tests, lint, types and package checks.
 Independent final native review reports no actionable finding in its scope.
 
-All seven [Bare candidate CI targets](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/38698325319)
-and five [Node runtime CI targets](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/actions/runs/38698331825)
+The preceding `c56718bb` [seven-target Bare matrix](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/38698325319)
+and `2caa1496` [five-target Node matrix](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/actions/runs/38698331825)
 pass with original ZIP hashes and exact source/overlay/wrapper/recipe/lock
 admission. All 14 Bare library/prebuild files plus the aggregate manifest and
 all 10 Node addon/provenance files were imported into ignored repository caches
@@ -41,7 +41,59 @@ retries. The existing iOS 27 simulator separately passes 18 native C-FFI CLI
 cycles, two failure/same-SDK retries and three early-free signing sessions.
 Those native CLI tests do not establish Iris UI or financial acceptance.
 
-### October 15 scoped Iris acceptance
+### October 15 environment and erasure follow-up
+
+The maintained follow-up uses Iris `cef3e1ebfa5e4b2fafca574ea9796f559157d7c2`,
+Bare `95e2c844dc2c76e3f83d6f1a0dcf76d74f17fef7`, Node
+`6079afea5859193dea39f390376219d8dbfef332` (regression-only), and unchanged WDK
+`81182153193c9910e89a9d91b1d457e0725787aa`. Bare wrapper SHA-256 is
+`ca3ac291fbb4af86fc0d091805f9f544031298f6ce94a66b99f8f1acd763d4f7`;
+the `7f89dc51` shared overlay and upstream graph are unchanged.
+
+Bare terminal worker disposal reproduced a retained signer when its external-
+object GC finalizer did not run. Same-environment terminal ownership cleanup
+passes 100 local full-node terminations with 201 OS observations and separate
+18 portable cases. Node adds 12 worker regressions without production-native
+changes. The replacement [Bare CI run](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/38718114135)
+passes seven native targets and three Android staging checks; original-byte
+admission and the isolated complete assembled-package gate pass. All 14 native
+files match the standard cache import byte-for-byte and the repository gate
+passes; the QA app keeps its archived locally rebuilt Apple bytes. These results
+are distinct from the preceding 246/60 host and 18 native iOS cycles.
+The current Node regression-only hosted runtime rerun remains 4/5 with Darwin
+x64 running at the recorded `11:24 UTC` observation; its previous complete
+five-target pass retains the old source identity.
+
+Fresh app controls confirmed Expo KV writer contention (`SQLITE_BUSY`). Iris
+serializes the shared resource and quiesces storage/key work under shared erasure
+ownership. Its new iOS 27 Debug build passes cold authorized-journal recovery and
+three normal CREATE → first authenticated Settings erasures in PID `16174`,
+each `1/2/1` → `0/0/0`, with all four databases/keys, native directory and
+journal absent and no retry/reload. Five actual full Metro reloads on an
+unfunded wallet pass in the same PID: `1/2/1` → locked `0/0/0` → authenticated
+same-store `1/2/1`, without injected methods, GC, restart or settling retry.
+Fresh BTC receive/send passes: 2,000,000 sat in, exactly one confirmed 10,000-sat
+payment, 2,845-sat fee and independently verified 1,987,155-sat change. RGB setup
+confirms four 20,000-sat outputs/5,665-sat fee. BFA 2 USDT in / 0.5 USDT out
+settles with a 5,100-sat return fee; Iris 1.50 + holder 15.48 conserves the new
+16.98-USDT baseline. An additional full Metro reload before holder ACK preserves
+the same pending anchor and one USDT send, no resubmission, at locked `0/0/0`
+then normally reopened `1/2/1` in PID `16174`. Three funded manual cycles pass;
+short background (5.355 s) stays active without authentication, long background
+(40.422 s) reaches actual offscreen `0/0/0` and normally reopens in the same PID.
+Funded cold restart enters PID `60403` locked at `0/0/0`, then normally reopens
+at `1/2/1`, preserving balances. Independent BTC/USDT conservation passes: Iris
+1,976,390 sat = 1,901,490 vanilla + 74,900 colored; holder 97,492 sat, external
+10,000 sat and four fees 14,121 sat. All 39 shared-stack services remain running.
+Two final refreshes and all history filters preserve four unique transactions
+without pending/duplicate entries; the confirmed return anchor and 5,100-sat
+fee match. Only the corrected full-run qualified history receipt is counted.
+The [Iris follow-up](https://github.com/UTEXO-Protocol/utexo-mobile/blob/release/rln-0.15.0-beta.3/docs/engineering/lifecycle-recovery-validation-20261015.md)
+records exact evidence and generated build-fixture corrections. The preceding
+qualification below retains its original identities; no aggregate P01/Q01 or
+production approval follows.
+
+### Preceding October 15 scoped Iris acceptance
 
 Debug and Release builds pass static native/dependency provenance, scene,
 export and signing checks. Three standalone Release cold launches with Metro
@@ -81,8 +133,9 @@ retained one signer descriptor (`1/0/0`) until cold restart; it is excluded from
 the ten valid cycles. The first erasure attempt failed verification after clean
 native shutdown, then a normal Metro reload resumed the authorized journal and
 cleared seed/journal, SQLCipher artifacts and native wallet files. Its exact
-first-failure cause remains unresolved; this is not first-attempt erasure
-acceptance. Final history shows exactly four BTC/BFA receipt/payment entries;
+historical exception was not captured; subsequent cause/fixed acceptance is
+recorded above. That failed attempt is not a first-attempt pass. Final history
+shows exactly four BTC/BFA receipt/payment entries;
 the outgoing BFA detail is Settled with 142/3 confirmations and a 5,100-sat fee.
 Two further normal refreshes preserve balances and produce no duplicate entries.
 
@@ -371,7 +424,7 @@ verified correction and acceptance, rather than approval alone.
 
 | ID | Gate and origin | Network / feature | Required closure |
 | --- | --- | --- | --- |
-| P01 | Persistent signer database lock after unlock, shutdown and same-process recreation. Native RLN/VLS lifetime. | Historical Signet/mainnet, October 12 beta.47 Android and October 14 beta.50 host failures; October 15 `7f89` host/native and normal funded iOS 27 Debug regtest scopes pass as recorded above | Preserve the completed exact-artifact host and normal simulator scopes. Qualify remaining Android, positive funded Release and public Signet/mainnet lifecycle/financial cases separately. The excluded Debug-reload retained descriptor and unresolved first erasure failure are not passes. Do not retain an unlocked signer after lock or reset its database to bypass the defect. Historical failures keep their original identities. |
+| P01 | Persistent signer database lock after unlock, shutdown and same-process recreation. Native RLN/VLS lifetime. | Historical Signet/mainnet, October 12 beta.47 Android and October 14 beta.50 host failures; October 15 `7f89` host/native and normal funded iOS 27 Debug regtest scopes pass as recorded above | Preserve completed exact-artifact scopes. The maintained follow-up passes cold recovery, three first-attempt erasures, five unfunded full Metro reloads, BTC/BFA roundtrips, an additional funded pre-ACK reload, three funded manual cycles, short/long background, funded cold restart and final refresh/history checks; original adverse observations remain historical. Arbitrary crash recovery, Android, positive funded Release and public Signet/mainnet require their own results. Do not retain an unlocked signer after lock or reset its database to bypass the defect. Historical failures keep their original identities. |
 | P02 | Process death during BTC send can leave an orphaned input reservation. RLN external-signer begin/sign/end integration with rgb-lib. | Historical BTC sends on both networks; fresh October 14 Bare regtest timing-dependent failure | Expose and qualify reconciliation/abort recovery. Prove no unintended replay and retained spendability after interrupted submission. The missing custom prepared-send UX is separate from this underlying recovery requirement. |
 | P03 | RGB settlement remains stale after a receipt is disconnected by a reorg. Pinned rgb-lib behavior. | Historical RGB on both networks; fresh October 14 Bare and final `3647ddc8` Node regtest retain 10,000 settled units after disconnection | Prove rollback, cold restart and reconfirmation against an approved upstream graph. Additional confirmations reduce exposure but are not evidence that rollback works. |
 | P04 | Incoming witness `future` balance double-counts one receipt before settlement. October 14 beta.4 Bare and final `3647ddc8` Node native/WDK responses double-count one 100,000-unit incoming witness as future 200,000 before settling correctly; raw native and WDK values match. October 12 beta47 Android also reproduced the UI symptom: one 1,000,000-unit receipt becomes 2.00 pending, then settles to the correct 1.00 USDT. | Historical RGB pending balances on both networks; October 12 beta.47 Android 16-KiB regtest; fresh October 14 beta.50 host regtest on both wrappers | Fix native accounting, or explicitly omit unqualified pending projections while retaining truthful settled/spendable balances. Do not cap or divide pending amounts. Correct settled balance is not closure. Run `tests/regtest/pending-balance.mjs` on both runtimes and requalify the mobile pending sequence. |
@@ -431,7 +484,7 @@ alone is not evidence of an unauthenticated TCP endpoint in this integration.
 
 | ID | Gate | Completion criteria |
 | --- | --- | --- |
-| Q01 | Mobile release-runtime acceptance | October 15 normal funded iOS 27 Debug regtest BTC/BFA roundtrip, ten valid manual cycles, pending-transfer reopen, funded cold restart and real short/long background cases pass within their recorded scopes. Debug/Release static checks, three locked Release cold launches, scoped Release OS-authentication/fail-closed behavior and final history/two-refresh duplicate checks pass; positive funded Release and production-gateway interaction remain open. Qualify actual release worklets, runtime identity, TLS, Android 4-KiB/16-KiB and remaining supported architectures separately. The historical beta.47 Android P01 failure, first erasure failure and interrupted Debug reload remain explicit. No WalletConnect return or full mobile release approval is inferred. |
+| Q01 | Mobile release-runtime acceptance | The preceding October 15 results retain their original identities. The maintained follow-up passes cold recovery, three first-attempt erasures, five unfunded full Metro reloads, BTC/BFA roundtrips, an additional funded pre-ACK reload, three funded manual cycles, short/long background, funded cold restart and final refresh/history checks. Arbitrary crash recovery, positive funded Release, production gateway, actual release worklets, runtime identity, TLS, Android 4-KiB/16-KiB and remaining architectures require separate qualification. Historical beta.47 Android P01, first erasure and interrupted Debug reload observations remain explicit. No WalletConnect return or full mobile release approval is inferred. |
 | Q02 | Public Signet / mainnet deployment | Approve exact asset IDs, indexers, proxy, Ethereum RPC/bridge, confirmation policy and operational recovery. Local regtest proves neither public endpoint compatibility nor long-history validation performance. Mainnet startup must be checked independently of API-level Lightning rejection. |
 | Q03 | Supported Node/runtime range | Record tested Node versions, OS floors, libc/OpenSSL and architectures. Five original CI platform runtime passes and the separately tested macOS 27 hosts are not a claim that every version allowed by a broad engine range was exercised. |
 | Q04 | Release signing and operations | Android artifacts use local test signing. Approve distribution/signing, privacy-safe diagnostics, service configuration and incident/recovery ownership. Existing-wallet migration is excluded because there are no live wallets. Physical devices remain excluded by request, not counted as a pass. |
@@ -440,6 +493,12 @@ Wallets, source checkouts, existing chain volumes and prior evidence are retaine
 Only disposable local fixtures are used for this qualification.
 
 ## Evidence Index
+
+The environment/erasure follow-up is under
+`../release-evidence/2026-10-15/lifecycle-recovery-fix/`; its Iris validation doc
+indexes host worker, independent causal, current source-gate, build-fixture and
+three first-erasure receipts. New hosted Bare collection/gate evidence is in
+`../native-ci-artifacts/environment-cleanup-20261015/38718114135/`.
 
 Current October 15 records live outside this package under
 `../release-evidence/2026-10-15/signer-lifecycle-fix/`: `REPORT.md`,
