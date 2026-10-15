@@ -4,6 +4,11 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import {
+  assertInstallScriptConfiguration,
+  assertNativePostinstall,
+  nativeInstallPolicyKey
+} from './native-install-policy.mjs'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const packageJson = JSON.parse(
@@ -75,25 +80,52 @@ try {
     packageJson.peerDependencies[nativePackage],
     nativePackage
   )
+  const nativeTarball = process.env.RLN_NODE_PACKAGE_TARBALL
+    ? path.resolve(process.env.RLN_NODE_PACKAGE_TARBALL)
+    : undefined
+  const npmMajor = Number(
+    runAndCapture(npmExecutable, ['--version'], { cwd: temporaryRoot })
+      .split('.')[0]
+  )
+  if (!Number.isInteger(npmMajor) || npmMajor < 12) {
+    throw new Error('Native canary requires npm >=12 to enforce reviewed install-script policy')
+  }
+  const installScriptConfig = {
+    npmMajor,
+    ignoreScripts: runAndCapture(npmExecutable, ['config', 'get', 'ignore-scripts'], { cwd: temporaryRoot }),
+    dangerouslyAllowAllScripts: runAndCapture(npmExecutable, ['config', 'get', 'dangerously-allow-all-scripts'], { cwd: temporaryRoot })
+  }
+  assertInstallScriptConfiguration(installScriptConfig)
+  console.log('Native install-script configuration: ' + JSON.stringify(installScriptConfig))
 
   writeFileSync(
     path.join(temporaryRoot, 'package.json'),
     JSON.stringify({
       private: true,
       allowScripts: {
-        [`${nativePackage}@${nativeVersion}`]: true
+        [nativeInstallPolicyKey({ packageName: nativePackage, version: nativeVersion, tarball: nativeTarball })]: true
       }
     }, null, 2) + '\n'
   )
 
-  run(npmExecutable, [
+  const installed = spawnSync(npmExecutable, [
     'install',
+    '--foreground-scripts',
     '--no-audit',
     '--no-fund',
     '--save-exact',
     packageSpec,
-    process.env.RLN_NODE_PACKAGE_TARBALL ? path.resolve(process.env.RLN_NODE_PACKAGE_TARBALL) : `${nativePackage}@${nativeVersion}`
-  ], { cwd: temporaryRoot })
+    nativeTarball || `${nativePackage}@${nativeVersion}`
+  ], { cwd: temporaryRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  process.stdout.write(installed.stdout || '')
+  process.stderr.write(installed.stderr || '')
+  if (installed.error) throw installed.error
+  if (installed.status !== 0) throw new Error(`Native consumer install exited with ${installed.status}`)
+  assertNativePostinstall((installed.stdout || '') + (installed.stderr || ''), {
+    packageName: nativePackage,
+    version: nativeVersion,
+    admissionMarker: 'Verified release-based native addon.'
+  })
 
   const runtimeInstallations = runAndCapture(
     npmExecutable,
@@ -107,30 +139,21 @@ try {
     )
   }
 
-  const npmMajor = Number(
-    runAndCapture(npmExecutable, ['--version'], { cwd: temporaryRoot })
-      .split('.')[0]
-  )
-  if (!Number.isInteger(npmMajor)) {
-    throw new Error('npm returned an invalid version')
-  }
-  if (npmMajor >= 12) {
-    const policy = JSON.parse(
-      runAndCapture(
-        npmExecutable,
-        ['install-scripts', 'ls', '--json'],
-        { cwd: temporaryRoot }
-      )
+  const policy = JSON.parse(
+    runAndCapture(
+      npmExecutable,
+      ['install-scripts', 'ls', '--json'],
+      { cwd: temporaryRoot }
     )
-    if (!Array.isArray(policy.allowScripts)) {
-      throw new Error('npm returned an invalid install-script policy')
-    }
-    if (policy.allowScripts.length > 0) {
-      throw new Error(
-        'Unreviewed dependency install scripts remain:\n' +
-        JSON.stringify(policy.allowScripts, null, 2)
-      )
-    }
+  )
+  if (!Array.isArray(policy.allowScripts)) {
+    throw new Error('npm returned an invalid install-script policy')
+  }
+  if (policy.allowScripts.length > 0) {
+    throw new Error(
+      'Unreviewed dependency install scripts remain:\n' +
+      JSON.stringify(policy.allowScripts, null, 2)
+    )
   }
 
   if (verifySignatures) {

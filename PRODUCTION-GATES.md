@@ -30,7 +30,7 @@ Failed account/default-signer/named-signer manager cleanup also retains ownershi
 for retry; successful cleanup runs once. Public signer and partial-failure
 regressions cover that behavior.
 
-The current complete WDK suite passes **29 suites / 1,044 tests**, lint, types,
+The current complete WDK suite passes **30 suites / 1,060 tests**, lint, types,
 WebRGB compatibility and harness process-ownership checks. Production npm audit
 reports **zero vulnerabilities**. That audit covers the WDK npm dependency tree,
 not the selected Rust/native dependency disposition D01.
@@ -40,6 +40,11 @@ using committed source bytes and file modes. npm 12 is required before any
 pack invocation; lifecycle hooks are disabled. Regression fixtures require
 identical isolated tarballs and reject dirty/untracked source, conflicting
 identity, unsafe npm and ignored packaged inputs.
+Both packed-consumer canaries also require npm 12, exact native source approval,
+observed native postinstall admission and no unreviewed install scripts. Local
+tarball approval uses its file source; a registry-version grant alone cannot
+authorize a local tarball. Script-disabling/global-bypass negative controls fail
+before native installation.
 
 Source/package qualification does not waive registry or production gates.
 Both native `0.2.0-beta.4` npm releases are currently absent; the real registry

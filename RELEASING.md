@@ -34,6 +34,9 @@ exercise fresh consumer installations with real native code; they do not prove
 npm registry provenance. Preserve original native artifact provenance when the
 main merge changes only documentation. Do not relabel an earlier CI binary as a
 new main build. A cache-assisted build is not a bit-for-bit hermetic rebuild.
+The canaries authorize the exact native registry version or local tarball source
+under npm 12, require its postinstall admission, reject script-policy bypasses,
+and fail if any dependency install script remains unreviewed.
 
 The unresolved native financial/security cases in
 [PRODUCTION-GATES.md](./PRODUCTION-GATES.md), including P02/P03/P04/P06 and D01,
