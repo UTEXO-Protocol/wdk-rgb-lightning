@@ -64,8 +64,9 @@ Native publication facts and final WDK qualification protocol:
 | Bare wrapper `0.2.0-beta.4` | Public from `8b692da2e896e8acfef2bf15b1e501103100c070`, successful [run 38775712257](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/38775712257), attempt 1. Independent byte/source/PURL/digest/publisher checks and fresh fully public Bare consumer/cryptographic checks pass. |
 | Final WDK archive and registry-native consumers | Freeze the reviewed WDK commit first, then record that exact HEAD/archive integrity, repeated-pack determinism and same-archive Node/Bare registry-consumer receipts on [PR #45](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/pull/45) and in external release evidence. Earlier `6758e4d` results retain their identity. |
 
-WDK remains unmerged and unpublished. Native publication is not WDK release or
-production approval; the native issues listed below remain open.
+WDK publication follows the separate reviewed release process below. Native
+publication does not establish production approval; the native issues listed
+below remain open.
 
 Source/package merge readiness requires the PR build and merged-main source
 checks, lint/types/full unit coverage, production dependency audit, package
@@ -224,8 +225,17 @@ existing tag. The finalization job verifies:
 - a clean registry install, native Node load, and npm signatures
 - repository-level immutable releases
 
-It then creates an immutable GitHub release, attaches the exact npm tarball,
-and verifies the downloaded release asset byte-for-byte.
+Before creating the GitHub release, finalization requires exactly one dated
+`## [<package version>]` entry in `CHANGELOG.md`, with nonempty release notes.
+It uses that complete entry as the curated release summary, preceded by the npm
+package/version, exact install command, native peer versions and integrity.
+GitHub's generated changes are appended to that summary. No separate release-notes
+file needs to be maintained; missing, duplicate, undated or empty version entries
+stop creation rather than publishing metadata-only notes.
+
+The job then creates an immutable GitHub release, attaches the exact npm tarball,
+and verifies the downloaded release asset byte-for-byte. An existing release
+keeps its original notes and goes through the existing immutable-artifact checks.
 
 ## Rollback
 

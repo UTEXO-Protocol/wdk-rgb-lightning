@@ -8,109 +8,101 @@ while pre-`1.0`.
 
 ## [Unreleased]
 
-### 0.2.0-beta.4 Candidate
+## [0.2.0-beta.4] — 2026-10-16
 
-- Adopt reviewed native `main` snapshots: Bare `8b692da2e896e8acfef2bf15b1e501103100c070`
-  after merged distribution PR #25 and Node `04b641dce121ac690d5d0866eeba4fa76aebe7a5`.
-  Record both pins in `native-peer-sources.json` and an independent release
-  fixture; retain two exact optional `0.2.0-beta.4` npm peers and verify main
-  source admission in PR CI.
-- Use Bare's three required exact-version data companions: immutable iOS,
-  Android ARMv7/ARM64 and Android x64. The wrapper contains Darwin only;
-  all six mobile files assemble into existing paths after complete admission.
-  All seven native binaries and 13 compiled/build inputs remain unchanged.
-  Existing iOS beta.4 stays at source `15b0ff68...` and its verified public SRI;
-  All native packages pass public source/byte/publisher verification and fresh
-  public Bare install/recovery/cryptographic qualification. Final WDK commit and
-  archive receipts are recorded on PR #45 after the source freeze.
-  Package source, actual publisher and original native build identities remain
-  separate; see RELEASING.md.
-- Fix release admission to validate the two native peers independently from
-  optional WebRGB and require the actual immutable source manifest. Registry
-  publication remains a separate gate from merged-main source qualification.
-- Retain failed account/default-signer/registered-signer cleanup for manager
-  disposal retries, without repeating successfully completed cleanup.
-- Build release tarballs from a clean Git checkout with the reviewed commit in
-  the staged manifest, preserving source identity through npm staged publishing.
-- Authorize exact native tarball sources in npm 12 consumer canaries, require
-  native postinstall admission and reject install-script policy bypasses.
-- Target the exact RLN `v0.17.0-beta.3` source `ecc69f20308231400561f6f060fea88acfa40cc4`,
-  compatible rust-lightning `79b9eb5166546c62692d3a672986f385c7fe047d`, and
-  rgb-lib `v0.3.0-beta.50-bfa` (`1b951af0c8233308c919975552487be19ad2a930`).
-- Require exact beta.4 native peers and compiled runtime provenance before handle
-  creation. Reject the preceding graph even when its capability list matches.
-- Refresh isolated qualification tooling to the same RLN/rgb-lib graph. Preserve
-  the existing on-chain API and Iris's on-chain-only scope. No new BFA Lightning
-  API, WDK registry publication, release tag or merge is included.
-- Retain dated beta.3 evidence and unresolved production gates; a source upgrade
-  or a passing mock suite does not qualify native settlement or recovery.
+This breaking beta consolidates the changes developed under the unpublished
+0.2.0-beta.1, beta.2 and beta.3 candidates.
 
-### 0.2.0-beta.3 Candidate
+### Breaking changes
 
-- Require merged RLN `8777d71d7781b408fcce89c9c965ae29e8ad2300`, including
-  external-signer burn and rgb-lib beta.47-bfa, plus its exact native adapter
-  and `external-signer-burn-v1` capability. Earlier #192 qualification remains
-  historical evidence, not a qualification of the new dependency graph.
-- Add `burnAsset(request)` with native snake_case fields, exact u64 inputs,
-  typed results and lifecycle admission checks. Full accounts advertise burn;
-  read-only accounts do not. No automatic retries, journal or bridge payout.
-- Widen the optional WebRGB type peer to `^0.1.0`, verified against `0.1.0` and
-  `0.1.2`; preserve the receiving/read subset without adding a transport or
-  extending the provider. At this earlier candidate's qualification, Iris's
-  normal install awaited final native pins and npm override correction; later
-  integration evidence is recorded separately in PRODUCTION-GATES.md.
-- Accept optional `eth_rpc_url` on external unlock and preserve endpoint identity
-  when coalescing concurrent requests. Omitted/null keep non-BFA behavior.
-- Require the matching native candidate and compiled external Ethereum RPC
-  capability. BFA validation and burn still require valid native configuration
-  and separate funded/recovery qualification.
-- Add BFA qualification evidence and comparison with the React Native SDK.
-
-### 0.2.0-beta.2 Candidate
-- Add an optional, transport-neutral WebRGB receiving/read adapter with session
-  approval, revocation checks, strict request/amount mapping and sanitized errors.
-- Reject mainnet account and wallet-connected LSP Lightning operations with
-  `LIGHTNING_DISABLED_ON_MAINNET` before native/HTTP work; preserve non-mainnet
-  APIs and mainnet on-chain receipt lookup.
-- Add local network/lifecycle and signer-aware capability reporting. BFA asset
-  listing is distinct from unsupported external-signer BFA validation and burn.
-- Upgrade both exact native peers to RLN 0.15.0-beta.3 and verify its compiled
-  source/adapter identity. Contract imports now use upstream #128, not a backport.
-- Add `getConsignment(assetId, txid): Promise<Uint8Array>` on writable and
-  read-only accounts, with strict identifiers, exact bytes and native errors.
-- Preserve strict persistent signing, lossless response amounts and existing
-  account/LSP behavior. Enforce upstream mainnet Lightning rejection.
-- Require standalone Bare >=1.33.0 for current dependency resolution.
-- Support provenance-verified native prebuild packages, with publication gated
-  on complete release artifacts. Track exact-candidate tests and outstanding
-  production gates in RELEASE-0.15-TRACKER.md. No npm publication yet.
-
-### Breaking: 0.2.0-beta.1 Candidate
-- Pin native peers to the unpublished 0.2.0-beta.1 release-based candidates for
-  RLN 0.13.0-beta.3, with compiled capability/identity checks before handle creation.
-- Normalize canonical and supported flat unlock inputs; reject ambiguous settings.
-  Use persistent VLS storage and strict signing by default. Preserve native handles
-  after cleanup failure, serialize activation/shutdown and support explicit retry.
-- Preserve refresh batch failures, released invoice metadata and UTXO existence;
-  reject unsafe integer inputs/outputs and unsupported routing fee caps.
-- Add parser-only typed LSP discovery, address-attested APay registration,
-  strongest usable single-channel liquidity checks, terminal Cancelled handling,
-  verified Lightning Address resolution and local invoice verification before
-  convenience-helper payments. Helpers now require a native invoice decoder and
-  explicit safe-range payment amounts; bridge auto-quoting is not implied.
-- Do not merge native operation/snapshot/prepared-send/import/delete-all or capped
-  routing overlays. No implicit virtual-channel enablement or VSS fence takeover.
-- Native installation remains source-built with pinned Rust and adapter identities.
-  Existing-channel/password-wallet migration, mobile/network and recovery gates
-  remain open. See UPGRADE-TRACKER.md; this is not production qualification.
+- Require exact native peers `@utexo/rgb-lightning-node-bare@0.2.0-beta.4`
+  or `@utexo/rgb-lightning-node-nodejs@0.2.0-beta.4` for the selected runtime.
+  Verify compiled source, adapter and capabilities before creating native handles;
+  preceding native graphs are rejected.
+- Adopt RLN `v0.17.0-beta.3` (`ecc69f20308231400561f6f060fea88acfa40cc4`),
+  rust-lightning `79b9eb5166546c62692d3a672986f385c7fe047d` and rgb-lib
+  `v0.3.0-beta.50-bfa` (`1b951af0c8233308c919975552487be19ad2a930`).
+- Replace the former custom runtime behavior with the released API. Snapshot/
+  FullSync, prepared-send/UTXO inventory, custom operation control, address
+  receipts, VSS delete-all and native routing fee caps are unavailable; unsupported
+  controls fail before submission. Existing overlay-dependent applications need
+  integration changes. Legacy wallet/channel migration is not qualified.
+- Enforce upstream mainnet Lightning rejection before native or HTTP work with
+  `LIGHTNING_DISABLED_ON_MAINNET`. Mainnet on-chain APIs and non-mainnet
+  Lightning APIs retain their documented availability and qualification scope.
 
 ### Added
-- UMA address-format compatibility across Lightning Address payment flows.
-  `$recipient@example.com` is normalized to `recipient@example.com` before
-  LNURL discovery. New root exports include `isUmaAddress`,
-  `normalizeLightningAddress`, `UMA_PREFIX`, and `UMA_MAX_USERNAME_LENGTH`;
-  `parseLightningAddress` now also returns the canonical address, domain, and
-  whether the input used UMA form.
+
+- Typed `burnAsset(request)` on full accounts, with exact u64 decimal-string
+  amount/fee inputs and one native submission. Read-only accounts expose no burn
+  operation. There is no automatic retry, bridge payout or operation journal.
+- Optional `eth_rpc_url` on external unlock for native BFA event validation.
+  Omitted or null values retain non-BFA behavior; endpoint and chain identity
+  remain application responsibilities.
+- `getConsignment(assetId, txid)` on full and read-only accounts, returning
+  exact bytes. Upstream contract/transfer metadata imports validate identity
+  without crediting funds or replacing normal receipt settlement.
+- Optional transport-neutral WebRGB receiving/read adapter, with session
+  approval, revocation checks, strict request mapping and sanitized errors.
+  The optional type peer supports the unchanged `@utexo/webrgb@^0.1.0` subset;
+  it does not add a browser node, WalletConnect transport or remote burn API.
+- Local network, lifecycle and signer-aware capability reporting, plus typed
+  parser-only LSP discovery and address-attested APay registration.
+- UMA-form Lightning Address normalization (`$name@example.com` to
+  `name@example.com`) and the corresponding normalization/parser exports.
+
+### Fixed
+
+- Normalize canonical and supported flat unlock settings, reject ambiguous
+  configuration, and use persistent strict external signing. Serialize activation,
+  receive-address allocation and teardown.
+- Drain the node before revoking its signer. Retain failed account/default-signer/
+  registered-signer cleanup ownership for explicit retries without repeating
+  completed cleanup. Native beta.4 provides terminal signer shutdown and owned
+  session task/listener cleanup.
+- Preserve exact response integers outside JavaScript's safe range, per-batch
+  refresh failures, `utxo.exists` (including false) and `pending_blinded`.
+  Ordinary numeric request inputs reject unsafe integers; the typed burn boundary
+  additionally accepts full-u64 decimal strings.
+- Validate LSP/LNURL response amounts, usable single-channel liquidity, terminal
+  cancellation, Lightning Address/invoice mapping and local invoice decoding
+  before convenience-helper payments. Linked-asset auto-quoting is not added.
+- Validate exactly the two native release peers independently of optional WebRGB,
+  checking their reviewed main sources and declared native graph.
+
+### Native distribution and release tooling
+
+- Consume reviewed main sources: Bare `8b692da2e896e8acfef2bf15b1e501103100c070`
+  and Node `04b641dce121ac690d5d0866eeba4fa76aebe7a5`.
+- Bare requires exact-version iOS, Android ARMv7/ARM64 and Android x64 data
+  packages. Its Darwin wrapper validates all three payloads before restoring six
+  mobile paths and verifying all seven targets. Missing/corrupt payloads fail
+  without a private source-build fallback; ignored-script installs have an
+  explicit hydration route. Distribution splitting preserves the original native
+  binaries and compilation provenance.
+- Build reproducible tarballs from clean committed source with the exact Git
+  identity stamped only in staging. npm 12 consumer canaries authorize exact
+  native sources, require observed postinstall admission and reject script-policy
+  bypasses. The release workflow includes this version's curated changelog entry
+  in its GitHub notes alongside package metadata and generated changes.
+
+### Known limitations
+
+- Interrupted BTC sends can leave reservations requiring recovery (P02).
+- RGB settled/spendable accounting can remain stale after a Bitcoin reorg (P03).
+- Incoming witness receipts can be double-counted in pending projections before
+  settling to the correct amount (P04).
+- An earlier wrong-amount BFA lock can cause a later valid mint to fail (P06).
+- Native dependency security review remains open (D01). Passing the production
+  npm audit does not establish a clean Rust dependency audit.
+- Recorded host and iOS 27 Debug regtest passes have their stated scope;
+  optimized mobile Release, remaining platform/public-network qualification,
+  redistribution/notices and recovery gates remain as recorded. VSS/device-loss
+  and general channel recovery are not qualified by those passes.
+
+This is an experimental beta, not a production-readiness claim. See
+[PRODUCTION-GATES.md](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/PRODUCTION-GATES.md)
+for exact evidence, supported scopes and unresolved items.
 
 ## [0.1.0-beta.15] — 2026-07-23
 

@@ -236,20 +236,47 @@ jobs:
           set -euo pipefail
 
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            NOTES=$(printf '%s\n\n%s\n\n%s\n%s\n%s\n\n%s\n%s' \
-              "Published npm artifact: \`${PACKAGE_NAME}@${PACKAGE_VERSION}\`" \
-              "Install: \`npm install ${PACKAGE_NAME}\`" \
-              "Native peer dependencies:" \
-              "- \`@utexo/rgb-lightning-node-bare\`: \`${BARE_RANGE}\`" \
-              "- \`@utexo/rgb-lightning-node-nodejs\`: \`${NODEJS_RANGE}\`" \
-              "Integrity:" \
-              "\`${PACKAGE_INTEGRITY}\`")
+            node --input-type=commonjs <<'RELEASE_NOTES'
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const { PACKAGE_NAME, PACKAGE_VERSION, PACKAGE_INTEGRITY, BARE_RANGE,
+            NODEJS_RANGE, RUNNER_TEMP } = process.env
+          if ([PACKAGE_NAME, PACKAGE_VERSION, PACKAGE_INTEGRITY, BARE_RANGE,
+            NODEJS_RANGE, RUNNER_TEMP].some(value => typeof value !== 'string' || !value.trim())) {
+            throw new Error('Missing release-note metadata')
+          }
+          const lines = fs.readFileSync('CHANGELOG.md', 'utf8').replace(/\r\n/g, '\n').split('\n')
+          const matches = lines.flatMap((line, index) => {
+            const heading = /^## \[([^\]]+)\](?:\s+.*)?$/.exec(line)
+            return heading?.[1] === PACKAGE_VERSION ? [index] : []
+          })
+          if (matches.length !== 1) {
+            throw new Error(`Expected exactly one finalized changelog section for ${PACKAGE_VERSION}`)
+          }
+          const start = matches[0]
+          if (!/^## \[[^\]]+\] (?:—|-) \d{4}-\d{2}-\d{2}$/.test(lines[start])) {
+            throw new Error('Release changelog heading must include its release date')
+          }
+          const next = lines.findIndex((line, index) => index > start && /^##(?:\s|$)/.test(line))
+          const body = lines.slice(start + 1, next === -1 ? lines.length : next)
+          if (!body.some(line => line.trim() && !/^ {0,3}#{1,6}(?:\s|$)/.test(line))) {
+            throw new Error('Release changelog section is empty')
+          }
+          const metadata = [
+            `Published npm artifact: \`${PACKAGE_NAME}@${PACKAGE_VERSION}\``,
+            `Install: \`npm install ${PACKAGE_NAME}@${PACKAGE_VERSION}\``,
+            `Native peer dependencies:\n- \`@utexo/rgb-lightning-node-bare\`: \`${BARE_RANGE}\`\n- \`@utexo/rgb-lightning-node-nodejs\`: \`${NODEJS_RANGE}\``,
+            `Integrity:\n\`${PACKAGE_INTEGRITY}\``
+          ].join('\n\n')
+          const curated = [lines[start], ...body].join('\n').trim()
+          fs.writeFileSync(path.join(RUNNER_TEMP, 'release-notes.md'), `${metadata}\n\n${curated}\n`)
+          RELEASE_NOTES
 
             gh release create "$RELEASE_TAG" \
               "${PACKAGE_TARBALL}#npm package tarball" \
               --verify-tag \
               --title "Release ${RELEASE_TAG}" \
-              --notes "$NOTES" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" \
               --generate-notes \
               --latest
           fi

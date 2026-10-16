@@ -27,9 +27,9 @@ RLN rejects **issuance and inflation in external-signer mode**, which this
 module always uses. Issue assets in a separate on-chain wallet, such as
 [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], then transfer them to this wallet.
 
-> Status: unpublished `0.2.0-beta.4` candidate targeting RLN `v0.17.0-beta.3`.
-> Not approved for production rollout. See [RELEASE-0.15-TRACKER.md](./RELEASE-0.15-TRACKER.md).
-> Current verification and release decisions: [PRODUCTION-GATES.md](./PRODUCTION-GATES.md).
+> Version `0.2.0-beta.4` targets RLN `v0.17.0-beta.3`.
+> This beta is not production-qualified. Review the [known limitations](#known-limitations)
+> and [qualification register](./PRODUCTION-GATES.md) before integrating it.
 
 ## Upgrade Restrictions
 
@@ -37,64 +37,67 @@ This breaking line requires the exact RLN `v0.17.0-beta.3` source
 `ecc69f20308231400561f6f060fea88acfa40cc4`, rust-lightning
 `79b9eb5166546c62692d3a672986f385c7fe047d`, and rgb-lib
 `v0.3.0-beta.50-bfa` (`1b951af0c8233308c919975552487be19ad2a930`).
-Install the exact native candidate `0.2.0-beta.4` for your runtime. Its compiled
+Install the exact native version `0.2.0-beta.4` for your runtime. Its compiled
 source, adapter and capabilities are checked before native handles are created;
-an older beta.3 artifact is rejected. Both native peers and all three Bare data
-companions are published and independently verified. Fresh public Bare installs
-pass normal, omitted-optional and ignored-script/manual-recovery qualification,
-including all four packages' cryptographic checks. WDK itself is unpublished. See [RELEASING.md](./RELEASING.md) for the exact release status.
+an older beta.3 artifact is rejected. The native packages are published and
+independently verified; see [Installation](#installation) for the required packages.
 
-Upstream's new BFA Lightning support does not change Iris's on-chain-only scope
-or add a WDK BFA channel guarantee. Native artifacts and funded/runtime tests
-must be qualified for this graph; earlier results retain their recorded identity.
-
-This candidate is scoped to fresh wallets: the deployment owner confirmed there
-are no live wallets to migrate. No legacy-wallet migration compatibility is
-promised. Channel and signer durability still matter for newly created wallets.
+This breaking version is scoped to fresh wallets. No legacy-wallet migration
+compatibility is promised. Channel and signer durability still matter for newly created wallets.
 Never delete or recreate state to bypass refusal, or roll back stale channel state
 after activity.
 
 There is no snapshot/FullSync overlay, prepared-send/UTXO inventory, native
 operation control, address receipt or VSS delete-all API. Native
 routing fee caps are unavailable and are rejected before payment submission.
-Contract and transfer-consignment metadata import APIs are included upstream
-(PR #128); no import backport is used. They validate asset identity and
+Contract and transfer-consignment metadata import APIs validate asset identity and
 never credit funds; normal receive/settlement remains required.
-Current overlay-dependent app versions cannot adopt this line unchanged.
+Integrations that require the removed capabilities must adapt before upgrading.
 
-Native JSON integer inputs must fit `Number.MAX_SAFE_INTEGER`; larger input
-numbers fail before submission. Response integers outside the safe range are
-preserved as exact decimal strings, including u64 limits and channel IDs; they
-are never rounded first. This does not enable full-u64 request amounts.
+Native JSON number inputs must fit `Number.MAX_SAFE_INTEGER`; larger numbers
+fail before submission. The typed `burnAsset` API additionally accepts canonical
+decimal strings for its u64 `amount` and `fee_rate` fields, as described below.
+Response integers outside the safe range are preserved as exact decimal strings,
+including u64 limits and channel IDs; they are never rounded first.
 Refresh preserves per-batch status/failure details, and unspents
 preserve `utxo.exists`, including false, and `pending_blinded`. Both are required;
 an absent reservation count is not treated as zero. No spendability is inferred
 from absence.
 
-Current RLN 0.17 verification and release gates are recorded in
-[the release tracker](./RELEASE-0.15-TRACKER.md). The earlier
-[qualification report](./tests/regtest/QUALIFICATION.md) records RLN 0.13, not
-qualification of these artifacts. Strict outgoing signing, same-process reopen,
-RGB reorg safety and Lightning recovery remain gates. Android requires the
-byte-preserving packaging integration described below; raw `bare-link` output
-is not supported for this candidate.
-Permissive regtest diagnostics are not production qualification.
+## Known limitations
 
-Earlier qualified RGB-lib graphs did not revisit settled transfers during refresh: after a
-one-confirmation RGB transfer is disconnected by a reorg, `getAssetBalance`
-continues reporting its units as settled/spendable, even after cold restart.
-Until exact-source requalification closes P03, these fields are **not a reorg-safe
-current-confirmation guarantee**. The earlier upstream limitation was not
-repaired by this package. The historical tests do not
-demonstrate permanent asset loss or every reorg/conflicting-spend case.
+The pinned native graph retains the following financial and security limitations:
 
-The upgrade does not establish the integrator's zero-channel root cause.
-`waitForChannel` polls; provisioning needs server-side evidence. Physical-device
-runs, native Rust TLS, prolonged suspension and full justice/commit-boundary fault
-matrices are not implied by the recorded passes.
+- **Interrupted BTC send (P02):** process death during a send can leave an
+  orphaned input reservation and reduce reported spendable balance after restart.
+  Automatic reconciliation or safe abort recovery is not provided.
+- **RGB reorg accounting (P03):** a disconnected settled receipt can remain in
+  `settled` and `spendable` balances, including after cold restart. These fields
+  are **not a reorg-safe current-confirmation guarantee**.
+- **Pending RGB accounting (P04):** one incoming witness receipt can be counted
+  twice in `future` before settlement. Correct settled balances do not make the
+  pending projection reliable.
+- **BFA event selection (P06):** an earlier wrong-amount lock for a mint can
+  cause validation to reject a later valid lock for the same mint. Ordinary BFA
+  receive/send and burn passes do not cover this event-order case.
+- **Native dependency security (D01):** security findings in the selected Rust
+  dependency graph still require disposition. A clean npm audit covers the npm
+  tree and does not resolve these native findings.
+
+The signer shutdown and session cleanup repair passes its recorded host and
+normal funded iOS 27 Debug regtest scopes (P01). Those passes do not establish
+arbitrary crash recovery, Android wallet recovery, funded mobile Release,
+physical-device, public-network, VSS recovery or full Lightning justice/commit
+boundary qualification. BFA Lightning API availability is not a WDK BFA channel
+guarantee. See [PRODUCTION-GATES.md](./PRODUCTION-GATES.md) for exact sources,
+evidence and remaining qualification, and the
+[release procedure](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/RELEASING.md)
+for package verification.
 
 ## Contents
 
+- [Upgrade restrictions](#upgrade-restrictions)
+- [Known limitations](#known-limitations)
 - [Architecture](#architecture)
 - [Installation](#installation)
 - [Quick start](#quick-start)
@@ -162,9 +165,9 @@ Choose the Ethereum RPC for the chain containing the asset's bridge contract.
 Omitting the field, or supplying `null`, keeps the non-BFA unlock behavior.
 No endpoint is inferred or substituted. A capability flag does not establish
 endpoint health, chain identity or the validity of any particular consignment.
-Consignment export uses the existing account API. Historical
-[BFA qualification and RN comparison](./BFA-QUALIFICATION.md) results apply to
-their recorded source, not automatically to this new native graph.
+Consignment export uses the existing account API. The
+[BFA qualification report](./BFA-QUALIFICATION.md) identifies the sources and
+scenarios tested; it does not establish bridge or deployment approval.
 
 ### Native Asset Burn
 
@@ -201,7 +204,7 @@ idempotent retry. Persistent operation records, user approvals, transport and
 bridge recovery belong to the application; none are added here. Export an
 available proof separately with `getConsignment(assetId, txid)`.
 
-The runtime gate requires the exact new source/adapter identity plus
+The runtime gate requires the exact source/adapter identity plus
 `external-signer-burn-v1`. API availability does not qualify a funded wallet,
 bridge, payout or device. See the [release tracker](./RELEASE-0.15-TRACKER.md).
 
@@ -249,15 +252,7 @@ module-load differs.
 
 ## Installation
 
-The `0.2.0-beta.4` candidate consumes the reviewed **main** sources recorded in
-[`native-peer-sources.json`](./native-peer-sources.json): Bare
-`8b692da2e896e8acfef2bf15b1e501103100c070` (lifecycle PR #22 and distribution PRs #24/#25)
-and Node `04b641dce121ac690d5d0866eeba4fa76aebe7a5` (Node PR #24).
-Bare #25 merged after both contract CI jobs passed in
-[run 38768896810](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/38768896810).
-Published packages retain two exact optional npm peers. Prefer the published
-native versions once their registry verification is complete. The commands below
-apply after the selected native binding and this WDK version are published.
+Install this module and the exact native binding for your runtime:
 
 ```sh
 npm install @utexo/wdk-rgb-lightning@0.2.0-beta.4
@@ -269,7 +264,7 @@ npm install @utexo/rgb-lightning-node-bare@0.2.0-beta.4     # Bare / React Nativ
 ```
 
 Both bindings are declared as **optional** peer dependencies — install only
-the one for your runtime after publication. Bare itself requires three data
+the one for your runtime. Bare itself requires three data
 packages at exact version `0.2.0-beta.4`; they are not additional WDK peers:
 
 | Required Bare dependency | Targets |
@@ -282,17 +277,8 @@ npm installs all three on every host, including when optional dependencies are
 omitted. The wrapper contains Darwin only. Its postinstall admits every data
 package and all hashes before copying six mobile files into the canonical
 prebuild paths, then verifies all seven targets. The data packages have no hooks,
-executable entry points, dependencies or platform filters. All seven compiled
-files and 13 native build/runtime inputs remain unchanged.
-
-The already-published iOS package stays at source
-`15b0ff68d1b59fa88131cfb9be6fe48c30287e6b`, publication
-[run 38762929465](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/actions/runs/38762929465),
-with immutable integrity
-`sha512-BOfizU4fqvGyl4L2Q0YAikLEYGyOBDYQikYPPR7IgxnmKrddm3T1/Lv0YnQeYt1EsBOf2SGyLNJKOLaWOglrkg==`.
-The wrapper and new Android packages use the subsequently reviewed final main.
-Their package sources and real publication builders remain distinct from the
-original native build; splitting distribution does not claim a rebuild.
+executable entry points, dependencies or platform filters. Complete payloads are
+required even when building for a single platform.
 
 Packed Bare installation fails if any required payload or identity is missing or
 incorrect; it does not fall back to a private source build. If install scripts
@@ -302,57 +288,51 @@ were skipped, assemble and verify the installed package before bundling:
 npm --prefix node_modules/@utexo/rgb-lightning-node-bare run hydrate-native
 ```
 
-Complete verified native artifacts and clean consumer installs remain release
-gates. Standalone Bare requires >=1.33.0. See each binding's README for native
-prerequisites. The parser-only
-`@utexo/wdk-rgb-lightning/lsp-info` entry is pure JS.
+Standalone Bare requires >=1.33.0. Qualify a React Native app's embedded Bare
+runtime separately. The parser-only `@utexo/wdk-rgb-lightning/lsp-info` entry is
+pure JS and does not require a native binding.
 
 npm 12 requires approval before dependency install scripts run. Review and
 authorize the exact native package source; a registry `name@version` grant does
-not authorize a local tarball, which needs its exact file-source grant. The
-nonpublishing packed-consumer canaries in [RELEASING.md](./RELEASING.md) apply
-that restricted policy and require successful native artifact admission.
-
-Source builds require authorized access to private upstream BFA repositories,
-Rust 1.94.0, Git, CMake and the target SDK/toolchain. A Bare source build starts
-from an explicit checkout; installing a Git dependency is not a substitute for
-preparing the complete split distribution:
-
-```sh
-git clone https://github.com/UTEXO-Protocol/rgb-lightning-node-bare.git /absolute/bare-main
-cd /absolute/bare-main
-git checkout --detach 8b692da2e896e8acfef2bf15b1e501103100c070
-npm ci --ignore-scripts
-# With the documented native SDKs and ORG_READ_TOKEN configured:
-node scripts/with-source-access.js npm run prepare-native -- --platform all
-npm run stage:payloads
-npm run check:distribution
-```
-
-The complete Bare release target set requires macOS with the iOS SDK and Android
-NDK. Follow the native README to pack and verify all four archives; a local
-consumer must install all three actual payload archives alongside the wrapper,
-not depend on the repository's workspace links. The archive gate bounds each new
-upload to 128 MiB and requires the existing 146,197,231-byte iOS archive to match
-its immutable public SRI. Node source preparation follows its
-own [pinned README](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/blob/04b641dce121ac690d5d0866eeba4fa76aebe7a5/README.md).
-Neither build nor pack instructions publish a package.
-
-The PR's `Verify merged native main sources` check fetches `main`
-from both repositories and rejects a different commit, graph or dirty checkout.
-To repeat that source check locally with exact main checkouts:
-
-```sh
-npm run check:native-sources -- --bare-dir /absolute/bare-main --node-dir /absolute/node-main
-```
+not authorize a local tarball, which needs its exact file-source grant. See the
+[release procedure](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/RELEASING.md)
+for the restricted script policy and packed-consumer verification commands.
 
 For Android, use `react-native-bare-kit@0.15.5` and apply the native package's
-[Android staging hook](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/main/android/README.md)
+[Android staging hook](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/8b692da2e896e8acfef2bf15b1e501103100c070/android/README.md)
 in the root Android Gradle build. The hook verifies the pinned original addon
 and packages it without the ELF rewrite that damages RELRO/DYNAMIC protection.
 Installing WDK or its Bare peer does not apply this hook automatically. This
 integration supports ARM64, ARMv7 and x86-64; it does not change WDK APIs or
 RLN's source revision. Validate the final app artifact and runtime separately.
+
+### Native source identity and source builds
+
+The exact native source pins are recorded in
+[`native-peer-sources.json`](./native-peer-sources.json):
+
+| Binding | Reviewed main commit |
+| --- | --- |
+| Bare wrapper and Android data | `8b692da2e896e8acfef2bf15b1e501103100c070` |
+| Node | `04b641dce121ac690d5d0866eeba4fa76aebe7a5` |
+
+The immutable iOS data package retains source
+`15b0ff68d1b59fa88131cfb9be6fe48c30287e6b`. Distribution splitting preserves all
+seven original Bare binaries and their native build inputs. Package source,
+publication builder and original native compilation are distinct identities;
+the [release procedure](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/RELEASING.md)
+records their provenance and verification.
+
+Source builds require authorized access to private upstream BFA repositories,
+Rust 1.94.0, Git, CMake and the target SDK/toolchain. Use an explicit pinned clone
+and the native binding's documented preparation commands. Installing a Git
+dependency does not prepare the complete Bare distribution. Follow the
+[Bare source-build instructions](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/8b692da2e896e8acfef2bf15b1e501103100c070/README.md)
+for `prepare-native`, staging all three payloads and verifying all four archives,
+or the [Node source-build instructions](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/blob/04b641dce121ac690d5d0866eeba4fa76aebe7a5/README.md).
+The complete Bare target set requires macOS with the iOS SDK and Android NDK.
+A local packed consumer must install the three payload archives alongside the
+wrapper; workspace links are not a substitute for those archives.
 
 Saved transfer consignments can be exported without exposing native paths:
 
@@ -572,15 +552,9 @@ try {
 Low-level `LspClient` methods do not authorize local payments. In particular,
 `lightningSend` can create a server-side HODL quote; it is not a read-only query
 or a fee-capped wallet payment. The endpoint must be enabled by the LSP operator.
-Higher-level linked-asset payment execution remains excluded from this candidate.
+Higher-level linked-asset payment execution remains excluded from this version.
 For bridge helpers, a verified Lightning payment is not proof that the RGB delivery
 leg settled; monitor that leg independently.
-
-The WDK Bare entry requires Bare >= 1.33.0 with current dependency resolution
-(`bare-thread` requires that engine). Its packed desktop canary pins 1.33.0.
-The standalone native binding's 1.30.3 canary does not qualify the complete WDK
-dependency graph or a React Native worklet. Qualify the app's embedded runtime
-and dependency lock separately before adoption.
 
 The package ships a pure-`fetch` LSP client and a composed high-level flow
 object, both exported from the root. They work unchanged in Bare (via the
@@ -716,36 +690,19 @@ npm run test:coverage
 
 ### Integration / end-to-end
 
-End-to-end coverage (a real LDK node, RGB assets, channels, payments,
-and a regtest stack via Docker Compose) lives in [utexo-rgb-wdk-demo]. To
-exercise a local build of this package instead of a published tag, check
-the demo out next to this repo so the relative paths resolve:
+The source repository includes a
+[Node/Bare regtest harness](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/tests/regtest/README.md)
+for real native nodes, transfers, channels and recovery scenarios, with a
+dedicated Docker Compose stack. These files are not included in the npm package.
+Run destructive reorg and process-interruption scenarios only against disposable,
+isolated wallets and chain volumes.
 
-```
-parent/
-  wdk-rgb-lightning/        # this repo
-  utexo-rgb-wdk-demo/
-```
-
-The Node E2E harness already links this repo by path —
-`utexo-rgb-wdk-demo/node-demo/package.json` declares
-`"@utexo/wdk-rgb-lightning": "file:../../wdk-rgb-lightning"` (and the Node
-binding via `file:../../packages/rgb-lightning-node-nodejs`). Installing
-the harness symlinks your working tree in; the dockerised LSP + regtest
-stack then runs the suite:
-
-```sh
-cd utexo-rgb-wdk-demo/node-demo
-npm install                                          # links file:../../wdk-rgb-lightning
-./lsp/up.sh                                           # docker compose up --build; waits on :8080/health
-LSP_BASE_URL=http://127.0.0.1:8080 npm run test:e2e  # tsx test-runner/run.ts
-./lsp/down.sh
-```
-
-The React Native app at the demo root instead pins a published tag
-(`github:UTEXO-Protocol/wdk-rgb-lightning#v<tag>`). To test local changes
-on device, repoint that dependency to `file:../wdk-rgb-lightning`, re-run
-`npm install`, and rebuild the worklet bundle.
+Each scenario records its actual source, runtime, completed checks and failures.
+The [qualification register](./PRODUCTION-GATES.md) is the current summary; the
+[older regtest report](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/tests/regtest/QUALIFICATION.md)
+and [mobile fixture](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/tests/mobile/README.md)
+retain their historical source/framework scopes. A passing host test or an
+updated package declaration does not qualify a mobile application.
 
 ## Troubleshooting
 
@@ -775,5 +732,4 @@ Apache-2.0. See [`LICENSE`](./LICENSE).
 [rgb-lightning-node-nodejs]: https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs
 [rgb-lightning-node-bare]: https://github.com/UTEXO-Protocol/rgb-lightning-node-bare
 [wdk-wallet-rgb]: https://github.com/UTEXO-Protocol/wdk-wallet-rgb
-[utexo-rgb-wdk-demo]: https://github.com/UTEXO-Protocol/utexo-rgb-wdk-demo
 [vls]: https://gitlab.com/lightning-signer/validating-lightning-signer
