@@ -213,12 +213,19 @@ jobs:
 
       - name: Require immutable GitHub releases
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_IMMUTABILITY_READ_TOKEN }}
+        shell: bash
         run: |
+          set -euo pipefail
+          : "${GH_TOKEN:?Missing RELEASE_IMMUTABILITY_READ_TOKEN with repository Administration read permission}"
+
           gh api \
             --header 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/${GITHUB_REPOSITORY}/immutable-releases" \
-            --silent
+            "repos/${GITHUB_REPOSITORY}/immutable-releases" |
+            node --input-type=commonjs -e '
+              const policy = JSON.parse(require("node:fs").readFileSync(0, "utf8"))
+              if (policy.enabled !== true) throw new Error("Release immutability is not enabled")
+            '
 
       - name: Create or verify GitHub release
         env:

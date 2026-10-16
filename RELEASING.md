@@ -160,6 +160,19 @@ Create an `npm` environment with required reviewers and prevent self-review.
 Protect release tags matching `v*` so only release maintainers can create them.
 Enable immutable releases for the repository.
 
+The immutability-settings API requires repository **Administration: read**,
+which the workflow's `GITHUB_TOKEN` cannot grant. Store a short-lived,
+fine-grained GitHub token scoped to this repository with only that permission
+in the protected `npm` environment as `RELEASE_IMMUTABILITY_READ_TOKEN`. An
+appropriately scoped GitHub App installation token is also supported; ensure it
+is valid when finalization runs. Do not paste the credential into issues or
+release logs. See the [endpoint permissions](https://docs.github.com/en/rest/repos/repos?apiVersion=2026-03-10#check-if-immutable-releases-are-enabled-for-a-repository).
+
+Finalization uses that credential only to read and assert the current policy.
+Release creation still uses `GITHUB_TOKEN` with `contents: write`; npm staging
+still uses OIDC and maintainer 2FA. Missing or unauthorized policy credentials
+stop finalization. Keep immutability enabled throughout finalization.
+
 ## Release preparation
 
 1. Freeze unrelated merges, including native or wallet changes not included in
