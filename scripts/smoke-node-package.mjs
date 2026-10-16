@@ -1,8 +1,14 @@
+import { minimumVersion } from './peer-version.mjs'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import {
+  assertInstallScriptConfiguration,
+  assertNativePostinstall,
+  nativeInstallPolicyKey
+} from './native-install-policy.mjs'
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const packageJson = JSON.parse(
@@ -42,16 +48,6 @@ function runAndCapture (command, args, options = {}) {
   return result.stdout.trim()
 }
 
-function minimumVersion (range, packageName) {
-  const match = /^>=([^ ]+)/.exec(range)
-  if (!match) {
-    throw new Error(
-      `Cannot derive the minimum version from ${packageName} range: ${range}`
-    )
-  }
-  return match[1]
-}
-
 const temporaryRoot = mkdtempSync(
   path.join(tmpdir(), 'wdk-rgb-lightning-smoke-')
 )
@@ -84,25 +80,52 @@ try {
     packageJson.peerDependencies[nativePackage],
     nativePackage
   )
+  const nativeTarball = process.env.RLN_NODE_PACKAGE_TARBALL
+    ? path.resolve(process.env.RLN_NODE_PACKAGE_TARBALL)
+    : undefined
+  const npmMajor = Number(
+    runAndCapture(npmExecutable, ['--version'], { cwd: temporaryRoot })
+      .split('.')[0]
+  )
+  if (!Number.isInteger(npmMajor) || npmMajor < 12) {
+    throw new Error('Native canary requires npm >=12 to enforce reviewed install-script policy')
+  }
+  const installScriptConfig = {
+    npmMajor,
+    ignoreScripts: runAndCapture(npmExecutable, ['config', 'get', 'ignore-scripts'], { cwd: temporaryRoot }),
+    dangerouslyAllowAllScripts: runAndCapture(npmExecutable, ['config', 'get', 'dangerously-allow-all-scripts'], { cwd: temporaryRoot })
+  }
+  assertInstallScriptConfiguration(installScriptConfig)
+  console.log('Native install-script configuration: ' + JSON.stringify(installScriptConfig))
 
   writeFileSync(
     path.join(temporaryRoot, 'package.json'),
     JSON.stringify({
       private: true,
       allowScripts: {
-        [`${nativePackage}@${nativeVersion}`]: true
+        [nativeInstallPolicyKey({ packageName: nativePackage, version: nativeVersion, tarball: nativeTarball })]: true
       }
     }, null, 2) + '\n'
   )
 
-  run(npmExecutable, [
+  const installed = spawnSync(npmExecutable, [
     'install',
+    '--foreground-scripts',
     '--no-audit',
     '--no-fund',
     '--save-exact',
     packageSpec,
-    `${nativePackage}@${nativeVersion}`
-  ], { cwd: temporaryRoot })
+    nativeTarball || `${nativePackage}@${nativeVersion}`
+  ], { cwd: temporaryRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  process.stdout.write(installed.stdout || '')
+  process.stderr.write(installed.stderr || '')
+  if (installed.error) throw installed.error
+  if (installed.status !== 0) throw new Error(`Native consumer install exited with ${installed.status}`)
+  assertNativePostinstall((installed.stdout || '') + (installed.stderr || ''), {
+    packageName: nativePackage,
+    version: nativeVersion,
+    admissionMarker: 'Verified release-based native addon.'
+  })
 
   const runtimeInstallations = runAndCapture(
     npmExecutable,
@@ -116,30 +139,21 @@ try {
     )
   }
 
-  const npmMajor = Number(
-    runAndCapture(npmExecutable, ['--version'], { cwd: temporaryRoot })
-      .split('.')[0]
-  )
-  if (!Number.isInteger(npmMajor)) {
-    throw new Error('npm returned an invalid version')
-  }
-  if (npmMajor >= 12) {
-    const policy = JSON.parse(
-      runAndCapture(
-        npmExecutable,
-        ['install-scripts', 'ls', '--json'],
-        { cwd: temporaryRoot }
-      )
+  const policy = JSON.parse(
+    runAndCapture(
+      npmExecutable,
+      ['install-scripts', 'ls', '--json'],
+      { cwd: temporaryRoot }
     )
-    if (!Array.isArray(policy.allowScripts)) {
-      throw new Error('npm returned an invalid install-script policy')
-    }
-    if (policy.allowScripts.length > 0) {
-      throw new Error(
-        'Unreviewed dependency install scripts remain:\n' +
-        JSON.stringify(policy.allowScripts, null, 2)
-      )
-    }
+  )
+  if (!Array.isArray(policy.allowScripts)) {
+    throw new Error('npm returned an invalid install-script policy')
+  }
+  if (policy.allowScripts.length > 0) {
+    throw new Error(
+      'Unreviewed dependency install scripts remain:\n' +
+      JSON.stringify(policy.allowScripts, null, 2)
+    )
   }
 
   if (verifySignatures) {
@@ -149,8 +163,13 @@ try {
   const smokeProgram = `
     import WalletManagerRgbLightning, {
       NodeRgbLightningBinding,
-      WalletAccountReadOnlyRgbLightning
+      WalletAccountReadOnlyRgbLightning,
+      LightningDisabledError
     } from '${packageJson.name}'
+    import { WebRgbProvider } from '${packageJson.name}/webrgb'
+    import { smokeWalletPolicy } from ${JSON.stringify(path.join(rootDir, 'scripts/smoke-wallet-policy.mjs'))}
+
+    console.log('Packed Node runtime: ' + process.version + ' ' + process.platform + '/' + process.arch)
 
     const metadata = (
       await import('${packageJson.name}/package', {
@@ -175,6 +194,9 @@ try {
     }
 
     NodeRgbLightningBinding.healthcheck()
+    const binding = new NodeRgbLightningBinding({ dataDir: '${path.join(temporaryRoot, 'wallet')}', network: 'regtest' })
+    binding.shutdown()
+    await smokeWalletPolicy(WalletManagerRgbLightning, WebRgbProvider, LightningDisabledError, ${JSON.stringify(path.join(temporaryRoot, 'mainnet-wallet'))})
   `
 
   run(

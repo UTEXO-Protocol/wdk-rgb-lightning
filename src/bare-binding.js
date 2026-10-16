@@ -14,17 +14,22 @@
 // Seed handling:
 //   The host (WDK) owns the BIP-39 mnemonic. The binding receives a
 //   32-byte BIP-32 entropy (`seedHex`) derived from that mnemonic and
-//   uses it to construct a `NativeExternalSigner`. RLN never persists
+//   uses it to construct a disk-backed `NativeExternalSigner`. RLN never
+//   persists
 //   the seed — the key-source file written by
 //   `initWithNativeExternalSigner` only records identifying public
 //   data (xpubs, node id, master fingerprint). On subsequent app
 //   launches, the same mnemonic re-derives the same seedHex, which
 //   re-derives the same signer identity, which matches the key-source
-//   file on disk — so the LDK node identity stays stable across
-//   restarts.
+//   file on disk — while the VLS store preserves channel commitment state
+//   across restarts.
 
 import rln from '@utexo/rgb-lightning-node-bare'
 import { retainSecret, revealSecret, secretMatches, wipeSecret } from './secret-buffer.js'
+import { signerStoragePath } from './signer-storage-path.js'
+import { normalizeUnlockRequest } from './node-unlock-request.js'
+import { assertNativeRuntime } from './native-runtime-contract.js'
+import { addressReuse } from './receive-address.js'
 
 const {
   SdkNode,
@@ -67,7 +72,9 @@ export class BareRgbLightningBinding {
    *   configuration.
    */
   constructor (config) {
-    this._config = config
+    assertNativeRuntime(rln)
+    this._config = { ...config }
+    this._closed = false
     this._initRequest = {
       storage_dir_path: config.dataDir,
       daemon_listening_port: config.daemonListeningPort ?? 0,
@@ -75,9 +82,7 @@ export class BareRgbLightningBinding {
       network: config.network,
       max_media_upload_size_mb: config.maxMediaUploadSizeMb ?? 5,
       enable_virtual_channels_v0: config.enableVirtualChannelsV0 ?? false,
-      // WDK reads reuse the current address; full accounts rotate it
-      // explicitly.
-      reuse_addresses: true
+      reuse_addresses: addressReuse(config)
     }
     // Trusted no-broadcast channels require virtual-channel support and an
     // explicit trust entry for the peer's node ID. Forward the trust list
@@ -100,6 +105,8 @@ export class BareRgbLightningBinding {
     this._node = null
     /** @type {NativeExternalSigner | null} */
     this._signer = null
+    /** @type {NativeExternalSigner[]} Failed rollback handles retained for shutdown retry. */
+    this._pendingSignerCleanup = []
     /** @type {Buffer | undefined} Zeroizable retained copy for idempotency checks. */
     this._seedHex = undefined
     /** @type {Buffer | undefined} Temporary legacy seed retained until first unlock. */
@@ -116,6 +123,7 @@ export class BareRgbLightningBinding {
    * @returns {SdkNode} - The cached or newly created native node.
    */
   ensureNode () {
+    if (this._closed) throw new Error('RGB Lightning binding is closed')
     if (!this._node) {
       this._node = SdkNode.create(this._initRequest)
     }
@@ -135,6 +143,7 @@ export class BareRgbLightningBinding {
    *   signer construction fails.
    */
   attachExternalSigner (seedHex, fallbackSeedHex) {
+    if (this._closed) throw new Error('RGB Lightning binding is closed')
     if (this._signer) {
       if (this._seedHex && !secretMatches(this._seedHex, seedHex)) {
         throw new Error(
@@ -148,10 +157,11 @@ export class BareRgbLightningBinding {
       }
       return
     }
-    this._signer = NativeExternalSigner.create(
+    this._signer = NativeExternalSigner.createWithStorage(
       seedHex,
       this._config.network,
-      this._config.permissiveSignerPolicy ?? true
+      signerStoragePath(this._config.dataDir, this._config.signerStorageIdentity ?? 'primary'),
+      this._config.permissiveSignerPolicy ?? false
     )
     wipeSecret(this._seedHex)
     wipeSecret(this._fallbackSeedHex)
@@ -170,7 +180,8 @@ export class BareRgbLightningBinding {
    *   unlock fails.
    */
   unlock (unlockRequest) {
-    const node = this.ensureNode()
+    unlockRequest = normalizeUnlockRequest(unlockRequest)
+    let node = this.ensureNode()
     if (!this._signer) {
       throw new Error('attachExternalSigner(seedHex) must be called before unlock()')
     }
@@ -182,7 +193,7 @@ export class BareRgbLightningBinding {
         // Rln(Conflict) on init is the "already-initialised on disk"
         // signal — expected on every relaunch after the first wallet
         // create. Anything else is a real failure.
-        if (!msg.includes('Conflict')) throw e
+        if (!msg.startsWith('Rln(Conflict):')) throw e
       }
       this._sdkInitDone = true
     }
@@ -197,16 +208,26 @@ export class BareRgbLightningBinding {
       }
 
       const fallbackSeed = this._fallbackSeedHex
-      const fallbackSigner = NativeExternalSigner.create(
+      const fallbackSigner = NativeExternalSigner.createWithStorage(
         revealSecret(fallbackSeed),
         this._config.network,
-        this._config.permissiveSignerPolicy ?? true
+        signerStoragePath(this._config.dataDir, 'legacy'),
+        this._config.permissiveSignerPolicy ?? false
       )
       try {
+        // A failed unlock may still have attached the primary signer. Retire
+        // that node before revocation; a cancelled native node cannot be reused.
+        node.shutdown()
+        this._node = null
+        this._signer.shutdown()
         this._signer.destroy()
       } catch (primaryDestroyError) {
+        this._closed = true
+        this._pendingSignerCleanup.push(fallbackSigner)
         try {
+          fallbackSigner.shutdown()
           fallbackSigner.destroy()
+          this._pendingSignerCleanup.pop()
         } catch (fallbackDestroyError) {
           throw new AggregateError(
             [primaryDestroyError, fallbackDestroyError],
@@ -219,6 +240,7 @@ export class BareRgbLightningBinding {
       wipeSecret(this._seedHex)
       this._seedHex = fallbackSeed
       this._fallbackSeedHex = undefined
+      node = this.ensureNode()
       node.unlockWithNativeExternalSigner(this._signer, unlockRequest)
     }
   }
@@ -303,36 +325,56 @@ export class BareRgbLightningBinding {
   }
 
   /**
-   * Stop the node and destroy the signer. The operation is idempotent.
+   * Register an APay hash batch with a signed Lightning Address attestation.
    *
-   * @throws {Error} - If native node shutdown or signer destruction fails.
+   * @param {string} hostNodeId - LSP node ID.
+   * @param {string} username - LSP-provisioned Lightning Address username.
+   * @param {string} domain - LSP-provisioned Lightning Address domain.
+   * @returns {object} - Native `AsyncOrderNewResponse`.
+   * @throws {Error} - If the installed native wrapper predates this generated
+   *   method or native APay registration fails.
+   */
+  apayNewWithAddress (hostNodeId, username, domain) {
+    const node = this.ensureNode()
+    if (typeof node.apayNewWithAddress !== 'function') {
+      throw new Error(
+        'Address-attested APay requires @utexo/rgb-lightning-node-bare ' +
+        'with apayNewWithAddress support'
+      )
+    }
+    return node.apayNewWithAddress(hostNodeId, username, domain)
+  }
+
+  /**
+   * Stop the node, revoke the signer and release its handle. Idempotent.
+   *
+   * @throws {Error} - If native node shutdown, signer revocation or handle release fails.
    */
   shutdown () {
-    let failure
+    this._closed = true
     if (this._node) {
-      try {
-        this._node.shutdown()
-      } catch (error) {
-        failure = error
-      } finally {
-        this._node = null
-      }
-    }
-    if (this._signer) {
-      try {
-        this._signer.destroy()
-      } catch (error) {
-        failure ??= error
-      } finally {
-        this._signer = null
-      }
+      // Keep both handles available for an explicit retry after failed shutdown.
+      this._node.shutdown()
+      this._node = null
     }
     this._sdkInitDone = false
+    if (this._signer) {
+      // Node shutdown drains operations and flushes state while signing is
+      // still available. Revocation then releases private state in all clones.
+      this._signer.shutdown()
+      this._signer.destroy()
+      this._signer = null
+    }
+    while (this._pendingSignerCleanup.length) {
+      const signer = this._pendingSignerCleanup[0]
+      signer.shutdown()
+      signer.destroy()
+      this._pendingSignerCleanup.shift()
+    }
     wipeSecret(this._seedHex)
     wipeSecret(this._fallbackSeedHex)
     this._seedHex = undefined
     this._fallbackSeedHex = undefined
-    if (failure) throw failure
   }
 
   /** @returns {string} - Native module health status. */

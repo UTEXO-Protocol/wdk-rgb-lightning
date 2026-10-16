@@ -5,14 +5,14 @@
 WDK module for RGB-over-Lightning, built on
 [`rgb-lightning-node`][rgb-lightning-node] (RLN). It runs a full LDK +
 `rgb-lib` Lightning node behind WDK's wallet-manager/account contract and
-adds channels, BOLT11 + RGB invoices, payments, HODL invoices, atomic
-swaps, async payments (APay), optional VSS cloud backup, and a complete LSP
+adds BTC/RGB on-chain transfers, channels, BOLT11 + RGB invoices, payments,
+HODL invoices, async payments (APay), optional VSS cloud backup, and an LSP
 client for the UTEXO Lightning Service Provider.
 
 The node runs in **external-signer** mode: the BIP-39 mnemonic stays in the
 WDK secret manager, and all channel-state cryptography happens in-process
-through a VLS signer. RLN's on-disk state holds only public identifying
-material.
+through a VLS signer. Node and persistent VLS commitment state must both be
+retained in app-private storage; the mnemonic alone is not channel recovery.
 
 Complements [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], the on-chain RGB
 wallet module. The two are independent: each owns its own `rgb-lib` SQLite
@@ -22,13 +22,10 @@ exclusive lock on a wallet directory, and the Lightning node derives a
 different wallet fingerprint (it signs in-process via VLS from a 32-byte
 entropy) than the on-chain module (standard BIP-32 from the full seed), so
 even a shared `dataDir` resolves to different `<fingerprint>/` subfolders.
-RLN holds and transfers RGB assets for its channels and invoices. For RGB
-asset **issuance**, prefer [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], the
-on-chain RGB wallet module. The node-level issuance calls are also forwarded
-on the account (see the Account API table), but `wdk-wallet-rgb` is the
-supported path for issuance flows.
-
-> Status: pre-1.0 beta (`0.1.0-beta` line).
+RLN holds and transfers RGB assets for its channels and invoices. Released
+RLN rejects **issuance and inflation in external-signer mode**, which this
+module always uses. Issue assets in a separate on-chain wallet, such as
+[`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], then transfer them to this wallet.
 
 ## Contents
 
@@ -37,11 +34,14 @@ supported path for issuance flows.
 - [Quick start](#quick-start)
 - [Account API](#account-api)
 - [Error handling](#error-handling)
+- [Mainnet policy and capabilities](#mainnet-policy-and-capabilities)
+- [WebRGB integration](#webrgb-integration)
 - [LSP integration](#lsp-integration)
 - [VSS cloud backup](#vss-cloud-backup)
 - [Async payments (APay)](#async-payments-apay)
 - [Security model](#security-model)
 - [Testing and local development](#testing-and-local-development)
+- [Known limitations](#known-limitations)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
 
@@ -76,20 +76,31 @@ module-load differs.
 
 ## Installation
 
-```sh
-npm install @utexo/wdk-rgb-lightning
+Install this module with the native binding for your runtime:
 
-# Plus the native binding matching your runtime (optional peer deps):
-npm install @utexo/rgb-lightning-node-nodejs   # Node host
-# or
-npm install @utexo/rgb-lightning-node-bare     # Bare / React Native host
+```sh
+# Node.js
+npm install @utexo/wdk-rgb-lightning@0.2.0-beta.4 @utexo/rgb-lightning-node-nodejs@0.2.0-beta.4
+
+# Bare / React Native
+npm install @utexo/wdk-rgb-lightning@0.2.0-beta.4 @utexo/rgb-lightning-node-bare@0.2.0-beta.4
 ```
 
-Both bindings are declared as **optional** peer dependencies — install only
-the one for your runtime. Each binding's `postinstall` downloads the
-platform-specific prebuilt native artifact from its GitHub Release (no Rust
-toolchain required on the consumer machine). See the binding READMEs for the
-supported platform matrix.
+Choose one binding. Bare installs its required native payload dependencies
+automatically. Standalone Bare requires >=1.33.0; see the
+[Bare setup guide](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/8b692da2e896e8acfef2bf15b1e501103100c070/README.md)
+for React Native integration.
+
+Allow the native package's install scripts to run. If Bare's scripts were
+skipped, assemble its native files before bundling:
+
+```sh
+npm --prefix node_modules/@utexo/rgb-lightning-node-bare run hydrate-native
+```
+
+For Android, use `react-native-bare-kit@0.15.5` and apply the
+[native Android setup hook](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/8b692da2e896e8acfef2bf15b1e501103100c070/android/README.md)
+in your root Gradle build.
 
 ## Quick start
 
@@ -110,10 +121,15 @@ const manager = new WalletManagerRgbLightning(seedPhrase, {
 const account = await manager.getAccount(0) // RGB Lightning is single-account
 
 await account.unlock({
-  bitcoind_rpc_username: 'user',
-  bitcoind_rpc_password: 'pass',
-  bitcoind_rpc_host: '127.0.0.1',
-  bitcoind_rpc_port: 18443,
+  ldk_chain_sync: {
+    mode: 'BlockSync',
+    config: {
+      bitcoind_rpc_username: 'user',
+      bitcoind_rpc_password: 'pass',
+      bitcoind_rpc_host: '127.0.0.1',
+      bitcoind_rpc_port: 18443
+    }
+  },
   indexer_url: 'tcp://localhost:50001',
   proxy_endpoint: 'rpc://localhost:3000/json-rpc',
   announce_addresses: [],
@@ -140,7 +156,8 @@ const invoice = await account.createInvoice({
 
 await account.sendPayment({ invoice: '<bolt11>' })
 
-await manager.dispose()
+await account.shutdown()
+manager.dispose()
 ```
 
 A complete end-to-end example — LSP wiring, RGB-over-Lightning transfers,
@@ -155,9 +172,10 @@ and a regtest stack via Docker Compose — lives in
 |-------|---------|---------|
 | `daemonListeningPort` / `ldkPeerListeningPort` | `0` | RLN listening ports; `0` = ephemeral. |
 | `maxMediaUploadSizeMb` | `5` | Cap on RGB media uploads. |
-| `enableVirtualChannelsV0` | `false` | Enable virtual-channels-v0 (required for APay against a production LSP). |
+| `enableVirtualChannelsV0` | `false` | Explicit opt-in to virtual-channels-v0; not inferred from LSP discovery. |
 | `virtualPeerPubkeys` | — | Trust list of peer node_ids allowed to open `trusted_no_broadcast` virtual channels (the LSP's node_id for APay). |
-| `permissiveSignerPolicy` | `true` | Loosen the VLS policy filter for in-process single-user use. |
+| `permissiveSignerPolicy` | `false` | Strict policy by default; permissive mode is an explicit non-mainnet option. |
+| `autoUnlockRequest` | absent | Opt into address-triggered activation with a canonical or supported legacy unlock request. |
 | `nodeSeedDerivation` | `auto` | New nodes use WDK's normalized BIP-39 seed directly; existing beta nodes retry the legacy identity only on an exact persisted-identity mismatch. Use `wdk-seed-v2` or `legacy-v1` to disable auto-detection. |
 | `vssUrl` / `vssAllowHttp` / `vssAllowEmptyRestore` | — | VSS cloud backup; see [below](#vss-cloud-backup). |
 | `lspBaseUrl` / `lspBearerToken` | — | LSP wiring for APay and the LSP client; see [below](#lsp-integration). |
@@ -171,7 +189,7 @@ are async and forward to the active binding.
 | Group | Methods |
 |-------|---------|
 | Lifecycle | `unlock(request)`, `getBootstrap()`, `shutdown()`, `dispose()` |
-| Node info | `getNodeInfo()`, `getNetworkInfo()`, `sync()`, `getAddress()`, `getAddressState()`, `rotateAddress()` |
+| Node info | `getNodeInfo()`, `getNetworkInfo()`, `sync()`, `getAddress()`, `getNewAddress()`, `getAddressState()`, `rotateAddress()` |
 | Peers | `connectPeer(pubkey@host:port)`, `disconnectPeer(request)`, `listPeers()` |
 | Channels | `openChannel(request)`, `closeChannel(request)`, `listChannels()`, `getChannelId(tempIdHex)` |
 | Invoices | `createInvoice(request)`, `createLightningInvoice(request)`, `decodeInvoice(invoice)`, `getInvoiceStatus(invoice)` |
@@ -179,7 +197,8 @@ are async and forward to the active binding.
 | Payments | `sendPayment(request)`, `keysend(request)`, `listPayments()`, `getPayment(hash, type)` |
 | RGB assets | `listAssets(filter?)`, `getAssetBalance(id)`, `getAssetMetadata(id)`, `listTransfers(id)`, `listTransfersByTxid(txid)`, `refreshTransfers(req)`, `failTransfers(req)` |
 | RGB invoices/transfers | `createRgbInvoice(request)`, `decodeRgbInvoice(invoice)`, `sendRgbAsset(request)`, `getAssetMedia(digest)`, `postAssetMedia(request)` |
-| RGB issuance (forwarded) | `issueAssetNia(request)`, `issueAssetUda(request)`, `issueAssetCfa(request)`, `issueAssetIfa(request)`, `inflate(request)` — forward to the binding; `@utexo/wdk-wallet-rgb` is the supported path (see note) |
+| RGB burn | `burnAsset({ asset_id, amount, burn_recipient?, fee_rate, min_confirmations })` returns `{ txid, batch_transfer_idx }`; no automatic retry or bridge payout |
+| RGB issuance (unsupported in this mode) | `issueAssetNia(request)`, `issueAssetUda(request)`, `issueAssetCfa(request)`, `issueAssetIfa(request)`, `inflate(request)` forward the released `UnsupportedInExternalSignerMode` error; use a separate on-chain wallet |
 | BTC | `getBalance(skipSync?)`, `getBalanceDetails(skipSync?)`, `sendTransaction({ to, value, ... })`, `sendBtc(nativeRequest)`, `getTransactions(skipSync?)`, `getTransactionsByTxid(txid)`, `listUnspents(skipSync?)`, `createUtxos(request)`, `estimateFee(blocks)` |
 | WDK-standard | `index`, `path`, `keyPair`, `sign(message)`, `verify(message, signature)`, `transfer(options)`, `quoteTransfer(options)`, `quoteSendTransaction(tx)`, `getTransactionReceipt(hash)`, `toReadOnlyAccount()` |
 | Diagnostics | `sendOnionMessage(request)`, `checkIndexerUrl(url)`, `checkProxyEndpoint(endpoint)` |
@@ -201,18 +220,28 @@ Notes:
   contract. `getTokenBalance(assetId)` returns the spendable RGB amount as a
   `bigint` and falls back to the settled amount when needed.
 - **`getAddress()` never returns a fabricated spend address.** Before unlock
-  it rejects with `AccountLockedError`; UI loaders can call
+  it rejects with `AccountLockedError` unless `autoUnlockRequest` is configured; UI loaders can call
   `getAddressState()` for `{ status: 'locked', address: null }`. The WDK
-  bindings initialize RLN with address reuse enabled so reads stay stable;
-  `rotateAddress()` is the explicit mutating operation for advancing it.
+  bindings default to `reuseAddresses: true`. `rotateAddress()` advances and
+  reveals the next address before returning it. Fresh wallets can explicitly
+  set `reuseAddresses: false`; WDK caches the current receive address within the
+  account session so repeated `getAddress()` calls remain stable. Use
+  `getNewAddress()` to allocate a new receive address under either policy.
+  Allocation calls are serialized across full and read-only accounts, and
+  shutdown waits for in-flight allocation. The current native lifecycle repair
+  drains the node before explicit signer revocation and supports the qualified
+  same-process reopen cases. Failed cleanup remains retryable; manager disposal
+  retains failed account and signer owners while removing completed cleanup.
+  FullScan and interrupted-payment recovery require separate qualification;
+  see [PRODUCTION-GATES.md](./PRODUCTION-GATES.md).
 - **`sendTransaction()` uses WDK's `{ to, value, feeRate?,
   confirmationTarget? }` input and `{ hash, fee }` result.** `sendBtc()` is
   the explicit low-level escape hatch for RLN's native request format.
-- **RGB asset issuance is forwarded, but `@utexo/wdk-wallet-rgb` is the
-  supported path.** The node-level issuance calls (`issueAssetNia` /
+- **RGB asset issuance and inflation are not supported in external-signer mode.**
+  The node-level issuance calls (`issueAssetNia` /
   `issueAssetUda` / `issueAssetCfa` / `issueAssetIfa`, plus `inflate`) are
-  exposed on the account and forward straight to the binding. For
-  issuance-centric flows prefer [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb],
+  exposed for API compatibility and surface the released runtime rejection.
+  For issuance use [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb],
   the on-chain RGB wallet module. This module primarily holds and transfers
   assets that already exist — in channels, invoices, and on-chain — and
   keeps its own separate `rgb-lib` wallet (give each module its own
@@ -253,6 +282,7 @@ verbatim and the underlying error is attached as `cause`; each error has a
 RgbLightningError            code: RGB_LIGHTNING_ERROR
 ├── UnlockError              code: UNLOCK_FAILED
 ├── AccountLockedError       code: ACCOUNT_LOCKED
+├── LightningDisabledError   code: LIGHTNING_DISABLED_ON_MAINNET
 ├── VssError                 code: VSS_ERROR
 │   └── VssNotConfiguredError code: VSS_NOT_CONFIGURED
 ├── ApayError                code: APAY_ERROR (e.g. APAY_PEER_NOT_VISIBLE)
@@ -276,7 +306,122 @@ try {
 }
 ```
 
+## Mainnet policy and capabilities
+
+RLN disables Lightning **on mainnet only**. Account channel, peer, invoice
+(including BOLT11 decoding), payment, HODL, APay and onion-message methods reject
+with `LightningDisabledError`, code `LIGHTNING_DISABLED_ON_MAINNET`, before
+native execution. Lightning recipients in `transfer` and `quoteTransfer`,
+wallet-connected LSP methods and standalone account-taking LSP helpers use the
+same policy before HTTP side effects. Read-only accounts follow it too.
+
+Signet, testnet and regtest retain their Lightning APIs; availability is not a
+claim that their recorded release gates are resolved. BTC/RGB on-chain methods,
+identity queries, message signing/verification and standalone LSP discovery
+remain available. `getTransactionReceipt` does not query Lightning history on
+mainnet, so an unknown on-chain hash returns `null`.
+
+```js
+const capabilities = account.getCapabilities()
+// { network, signer: 'external', lightning, consignmentExport: true,
+//   bfaAssetListing: true, bfaValidation: true, burn: true }
+
+try {
+  await account.listChannels()
+} catch (error) {
+  if (error.code !== 'LIGHTNING_DISABLED_ON_MAINNET') throw error
+}
+```
+
+`getNetwork()` reads the configured network without unlocking.
+`getCapabilities()` describes this package/signer combination, not wallet
+readiness, balance or successful qualification. `getBfaCapabilities()` returns
+`{ bfa: true, burn: true, consignment: true }` on a full account. The read-only
+facade reports `burn: false` in both capability methods and has no `burnAsset`.
+Configure `eth_rpc_url` when
+unlocking to enable native validation of BFA bridge events:
+
+```js
+await account.unlock({
+  ldk_chain_sync: {
+    mode: 'TransactionSync',
+    config: { indexer_url: bitcoinIndexerUrl }
+  },
+  indexer_url: bitcoinIndexerUrl,
+  proxy_endpoint: rgbProxyUrl,
+  eth_rpc_url: ethereumRpcUrl,
+  announce_addresses: []
+})
+```
+
+Choose the Ethereum RPC for the chain containing the asset's bridge contract.
+Omitting the field, or supplying `null`, keeps the non-BFA unlock behavior.
+No endpoint is inferred or substituted. A capability flag does not establish
+endpoint health, chain identity or the validity of any particular consignment.
+Consignment export uses the existing account API. The
+[BFA qualification report](./BFA-QUALIFICATION.md) identifies the sources and
+scenarios tested; it does not establish bridge or deployment approval.
+
+### Native Asset Burn
+
+`account.burnAsset(request)` invokes the native `SdkNode.burn` once. It accepts
+the existing RLN C-FFI request, not a WebRGB or WalletConnect request:
+
+```js
+const { txid, batch_transfer_idx } = await account.burnAsset({
+  asset_id: assetId,
+  amount: '1000000',
+  fee_rate: 2,
+  min_confirmations: 3,
+  burn_recipient: recipientHex // BFA: 32-byte hex, without a 0x prefix
+})
+```
+
+`amount` and `fee_rate` must be positive safe-integer numbers or canonical
+decimal strings up to `18446744073709551615`. Native wrappers encode strings
+as exact u64 JSON numbers. `min_confirmations` is an integer from 0 to 255;
+the application owns its confirmation policy. Omit `burn_recipient` (or use
+`null`) for assets that do not require it. WDK does not infer a recipient,
+encode EVM addresses, choose a chain, or perform an Ethereum payout.
+
+Await `unlock()` first. Burns are rejected during activation or after shutdown
+starts. Node/Bare native calls are synchronous; RLN serializes preparation,
+signing and completion under the RGB wallet mutex. The successful response
+contains the native `txid` and `batch_transfer_idx`, not proof of settlement.
+
+Failures may retain an `Initiated` transfer and input reservations. WDK passes
+native errors through, never retries or automatically frees inputs. Reconcile
+transfer history and on-chain state before requesting another burn, including
+after a malformed or lost response. A subsequent call is a new burn, not an
+idempotent retry. Persistent operation records, user approvals, transport and
+bridge recovery belong to the application; none are added here. Export an
+available proof separately with `getConsignment(assetId, txid)`.
+
+The runtime gate requires the exact source/adapter identity plus
+`external-signer-burn-v1`. API availability does not qualify a funded wallet,
+bridge, payout or device. See the [release tracker](./RELEASE-0.15-TRACKER.md).
+
+## WebRGB integration
+
+The optional `@utexo/wdk-rgb-lightning/webrgb` export adapts a native WDK account
+to WebRGB's receiving/read subset. It does not run RLN in a browser, inject
+`window.rgb`, or establish WalletConnect sessions. It has no runtime dependency
+on WebRGB or WalletConnect. TypeScript consumers of this subpath should install
+the optional type peer `@utexo/webrgb@^0.1.0`; the unchanged read subset is
+checked against `0.1.0` and `0.1.2`. Ordinary WDK consumers do not need it.
+
+See [WEBRGB.md](./WEBRGB.md) for session authorization, approval handling, API
+mapping and native-runtime integration. The subset matches the non-burn scope
+of [rgb-sdk-rn #59](https://github.com/UTEXO-Protocol/rgb-sdk-rn/pull/59).
+
 ## LSP integration
+
+Low-level `LspClient` methods do not authorize local payments. In particular,
+`lightningSend` can create a server-side HODL quote; it is not a read-only query
+or a fee-capped wallet payment. The endpoint must be enabled by the LSP operator.
+Higher-level linked-asset payment execution remains excluded from this version.
+For bridge helpers, a verified Lightning payment is not proof that the RGB delivery
+leg settled; monitor that leg independently.
 
 The package ships a pure-`fetch` LSP client and a composed high-level flow
 object, both exported from the root. They work unchanged in Bare (via the
@@ -380,15 +525,16 @@ the wallet's behalf. Against a production LSP this requires
 
 - **Seed never leaves the host.** The mnemonic is owned by the WDK secret
   manager. The binding derives a 32-byte BIP-32 entropy, passes it once to
-  `NativeExternalSigner.create`, and RLN persists only public identifying
-  material (xpubs, node id, master fingerprint). Re-deriving from the same
-  mnemonic reproduces the same entropy, matches the on-disk key-source, and
-  keeps the LDK node identity stable across restarts.
+  `NativeExternalSigner.createWithStorage`, and preserves the signer's commitment
+  database below `dataDir/vls-signer` (or `vls-signer-legacy` for the legacy identity).
+  Re-deriving entropy preserves identity, not all safety-critical channel state.
+  Local signer persistence is not proof of fresh-device VSS recovery.
 - **All channel-state crypto runs in-process** through
   [`vls-protocol-signer`][vls]. The signer's lifecycle is tied to the
   binding and is destroyed on `manager.dispose()`. Retained seed copies use
   zeroizable buffers and are erased with `sodium_memzero` on successful
-  fallback resolution and shutdown, including cleanup failure paths.
+  fallback resolution and successful shutdown. Failed shutdown retains handles
+  and required state for explicit retry; errors must not be ignored.
 - **VSS payloads are client-side encrypted** (see above); the server only
   ever holds ciphertext.
 - **Plain `http://` is rejected by default** for VSS and LSP endpoints; opt
@@ -411,36 +557,39 @@ npm run test:coverage
 
 ### Integration / end-to-end
 
-End-to-end coverage (a real LDK node, RGB assets, channels, payments,
-and a regtest stack via Docker Compose) lives in [utexo-rgb-wdk-demo]. To
-exercise a local build of this package instead of a published tag, check
-the demo out next to this repo so the relative paths resolve:
+The source repository includes a
+[Node/Bare regtest harness](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/tests/regtest/README.md)
+for real native nodes, transfers, channels and recovery scenarios, with a
+dedicated Docker Compose stack. These files are not included in the npm package.
+Run destructive reorg and process-interruption scenarios only against disposable,
+isolated wallets and chain volumes.
 
-```
-parent/
-  wdk-rgb-lightning/        # this repo
-  utexo-rgb-wdk-demo/
-```
+Each scenario records its actual source, runtime, completed checks and failures.
+The [qualification register](./PRODUCTION-GATES.md) is the current summary; the
+[older regtest report](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/tests/regtest/QUALIFICATION.md)
+and [mobile fixture](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/tests/mobile/README.md)
+retain their historical source/framework scopes. A passing host test or an
+updated package declaration does not qualify a mobile application.
 
-The Node E2E harness already links this repo by path —
-`utexo-rgb-wdk-demo/node-demo/package.json` declares
-`"@utexo/wdk-rgb-lightning": "file:../../wdk-rgb-lightning"` (and the Node
-binding via `file:../../packages/rgb-lightning-node-nodejs`). Installing
-the harness symlinks your working tree in; the dockerised LSP + regtest
-stack then runs the suite:
+## Known limitations
 
-```sh
-cd utexo-rgb-wdk-demo/node-demo
-npm install                                          # links file:../../wdk-rgb-lightning
-./lsp/up.sh                                           # docker compose up --build; waits on :8080/health
-LSP_BASE_URL=http://127.0.0.1:8080 npm run test:e2e  # tsx test-runner/run.ts
-./lsp/down.sh
-```
+The pinned native graph retains the following financial and security limitations:
 
-The React Native app at the demo root instead pins a published tag
-(`github:UTEXO-Protocol/wdk-rgb-lightning#v<tag>`). To test local changes
-on device, repoint that dependency to `file:../wdk-rgb-lightning`, re-run
-`npm install`, and rebuild the worklet bundle.
+1. **Interrupted BTC send:** process death during a send can leave an
+   orphaned input reservation and reduce reported spendable balance after restart.
+   Automatic reconciliation or safe abort recovery is not provided.
+2. **RGB reorg accounting:** a disconnected settled receipt can remain in
+   `settled` and `spendable` balances, including after cold restart. These fields
+   are **not a reorg-safe current-confirmation guarantee**.
+3. **Pending RGB accounting:** one incoming witness receipt can be counted
+   twice in `future` before settlement. Correct settled balances do not make the
+   pending projection reliable.
+4. **BFA event selection:** an earlier wrong-amount lock for a mint can
+   cause validation to reject a later valid lock for the same mint. Ordinary BFA
+   receive/send and burn passes do not cover this event-order case.
+5. **Native dependency security:** security findings in the selected Rust
+   dependency graph still require disposition. A clean npm audit covers the npm
+   tree and does not resolve these native findings.
 
 ## Troubleshooting
 
@@ -470,5 +619,4 @@ Apache-2.0. See [`LICENSE`](./LICENSE).
 [rgb-lightning-node-nodejs]: https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs
 [rgb-lightning-node-bare]: https://github.com/UTEXO-Protocol/rgb-lightning-node-bare
 [wdk-wallet-rgb]: https://github.com/UTEXO-Protocol/wdk-wallet-rgb
-[utexo-rgb-wdk-demo]: https://github.com/UTEXO-Protocol/utexo-rgb-wdk-demo
 [vls]: https://gitlab.com/lightning-signer/validating-lightning-signer

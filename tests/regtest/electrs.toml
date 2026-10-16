@@ -1,0 +1,2 @@
+auth = "wdk:regtest-only"
+wait_duration_secs = 1

@@ -14,6 +14,8 @@ import {
 
 import type WalletManagerRgbLightning from '../index.js'
 import type {
+  BurnAssetRequest,
+  BurnAssetResponse,
   IRgbLightningBinding,
   LnurlPayOptions,
   LspLiquidityTimeoutError,
@@ -36,6 +38,29 @@ const readOnlyContract: IWalletAccountReadOnly = readOnlyAccount
 void managerContract
 void accountContract
 void readOnlyContract
+
+const exportedConsignment: Promise<Uint8Array> = account.getConsignment('rgb:asset', '00'.repeat(32))
+const readOnlyConsignment: Promise<Uint8Array> = readOnlyAccount.getConsignment('rgb:asset', '00'.repeat(32))
+void exportedConsignment
+void readOnlyConsignment
+
+const burnRequest: BurnAssetRequest = {
+  asset_id: 'rgb:asset',
+  amount: '18446744073709551615',
+  fee_rate: 1,
+  min_confirmations: 3,
+  burn_recipient: 'ab'.repeat(32)
+}
+const burned: Promise<BurnAssetResponse> = account.burnAsset(burnRequest)
+void burned
+// @ts-expect-error Burn is not available to read-only accounts.
+readOnlyAccount.burnAsset(burnRequest)
+// @ts-expect-error Use the native snake_case request, not a WebRGB request.
+account.burnAsset({ assetId: 'rgb:asset', amount: 1, feeRate: 1, minConfirmations: 3 })
+// @ts-expect-error min_confirmations is required.
+account.burnAsset({ asset_id: 'rgb:asset', amount: 1, fee_rate: 1 })
+// @ts-expect-error BigInt is not a JSON request integer; use a decimal string.
+account.burnAsset({ ...burnRequest, amount: 1n })
 
 const lnurlOptions: LnurlPayOptions = {
   allowCrossHostCallback: true,

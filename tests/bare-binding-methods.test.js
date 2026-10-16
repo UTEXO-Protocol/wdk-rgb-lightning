@@ -7,6 +7,8 @@ import { jest } from '@jest/globals'
 import rln from '@utexo/rgb-lightning-node-bare'
 import { BareRgbLightningBinding } from '../src/bare-binding.js'
 
+const UNLOCK = Object.freeze({ ldk_chain_sync: Object.freeze({ mode: 'TransactionSync', config: Object.freeze({ indexer_url: 'electrum://localhost:50001' }) }), announce_addresses: [] })
+
 function makeBinding (overrides = {}) {
   return new BareRgbLightningBinding({ network: 'regtest', dataDir: '/d', ...overrides })
 }
@@ -25,6 +27,7 @@ function fakeNode () {
 function fakeSigner () {
   return {
     bootstrap: jest.fn(() => ({ node_id: '03beef' })),
+    shutdown: jest.fn(),
     destroy: jest.fn()
   }
 }
@@ -63,13 +66,13 @@ describe('BareRgbLightningBinding', () => {
 
   it('retains primary and fallback seeds without constructing the fallback eagerly', () => {
     const signer = fakeSigner()
-    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(signer)
+    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'createWithStorage').mockReturnValue(signer)
     const binding = makeBinding({ permissiveSignerPolicy: false })
 
     binding.attachExternalSigner('seed-v2', 'seed-v1')
 
     expect(createSpy).toHaveBeenCalledTimes(1)
-    expect(createSpy).toHaveBeenCalledWith('seed-v2', 'regtest', false)
+    expect(createSpy).toHaveBeenCalledWith('seed-v2', 'regtest', '/d/vls-signer', false)
     expect(binding._signer).toBe(signer)
     expect(binding._seedHex.toString()).toBe('seed-v2')
     expect(binding._fallbackSeedHex.toString()).toBe('seed-v1')
@@ -77,7 +80,7 @@ describe('BareRgbLightningBinding', () => {
 
   it('keeps same-seed attachment idempotent and rejects a wallet swap', () => {
     const signer = fakeSigner()
-    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(signer)
+    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'createWithStorage').mockReturnValue(signer)
     const binding = makeBinding()
 
     binding.attachExternalSigner('seed-v2', 'seed-old')
@@ -85,7 +88,7 @@ describe('BareRgbLightningBinding', () => {
     binding.attachExternalSigner('seed-v2', 'seed-v1')
 
     expect(createSpy).toHaveBeenCalledTimes(1)
-    expect(createSpy).toHaveBeenCalledWith('seed-v2', 'regtest', true)
+    expect(createSpy).toHaveBeenCalledWith('seed-v2', 'regtest', '/d/vls-signer', false)
     expect(binding._fallbackSeedHex.toString()).toBe('seed-v1')
     expect(oldFallback.every((byte) => byte === 0)).toBe(true)
     expect(() => binding.attachExternalSigner('seed-v3')).toThrow('a different signer is already attached')
@@ -100,7 +103,7 @@ describe('BareRgbLightningBinding', () => {
     const binding = makeBinding()
     binding._node = fakeNode()
 
-    expect(() => binding.unlock({})).toThrow('attachExternalSigner')
+    expect(() => binding.unlock(UNLOCK)).toThrow('attachExternalSigner')
     expect(() => binding.bootstrap()).toThrow('attachExternalSigner')
   })
 
@@ -113,8 +116,8 @@ describe('BareRgbLightningBinding', () => {
     binding._signer = signer
     binding._fallbackSeedHex = fallbackSeed
 
-    binding.unlock({ rpc: true })
-    binding.unlock({ rpc: true })
+    binding.unlock(UNLOCK)
+    binding.unlock(UNLOCK)
 
     expect(node.initWithNativeExternalSigner).toHaveBeenCalledTimes(1)
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(2)
@@ -126,12 +129,12 @@ describe('BareRgbLightningBinding', () => {
     const existing = makeBinding()
     const existingNode = fakeNode()
     existingNode.initWithNativeExternalSigner.mockImplementation(() => {
-      throw new Error('Conflict: already initialized')
+      throw new Error('Rln(Conflict): already initialized')
     })
     existing._node = existingNode
     existing._signer = fakeSigner()
 
-    expect(() => existing.unlock({})).not.toThrow()
+    expect(() => existing.unlock(UNLOCK)).not.toThrow()
     expect(existingNode.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
 
     const failing = makeBinding()
@@ -141,7 +144,7 @@ describe('BareRgbLightningBinding', () => {
     failing._node = failingNode
     failing._signer = fakeSigner()
 
-    expect(() => failing.unlock({})).toThrow('init failed')
+    expect(() => failing.unlock(UNLOCK)).toThrow('init failed')
     expect(failingNode.unlockWithNativeExternalSigner).not.toHaveBeenCalled()
     expect(failing._sdkInitDone).toBe(false)
   })
@@ -149,6 +152,8 @@ describe('BareRgbLightningBinding', () => {
   it('replaces a mismatched primary signer with the legacy signer', () => {
     const binding = makeBinding()
     const node = fakeNode()
+    const fallbackNode = fakeNode()
+    jest.spyOn(rln.SdkNode, 'create').mockReturnValue(fallbackNode)
     const primarySigner = fakeSigner()
     const fallbackSigner = fakeSigner()
     const primarySeed = Buffer.from('seed-v2')
@@ -158,20 +163,32 @@ describe('BareRgbLightningBinding', () => {
         throw new Error('external signer identity does not match persisted key_source.json')
       })
       .mockImplementationOnce(() => undefined)
-    jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(fallbackSigner)
+    const createSpy = jest.spyOn(rln.NativeExternalSigner, 'createWithStorage')
+      .mockReturnValue(fallbackSigner)
     binding._node = node
     binding._signer = primarySigner
     binding._seedHex = primarySeed
     binding._fallbackSeedHex = fallbackSeed
 
-    binding.unlock({ rpc: true })
+    binding.unlock(UNLOCK)
 
     expect(primarySigner.destroy).toHaveBeenCalledTimes(1)
+    expect(node.shutdown).toHaveBeenCalledTimes(1)
+    expect(node.shutdown.mock.invocationCallOrder[0]).toBeLessThan(primarySigner.shutdown.mock.invocationCallOrder[0])
+    expect(primarySigner.shutdown.mock.invocationCallOrder[0]).toBeLessThan(primarySigner.destroy.mock.invocationCallOrder[0])
+    expect(createSpy).toHaveBeenCalledWith(
+      'seed-v1',
+      'regtest',
+      '/d/vls-signer-legacy',
+      false
+    )
     expect(binding._signer).toBe(fallbackSigner)
     expect(binding._seedHex).toBe(fallbackSeed)
     expect(binding._fallbackSeedHex).toBeUndefined()
     expect(primarySeed.every((byte) => byte === 0)).toBe(true)
-    expect(node.unlockWithNativeExternalSigner).toHaveBeenLastCalledWith(fallbackSigner, { rpc: true })
+    expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
+    expect(fallbackNode.unlockWithNativeExternalSigner).toHaveBeenCalledWith(fallbackSigner, UNLOCK)
+    expect(binding._node).toBe(fallbackNode)
   })
 
   it('destroys the fallback signer if the primary signer cannot be released', () => {
@@ -186,18 +203,44 @@ describe('BareRgbLightningBinding', () => {
     node.unlockWithNativeExternalSigner.mockImplementation(() => {
       throw new Error('Rln(ExternalSignerMismatch): identity mismatch')
     })
-    jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(fallbackSigner)
+    jest.spyOn(rln.NativeExternalSigner, 'createWithStorage').mockReturnValue(fallbackSigner)
     binding._node = node
     binding._signer = primarySigner
     binding._seedHex = primarySeed
     binding._fallbackSeedHex = fallbackSeed
 
-    expect(() => binding.unlock({})).toThrow(destroyError)
+    expect(() => binding.unlock(UNLOCK)).toThrow(destroyError)
+    expect(fallbackSigner.shutdown).toHaveBeenCalledTimes(1)
     expect(fallbackSigner.destroy).toHaveBeenCalledTimes(1)
     expect(binding._signer).toBe(primarySigner)
     expect(binding._seedHex).toBe(primarySeed)
     expect(binding._fallbackSeedHex).toBe(fallbackSeed)
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not revoke a primary signer when failed-unlock node shutdown fails', () => {
+    const binding = makeBinding()
+    const node = fakeNode()
+    const primarySigner = fakeSigner()
+    const fallbackSigner = fakeSigner()
+    node.unlockWithNativeExternalSigner.mockImplementation(() => {
+      throw new Error('Rln(ExternalSignerMismatch): identity mismatch')
+    })
+    node.shutdown.mockImplementationOnce(() => { throw new Error('node shutdown failed') })
+    jest.spyOn(rln.NativeExternalSigner, 'createWithStorage').mockReturnValue(fallbackSigner)
+    binding._node = node
+    binding._signer = primarySigner
+    binding._fallbackSeedHex = Buffer.from('seed-v1')
+
+    expect(() => binding.unlock(UNLOCK)).toThrow('node shutdown failed')
+    expect(primarySigner.shutdown).not.toHaveBeenCalled()
+    expect(primarySigner.destroy).not.toHaveBeenCalled()
+    expect(fallbackSigner.shutdown).toHaveBeenCalledTimes(1)
+    expect(fallbackSigner.destroy).toHaveBeenCalledTimes(1)
+    expect(() => binding.ensureNode()).toThrow()
+    binding.shutdown()
+    expect(primarySigner.shutdown).toHaveBeenCalledTimes(1)
+    expect(primarySigner.destroy).toHaveBeenCalledTimes(1)
   })
 
   it('does not replace the signer for an unrelated unlock failure', () => {
@@ -210,12 +253,12 @@ describe('BareRgbLightningBinding', () => {
     binding._signer = signer
     binding._fallbackSeedHex = Buffer.from('seed-v1')
 
-    expect(() => binding.unlock({})).toThrow('backend unavailable')
+    expect(() => binding.unlock(UNLOCK)).toThrow('backend unavailable')
     expect(binding._signer).toBe(signer)
     expect(node.unlockWithNativeExternalSigner).toHaveBeenCalledTimes(1)
   })
 
-  it('reports both signer cleanup failures without replacing binding state', () => {
+  it.each(['shutdown', 'destroy'])('retains failed fallback %s for explicit cleanup retry', (failureMethod) => {
     const binding = makeBinding()
     const node = fakeNode()
     const primarySigner = fakeSigner()
@@ -223,11 +266,11 @@ describe('BareRgbLightningBinding', () => {
     const primaryError = new Error('primary signer destroy failed')
     const fallbackError = new Error('fallback signer destroy failed')
     primarySigner.destroy.mockImplementation(() => { throw primaryError })
-    fallbackSigner.destroy.mockImplementation(() => { throw fallbackError })
+    fallbackSigner[failureMethod].mockImplementation(() => { throw fallbackError })
     node.unlockWithNativeExternalSigner.mockImplementation(() => {
       throw new Error('Rln(ExternalSignerMismatch): identity mismatch')
     })
-    jest.spyOn(rln.NativeExternalSigner, 'create').mockReturnValue(fallbackSigner)
+    jest.spyOn(rln.NativeExternalSigner, 'createWithStorage').mockReturnValue(fallbackSigner)
     binding._node = node
     binding._signer = primarySigner
     binding._seedHex = Buffer.from('seed-v2')
@@ -235,7 +278,7 @@ describe('BareRgbLightningBinding', () => {
 
     let thrown
     try {
-      binding.unlock({})
+      binding.unlock(UNLOCK)
     } catch (error) {
       thrown = error
     }
@@ -244,6 +287,21 @@ describe('BareRgbLightningBinding', () => {
     expect(thrown.message).toBe('unlock: failed to destroy both the primary and fallback signers')
     expect(thrown.errors).toEqual([primaryError, fallbackError])
     expect(binding._signer).toBe(primarySigner)
+    expect(binding._pendingSignerCleanup).toEqual([fallbackSigner])
+    expect(() => binding.ensureNode()).toThrow()
+    primarySigner.destroy.mockImplementation(() => {})
+    expect(() => binding.shutdown()).toThrow(fallbackError)
+    expect(binding._signer).toBeNull()
+    expect(binding._pendingSignerCleanup).toEqual([fallbackSigner])
+    expect(binding._seedHex).toBeDefined()
+    fallbackSigner[failureMethod].mockImplementation(() => {})
+    binding.shutdown()
+    binding.shutdown()
+    expect(binding._pendingSignerCleanup).toEqual([])
+    expect(binding._seedHex).toBeUndefined()
+    expect(binding._fallbackSeedHex).toBeUndefined()
+    expect(primarySigner.destroy).toHaveBeenCalledTimes(2)
+    expect(fallbackSigner.destroy).toHaveBeenCalledTimes(failureMethod === 'shutdown' ? 1 : 3)
   })
 
   it('forwards the remaining native instance methods', () => {
@@ -282,7 +340,7 @@ describe('BareRgbLightningBinding', () => {
     })
   })
 
-  it('cleans up the signer and retained seeds when node shutdown fails', () => {
+  it('retains live handles and permits shutdown retry after node failure', () => {
     const binding = makeBinding()
     const node = fakeNode()
     const signer = fakeSigner()
@@ -295,14 +353,23 @@ describe('BareRgbLightningBinding', () => {
     binding._fallbackSeedHex = fallbackSeed
 
     expect(() => binding.shutdown()).toThrow('node shutdown failed')
+    expect(signer.shutdown).not.toHaveBeenCalled()
+    expect(signer.destroy).not.toHaveBeenCalled()
+    expect(binding._node).toBe(node)
+    expect(binding._signer).toBe(signer)
+    expect(primarySeed.toString()).toBe('seed-v2')
+    node.shutdown.mockImplementation(() => {})
+    binding.shutdown()
     expect(signer.destroy).toHaveBeenCalledTimes(1)
+    expect(node.shutdown.mock.invocationCallOrder.at(-1)).toBeLessThan(signer.shutdown.mock.invocationCallOrder[0])
+    expect(signer.shutdown.mock.invocationCallOrder[0]).toBeLessThan(signer.destroy.mock.invocationCallOrder[0])
     expect(binding._node).toBeNull()
     expect(binding._signer).toBeNull()
     expect(primarySeed.every((byte) => byte === 0)).toBe(true)
     expect(fallbackSeed.every((byte) => byte === 0)).toBe(true)
   })
 
-  it('wipes retained seeds when signer destruction fails', () => {
+  it('retains the signer for retry when destruction fails', () => {
     const binding = makeBinding()
     const signer = fakeSigner()
     const primarySeed = Buffer.from('seed-v2')
@@ -311,8 +378,35 @@ describe('BareRgbLightningBinding', () => {
     binding._seedHex = primarySeed
 
     expect(() => binding.shutdown()).toThrow('signer destroy failed')
+    expect(binding._signer).toBe(signer)
+    signer.destroy.mockImplementation(() => {})
+    binding.shutdown()
     expect(binding._signer).toBeNull()
-    expect(primarySeed.every((byte) => byte === 0)).toBe(true)
+    expect(binding._seedHex).toBeUndefined()
+  })
+
+  it('surfaces revocation failure without dropping its handle or reporting successful lock', () => {
+    const binding = makeBinding()
+    const node = fakeNode()
+    const signer = fakeSigner()
+    const seed = Buffer.from('seed-v2')
+    signer.shutdown.mockImplementationOnce(() => { throw new Error('signer revocation failed') })
+    binding._node = node
+    binding._signer = signer
+    binding._seedHex = seed
+
+    expect(() => binding.shutdown()).toThrow('signer revocation failed')
+    expect(node.shutdown).toHaveBeenCalledTimes(1)
+    expect(signer.destroy).not.toHaveBeenCalled()
+    expect(binding._signer).toBe(signer)
+    expect(seed.toString()).toBe('seed-v2')
+    expect(() => binding.ensureNode()).toThrow()
+    binding.shutdown()
+    binding.shutdown()
+    expect(node.shutdown).toHaveBeenCalledTimes(1)
+    expect(signer.shutdown).toHaveBeenCalledTimes(2)
+    expect(signer.destroy).toHaveBeenCalledTimes(1)
+    expect(seed.every(byte => byte === 0)).toBe(true)
   })
 
   it('is safe to shut down before any native handles are created', () => {

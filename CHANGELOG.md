@@ -8,13 +8,101 @@ while pre-`1.0`.
 
 ## [Unreleased]
 
+## [0.2.0-beta.4] — 2026-10-16
+
+This breaking beta consolidates the changes developed under the unpublished
+0.2.0-beta.1, beta.2 and beta.3 candidates.
+
+### Breaking changes
+
+- Require exact native peers `@utexo/rgb-lightning-node-bare@0.2.0-beta.4`
+  or `@utexo/rgb-lightning-node-nodejs@0.2.0-beta.4` for the selected runtime.
+  Verify compiled source, adapter and capabilities before creating native handles;
+  preceding native graphs are rejected.
+- Adopt RLN `v0.17.0-beta.3` (`ecc69f20308231400561f6f060fea88acfa40cc4`),
+  rust-lightning `79b9eb5166546c62692d3a672986f385c7fe047d` and rgb-lib
+  `v0.3.0-beta.50-bfa` (`1b951af0c8233308c919975552487be19ad2a930`).
+- Replace the former custom runtime behavior with the released API. Snapshot/
+  FullSync, prepared-send/UTXO inventory, custom operation control, address
+  receipts, VSS delete-all and native routing fee caps are unavailable; unsupported
+  controls fail before submission. Existing overlay-dependent applications need
+  integration changes. Legacy wallet/channel migration is not qualified.
+- Enforce upstream mainnet Lightning rejection before native or HTTP work with
+  `LIGHTNING_DISABLED_ON_MAINNET`. Mainnet on-chain APIs and non-mainnet
+  Lightning APIs retain their documented availability and qualification scope.
+
 ### Added
-- UMA address-format compatibility across Lightning Address payment flows.
-  `$recipient@example.com` is normalized to `recipient@example.com` before
-  LNURL discovery. New root exports include `isUmaAddress`,
-  `normalizeLightningAddress`, `UMA_PREFIX`, and `UMA_MAX_USERNAME_LENGTH`;
-  `parseLightningAddress` now also returns the canonical address, domain, and
-  whether the input used UMA form.
+
+- Typed `burnAsset(request)` on full accounts, with exact u64 decimal-string
+  amount/fee inputs and one native submission. Read-only accounts expose no burn
+  operation. There is no automatic retry, bridge payout or operation journal.
+- Optional `eth_rpc_url` on external unlock for native BFA event validation.
+  Omitted or null values retain non-BFA behavior; endpoint and chain identity
+  remain application responsibilities.
+- `getConsignment(assetId, txid)` on full and read-only accounts, returning
+  exact bytes. Upstream contract/transfer metadata imports validate identity
+  without crediting funds or replacing normal receipt settlement.
+- Optional transport-neutral WebRGB receiving/read adapter, with session
+  approval, revocation checks, strict request mapping and sanitized errors.
+  The optional type peer supports the unchanged `@utexo/webrgb@^0.1.0` subset;
+  it does not add a browser node, WalletConnect transport or remote burn API.
+- Local network, lifecycle and signer-aware capability reporting, plus typed
+  parser-only LSP discovery and address-attested APay registration.
+- UMA-form Lightning Address normalization (`$name@example.com` to
+  `name@example.com`) and the corresponding normalization/parser exports.
+
+### Fixed
+
+- Normalize canonical and supported flat unlock settings, reject ambiguous
+  configuration, and use persistent strict external signing. Serialize activation,
+  receive-address allocation and teardown.
+- Drain the node before revoking its signer. Retain failed account/default-signer/
+  registered-signer cleanup ownership for explicit retries without repeating
+  completed cleanup. Native beta.4 provides terminal signer shutdown and owned
+  session task/listener cleanup.
+- Preserve exact response integers outside JavaScript's safe range, per-batch
+  refresh failures, `utxo.exists` (including false) and `pending_blinded`.
+  Ordinary numeric request inputs reject unsafe integers; the typed burn boundary
+  additionally accepts full-u64 decimal strings.
+- Validate LSP/LNURL response amounts, usable single-channel liquidity, terminal
+  cancellation, Lightning Address/invoice mapping and local invoice decoding
+  before convenience-helper payments. Linked-asset auto-quoting is not added.
+- Validate exactly the two native release peers independently of optional WebRGB,
+  checking their reviewed main sources and declared native graph.
+
+### Native distribution and release tooling
+
+- Consume reviewed main sources: Bare `8b692da2e896e8acfef2bf15b1e501103100c070`
+  and Node `04b641dce121ac690d5d0866eeba4fa76aebe7a5`.
+- Bare requires exact-version iOS, Android ARMv7/ARM64 and Android x64 data
+  packages. Its Darwin wrapper validates all three payloads before restoring six
+  mobile paths and verifying all seven targets. Missing/corrupt payloads fail
+  without a private source-build fallback; ignored-script installs have an
+  explicit hydration route. Distribution splitting preserves the original native
+  binaries and compilation provenance.
+- Build reproducible tarballs from clean committed source with the exact Git
+  identity stamped only in staging. npm 12 consumer canaries authorize exact
+  native sources, require observed postinstall admission and reject script-policy
+  bypasses. The release workflow includes this version's curated changelog entry
+  in its GitHub notes alongside package metadata and generated changes.
+
+### Known limitations
+
+- Interrupted BTC sends can leave reservations requiring recovery (P02).
+- RGB settled/spendable accounting can remain stale after a Bitcoin reorg (P03).
+- Incoming witness receipts can be double-counted in pending projections before
+  settling to the correct amount (P04).
+- An earlier wrong-amount BFA lock can cause a later valid mint to fail (P06).
+- Native dependency security review remains open (D01). Passing the production
+  npm audit does not establish a clean Rust dependency audit.
+- Recorded host and iOS 27 Debug regtest passes have their stated scope;
+  optimized mobile Release, remaining platform/public-network qualification,
+  redistribution/notices and recovery gates remain as recorded. VSS/device-loss
+  and general channel recovery are not qualified by those passes.
+
+This is an experimental beta, not a production-readiness claim. See
+[PRODUCTION-GATES.md](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/PRODUCTION-GATES.md)
+for exact evidence, supported scopes and unresolved items.
 
 ## [0.1.0-beta.15] — 2026-07-23
 

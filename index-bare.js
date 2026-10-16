@@ -24,6 +24,7 @@ export { BareRgbLightningBinding } from './src/bare-binding.js'
 export {
   RgbLightningError,
   AccountLockedError,
+  LightningDisabledError,
   UnlockError,
   VssError,
   VssNotConfiguredError,
@@ -36,6 +37,7 @@ export {
 // installed by ./bare.js) and Node ≥18 (native fetch) without per-runtime
 // branches.
 export { LspClient, LspError } from './src/lsp-client.js'
+export { parseLspInfo } from './src/lsp-info.js'
 export {
   LnurlPayError,
   UMA_PREFIX,

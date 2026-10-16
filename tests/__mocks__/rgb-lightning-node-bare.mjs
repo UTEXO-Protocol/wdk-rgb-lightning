@@ -1,3 +1,4 @@
+import { REQUIRED_NATIVE_RUNTIME } from '../../src/native-runtime-contract.js'
 // Copyright 2026 UTEXO.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,6 +14,12 @@ const SdkNode = {
 const NativeExternalSigner = {
   create: () => ({
     bootstrap: () => ({}),
+    shutdown: () => {},
+    destroy: () => {}
+  }),
+  createWithStorage: () => ({
+    bootstrap: () => ({}),
+    shutdown: () => {},
     destroy: () => {}
   })
 }
@@ -23,6 +30,7 @@ const sdkInitialize = () => {}
 const sdkShutdown = () => {}
 
 export default {
+  getRuntimeInfo: () => ({ ...REQUIRED_NATIVE_RUNTIME, capabilities: ['canonical-unlock-v1', 'persistent-native-signer', 'refresh-transfers-v1', 'apay-address', 'decoded-invoice-cltv', 'tagged-rgb-assignment', 'pending-blinded-v1', 'rgb-contract-import-v1', 'rgb-transfer-metadata-import-v1', 'consignment-export-v1', 'mainnet-lightning-rejection-v1', 'external-signer-eth-rpc-v1', 'external-signer-burn-v1', 'native-signer-shutdown-v1', 'owned-session-cleanup-v1'] }),
   SdkNode,
   NativeExternalSigner,
   uniffiHealthcheck,

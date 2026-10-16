@@ -119,6 +119,128 @@ describe('WalletManagerRgbLightning', () => {
     expect(FakeBinding.instances).toHaveLength(0)
   })
 
+  it('preserves a failed creation handle until cleanup succeeds', async () => {
+    class FailingBinding extends FakeBinding {
+      constructor (config) {
+        super(config)
+        this.attachExternalSigner.mockImplementation(() => { throw new Error('attach failed') })
+        this.shutdown.mockImplementation(() => { throw new Error('cleanup failed') })
+      }
+    }
+    class FailingManager extends TestManager {
+      static get Binding () { return FailingBinding }
+    }
+    const manager = new FailingManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
+    await expect(manager.getAccount()).rejects.toBeInstanceOf(AggregateError)
+    const binding = FakeBinding.instances[0]
+    expect(manager._binding).toBe(binding)
+    await expect(manager.getAccount()).rejects.toThrow('cleanup failed')
+    expect(FakeBinding.instances).toHaveLength(1)
+    binding.shutdown.mockImplementation(() => {})
+    manager.dispose()
+    expect(manager._binding).toBeNull()
+  })
+
+  it('reports every disposal failure and allows native shutdown retry', async () => {
+    const manager = new TestManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
+    const account = await manager.getAccount()
+    const binding = FakeBinding.instances[0]
+    const disposeAccount = jest.spyOn(account, 'dispose').mockImplementationOnce(() => { throw new Error('account cleanup') })
+    binding.shutdown.mockImplementationOnce(() => { throw new Error('native cleanup') })
+    try {
+      manager.dispose()
+      throw new Error('Expected aggregate failure')
+    } catch (error) {
+      expect(error).toBeInstanceOf(AggregateError)
+      expect(error.errors.map(e => e.message)).toEqual(['account cleanup', 'native cleanup'])
+    }
+    expect(manager._accounts[0]).toBe(account)
+    expect(manager._binding).toBe(binding)
+    manager.dispose()
+    expect(disposeAccount).toHaveBeenCalledTimes(2)
+    expect(manager._accounts).toEqual({})
+    expect(manager._binding).toBeNull()
+    await expect(manager.getAccount()).rejects.toThrow('disposed')
+  })
+
+  it('retains a registered signer after failed disposal and retries only unfinished cleanup', async () => {
+    const manager = new TestManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
+    const failure = new Error('signer cleanup failed')
+    const retained = { dispose: jest.fn().mockImplementationOnce(() => { throw failure }) }
+    const completed = { dispose: jest.fn() }
+    expect(manager.addSigner('retained', retained)).toBe(manager)
+    manager.addSigner('completed', completed)
+    expect(manager.getSigner('retained')).toBe(retained)
+
+    expect(() => manager.dispose()).toThrow(failure)
+    expect(manager.getSigners()).toEqual({ retained })
+    expect(manager.getSigner('retained')).toBe(retained)
+    expect(retained.dispose).toHaveBeenCalledTimes(1)
+    expect(completed.dispose).toHaveBeenCalledTimes(1)
+    await expect(manager.getAccount()).rejects.toThrow('disposed')
+
+    expect(manager.dispose()).toBeUndefined()
+    expect(retained.dispose).toHaveBeenCalledTimes(2)
+    expect(completed.dispose).toHaveBeenCalledTimes(1)
+    expect(manager.getSigners()).toEqual({})
+    expect(() => manager.getSigner('retained')).toThrow('No signer registered')
+    manager.dispose()
+    expect(retained.dispose).toHaveBeenCalledTimes(2)
+    expect(completed.dispose).toHaveBeenCalledTimes(1)
+    expect(FakeBinding.instances).toHaveLength(0)
+  })
+
+  it('retains a failed default signer without repeating successful registered-signer cleanup', () => {
+    const failure = new Error('default signer cleanup failed')
+    const defaultSigner = { dispose: jest.fn().mockImplementationOnce(() => { throw failure }) }
+    const completed = { dispose: jest.fn() }
+    const manager = new TestManager(defaultSigner, { network: 'regtest', dataDir: '/wallet' })
+    manager.addSigner('completed', completed)
+    expect(manager.getSigner()).toBe(defaultSigner)
+
+    expect(() => manager.dispose()).toThrow(failure)
+    expect(manager.getSigner()).toBe(defaultSigner)
+    expect(manager.getSigners()).toEqual({})
+    expect(manager.dispose()).toBeUndefined()
+    expect(defaultSigner.dispose).toHaveBeenCalledTimes(2)
+    expect(completed.dispose).toHaveBeenCalledTimes(1)
+    expect(() => manager.getSigner()).toThrow('No default signer registered')
+    manager.dispose()
+    expect(defaultSigner.dispose).toHaveBeenCalledTimes(2)
+    expect(FakeBinding.instances).toHaveLength(0)
+  })
+
+  it('settles partial cleanup across accounts, signers and native handles before retrying failures', async () => {
+    const manager = new TestManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
+    const account = await manager.getAccount()
+    const disposeAccount = jest.spyOn(account, 'dispose')
+    const binding = FakeBinding.instances[0]
+    const retained = { dispose: jest.fn().mockImplementationOnce(() => { throw new Error('registered cleanup') }) }
+    const completed = { dispose: jest.fn() }
+    manager.addSigner('retained', retained)
+    manager.addSigner('completed', completed)
+    binding.shutdown.mockImplementationOnce(() => { throw new Error('native cleanup') })
+
+    let failure
+    try { manager.dispose() } catch (error) { failure = error }
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect(failure.errors.map(error => error.message)).toEqual(['registered cleanup', 'native cleanup'])
+    expect(manager._accounts).toEqual({})
+    expect(manager._binding).toBe(binding)
+    expect(manager.getSigners()).toEqual({ retained })
+
+    expect(manager.dispose()).toBeUndefined()
+    expect(disposeAccount).toHaveBeenCalledTimes(1)
+    expect(completed.dispose).toHaveBeenCalledTimes(1)
+    expect(retained.dispose).toHaveBeenCalledTimes(2)
+    expect(binding.shutdown).toHaveBeenCalledTimes(2)
+    expect(manager._binding).toBeNull()
+    expect(manager.getSigners()).toEqual({})
+    await expect(manager.getAccount()).rejects.toThrow('disposed')
+    manager.dispose()
+    expect(binding.shutdown).toHaveBeenCalledTimes(2)
+  })
+
   it('maps mempool fee recommendations to WDK bigint fee rates', async () => {
     const originalFetch = globalThis.fetch
     globalThis.fetch = jest.fn(async () => ({

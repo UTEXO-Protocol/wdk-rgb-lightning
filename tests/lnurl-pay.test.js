@@ -21,9 +21,9 @@ import {
 
 // A minimal Response-like stub. `body` is serialized to JSON unless a raw
 // string is supplied, so we can also exercise the invalid-JSON path.
-function makeResponse ({ ok = true, status = 200, body = {}, raw } = {}) {
+function makeResponse ({ ok = true, status = 200, body = {}, raw, redirected, url } = {}) {
   const text = raw !== undefined ? raw : JSON.stringify(body)
-  return { ok, status, text: async () => text }
+  return { ok, status, text: async () => text, redirected, url }
 }
 
 // A valid LUD-06 discovery document used as the happy-path baseline.
@@ -210,6 +210,7 @@ describe('fetchDiscovery', () => {
     const [url, init] = fetch.mock.calls[0]
     expect(url).toBe('https://getalby.com/.well-known/lnurlp/alice')
     expect(init.headers).toEqual({ Accept: 'application/json' })
+    expect(init.redirect).toBe('error')
     expect(init.signal === undefined || typeof init.signal === 'object').toBe(true)
   })
 
@@ -250,6 +251,20 @@ describe('fetchDiscovery', () => {
     expect(err.cause).toBe(cause)
   })
 
+  it('rejects a discovery response that the transport already redirected', async () => {
+    const fetch = jest.fn(async () => makeResponse({
+      body: discoveryDoc(),
+      redirected: true,
+      url: 'https://redirected.example/.well-known/lnurlp/a'
+    }))
+
+    const error = await fetchDiscovery('a@b.com', { fetch }).catch((cause) => cause)
+
+    expect(error).toBeInstanceOf(LnurlPayError)
+    expect(error.message).toMatch(/redirected response is not accepted/)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
   it('throws with status + body on a non-ok HTTP response', async () => {
     const fetch = jest.fn(async () => makeResponse({ ok: false, status: 404, raw: '  not found  ' }))
     const err = await fetchDiscovery('a@b.com', { fetch }).catch((e) => e)
@@ -262,6 +277,37 @@ describe('fetchDiscovery', () => {
   it('throws when the body is not valid JSON', async () => {
     const fetch = jest.fn(async () => makeResponse({ raw: 'not-json{' }))
     await expect(fetchDiscovery('a@b.com', { fetch })).rejects.toThrow(/invalid JSON/)
+  })
+
+  it('rejects an oversized declared response before buffering its body', async () => {
+    const text = jest.fn(async () => JSON.stringify(discoveryDoc()))
+    const fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => String((1 << 20) + 1) },
+      text
+    }))
+
+    await expect(fetchDiscovery('a@b.com', { fetch })).rejects.toThrow(/exceeds 1048576 bytes/)
+    expect(text).not.toHaveBeenCalled()
+  })
+
+  it('cancels an oversized streamed response as soon as the cap is crossed', async () => {
+    const cancel = jest.fn(async () => {})
+    const releaseLock = jest.fn()
+    const read = jest.fn()
+      .mockResolvedValueOnce({ done: false, value: new Uint8Array((1 << 20) + 1) })
+    const fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      body: { getReader: () => ({ read, cancel, releaseLock }) },
+      text: jest.fn()
+    }))
+
+    await expect(fetchDiscovery('a@b.com', { fetch })).rejects.toThrow(/exceeds 1048576 bytes/)
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(releaseLock).toHaveBeenCalledTimes(1)
   })
 
   it('throws when discovery is not an object', async () => {
@@ -290,6 +336,12 @@ describe('fetchDiscovery', () => {
 
     const malformed = jest.fn(async () => makeResponse({ body: discoveryDoc({ callback: 'https://[invalid' }) }))
     await expect(fetchDiscovery('a@b.com', { fetch: malformed })).rejects.toThrow(/invalid callback/)
+
+    const credentials = jest.fn(async () => makeResponse({ body: discoveryDoc({ callback: 'https://user:pass@b.com/cb' }) }))
+    await expect(fetchDiscovery('a@b.com', { fetch: credentials })).rejects.toThrow(/invalid callback/)
+
+    const fragment = jest.fn(async () => makeResponse({ body: discoveryDoc({ callback: 'https://b.com/cb#fragment' }) }))
+    await expect(fetchDiscovery('a@b.com', { fetch: fragment })).rejects.toThrow(/invalid callback/)
   })
 
   it('throws when the sendable range is missing, inverted, or non-positive', async () => {
@@ -422,8 +474,35 @@ describe('resolveAddressToInvoice', () => {
     expect(out.callbackUrl).toBe('https://delegate.example/cb?amount=2500')
   })
 
+  it('rejects a callback response that the transport already redirected', async () => {
+    let call = 0
+    const fetch = jest.fn(async () => {
+      call += 1
+      if (call === 1) return makeResponse({ body: discoveryDoc() })
+      return makeResponse({
+        body: { pr: 'must-not-be-accepted' },
+        redirected: true,
+        url: 'https://b.com/redirect-target'
+      })
+    })
+
+    const error = await resolveAddressToInvoice('a@b.com', 2500, { fetch })
+      .catch((cause) => cause)
+
+    expect(error).toBeInstanceOf(LnurlPayError)
+    expect(error.message).toMatch(/redirected response is not accepted/)
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
   it('forwards validated RGB extension parameters through the shared resolver', async () => {
-    const fetch = twoStepFetch(discoveryDoc(), { pr: 'lnbc-rgb' })
+    const fetch = twoStepFetch(discoveryDoc({
+      payout_asset: {
+        asset_id: 'rgb:asset', schema: 'Ifa', ticker: 'USDT', name: 'USDT', precision: 6
+      },
+      accepted_assets: [{
+        asset_id: 'rgb:asset', schema: 'Ifa', ticker: 'USDT', name: 'USDT', precision: 6
+      }]
+    }), { pr: 'lnbc-rgb' })
     const out = await resolveAddressToInvoice('a@b.com', 2500, {
       fetch,
       assetId: 'rgb:asset',
@@ -433,14 +512,14 @@ describe('resolveAddressToInvoice', () => {
   })
 
   it('appends a LUD-12 comment with & when the callback already has a query', async () => {
-    const discovery = discoveryDoc({ callback: 'https://b.com/cb?token=xyz' })
+    const discovery = discoveryDoc({ callback: 'https://b.com/cb?token=xyz', commentAllowed: 20 })
     const fetch = twoStepFetch(discovery, { pr: 'lnbc1...' })
     const out = await resolveAddressToInvoice('a@b.com', 5000, { fetch, comment: 'hi there' })
     expect(out.callbackUrl).toBe('https://b.com/cb?token=xyz&amount=5000&comment=hi+there')
   })
 
   it('uses ? for the first param and & between params when the callback has no query', async () => {
-    const fetch = twoStepFetch(discoveryDoc(), { pr: 'lnbc1...' })
+    const fetch = twoStepFetch(discoveryDoc({ commentAllowed: 20 }), { pr: 'lnbc1...' })
     const out = await resolveAddressToInvoice('a@b.com', 5000, { fetch, comment: 'hi there' })
     expect(out.callbackUrl).toBe('https://b.com/lnurlp/cb?amount=5000&comment=hi+there')
     expect(fetch.mock.calls[1][0]).toBe('https://b.com/lnurlp/cb?amount=5000&comment=hi+there')
@@ -451,6 +530,62 @@ describe('resolveAddressToInvoice', () => {
     const out = await resolveAddressToInvoice('a@b.com', 5000, { fetch })
     expect(out.callbackUrl).toBe('https://b.com/lnurlp/cb?amount=5000')
     expect(out.callbackUrl).not.toContain('comment')
+  })
+
+  it('rejects unsupported or oversized comments before consuming a callback', async () => {
+    const unsupported = twoStepFetch(discoveryDoc(), { pr: 'must-not-be-reached' })
+    await expect(resolveAddressToInvoice('a@b.com', 5000, {
+      fetch: unsupported,
+      comment: 'hello'
+    })).rejects.toThrow(/does not accept comments/)
+    expect(unsupported).toHaveBeenCalledTimes(1)
+
+    const oversized = twoStepFetch(
+      discoveryDoc({ commentAllowed: 2 }),
+      { pr: 'must-not-be-reached' }
+    )
+    await expect(resolveAddressToInvoice('a@b.com', 5000, {
+      fetch: oversized,
+      comment: 'three'
+    })).rejects.toThrow(/2-character limit/)
+    expect(oversized).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects an unadvertised RGB request before consuming a callback', async () => {
+    const fetch = twoStepFetch(discoveryDoc(), { pr: 'must-not-be-reached' })
+    await expect(resolveAddressToInvoice('a@b.com', 2500, {
+      fetch,
+      assetId: 'rgb:unknown',
+      assetAmount: 7
+    })).rejects.toThrow(/not advertised/)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a zero-unit or non-canonical RGB request before consuming a callback', async () => {
+    const asset = {
+      asset_id: 'rgb:asset', schema: 'Ifa', ticker: 'USDT', name: 'USDT', precision: 6
+    }
+    const zeroAmount = twoStepFetch(discoveryDoc({
+      payout_asset: asset,
+      accepted_assets: [asset]
+    }), { pr: 'must-not-be-reached' })
+    await expect(resolveAddressToInvoice('a@b.com', 2500, {
+      fetch: zeroAmount,
+      assetId: asset.asset_id,
+      assetAmount: 0
+    })).rejects.toThrow(/assetAmount must be positive/)
+    expect(zeroAmount).toHaveBeenCalledTimes(1)
+
+    const whitespaceId = twoStepFetch(discoveryDoc({
+      payout_asset: asset,
+      accepted_assets: [asset]
+    }), { pr: 'must-not-be-reached' })
+    await expect(resolveAddressToInvoice('a@b.com', 2500, {
+      fetch: whitespaceId,
+      assetId: 'rgb:asset suffix',
+      assetAmount: 1
+    })).rejects.toThrow(/whitespace-free/)
+    expect(whitespaceId).toHaveBeenCalledTimes(1)
   })
 
   it('throws when no usable fetch is available', async () => {

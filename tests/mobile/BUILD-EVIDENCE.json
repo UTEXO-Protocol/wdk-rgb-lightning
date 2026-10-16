@@ -1,0 +1,23 @@
+{
+  "date": "2026-09-24",
+  "rlnCommit": "af03c7f1a65135a429f05a5820600338215954dc",
+  "nativeWrapperSha256": "a14595c61b2f5ac78814deb75169f5f9a3f364109c8c5d11245c35ca1185421a",
+  "expo": "56.0.21",
+  "reactNative": "0.85.3",
+  "bareKit": "0.14.5",
+  "embeddedBare": "1.29.4",
+  "barePack": "2.2.1",
+  "bareLink": "3.3.0",
+  "apkBareLief": "0.2.5",
+  "androidApkSha256": "8fed827e486de92fd1fdb948efe2eb2dd66bf6f8d195c2c775262709f78e8a5d",
+  "androidExtractedRlnSoSha256": "4f89def664906724bb7520b9e2a8d9c67c8c65ca57ae8ccd73beb9d4ae66c445",
+  "workletBundleSha256": "5a97a1bb71b122df56bef5f92414de96049fc8ab2f1a57aeae4143e673211a0e",
+  "android4KiB": "passed worklet runtime suite",
+  "android16KiB": "SIGSEGV at native import; extracted APK library fails RELRO validation",
+  "zipAlignment16KiB": "passed, insufficient to establish ELF correctness",
+  "laterDiagnosticBareLief": "0.2.8",
+  "laterDiagnosticResult": "arm64 and x64 post-link ELF RELRO validation still fails; no rebuilt 0.2.8 APK runtime result claimed",
+  "currentPrivateFixtureLockSha256": "2837e16b536451427abf73528a39aca4ac4a17cd4bc6ddb6ab7ba903ecd36bef",
+  "lockScope": "after the 0.2.8 diagnostic dependency install, not the immutable as-built APK lockfile",
+  "releaseApproval": false
+}
