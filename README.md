@@ -27,77 +27,8 @@ RLN rejects **issuance and inflation in external-signer mode**, which this
 module always uses. Issue assets in a separate on-chain wallet, such as
 [`@utexo/wdk-wallet-rgb`][wdk-wallet-rgb], then transfer them to this wallet.
 
-> Version `0.2.0-beta.4` targets RLN `v0.17.0-beta.3`.
-> This beta is not production-qualified. Review the [known limitations](#known-limitations)
-> and [qualification register](./PRODUCTION-GATES.md) before integrating it.
-
-## Upgrade Restrictions
-
-This breaking line requires the exact RLN `v0.17.0-beta.3` source
-`ecc69f20308231400561f6f060fea88acfa40cc4`, rust-lightning
-`79b9eb5166546c62692d3a672986f385c7fe047d`, and rgb-lib
-`v0.3.0-beta.50-bfa` (`1b951af0c8233308c919975552487be19ad2a930`).
-Install the exact native version `0.2.0-beta.4` for your runtime. Its compiled
-source, adapter and capabilities are checked before native handles are created;
-an older beta.3 artifact is rejected. The native packages are published and
-independently verified; see [Installation](#installation) for the required packages.
-
-This breaking version is scoped to fresh wallets. No legacy-wallet migration
-compatibility is promised. Channel and signer durability still matter for newly created wallets.
-Never delete or recreate state to bypass refusal, or roll back stale channel state
-after activity.
-
-There is no snapshot/FullSync overlay, prepared-send/UTXO inventory, native
-operation control, address receipt or VSS delete-all API. Native
-routing fee caps are unavailable and are rejected before payment submission.
-Contract and transfer-consignment metadata import APIs validate asset identity and
-never credit funds; normal receive/settlement remains required.
-Integrations that require the removed capabilities must adapt before upgrading.
-
-Native JSON number inputs must fit `Number.MAX_SAFE_INTEGER`; larger numbers
-fail before submission. The typed `burnAsset` API additionally accepts canonical
-decimal strings for its u64 `amount` and `fee_rate` fields, as described below.
-Response integers outside the safe range are preserved as exact decimal strings,
-including u64 limits and channel IDs; they are never rounded first.
-Refresh preserves per-batch status/failure details, and unspents
-preserve `utxo.exists`, including false, and `pending_blinded`. Both are required;
-an absent reservation count is not treated as zero. No spendability is inferred
-from absence.
-
-## Known limitations
-
-The pinned native graph retains the following financial and security limitations:
-
-- **Interrupted BTC send (P02):** process death during a send can leave an
-  orphaned input reservation and reduce reported spendable balance after restart.
-  Automatic reconciliation or safe abort recovery is not provided.
-- **RGB reorg accounting (P03):** a disconnected settled receipt can remain in
-  `settled` and `spendable` balances, including after cold restart. These fields
-  are **not a reorg-safe current-confirmation guarantee**.
-- **Pending RGB accounting (P04):** one incoming witness receipt can be counted
-  twice in `future` before settlement. Correct settled balances do not make the
-  pending projection reliable.
-- **BFA event selection (P06):** an earlier wrong-amount lock for a mint can
-  cause validation to reject a later valid lock for the same mint. Ordinary BFA
-  receive/send and burn passes do not cover this event-order case.
-- **Native dependency security (D01):** security findings in the selected Rust
-  dependency graph still require disposition. A clean npm audit covers the npm
-  tree and does not resolve these native findings.
-
-The signer shutdown and session cleanup repair passes its recorded host and
-normal funded iOS 27 Debug regtest scopes (P01). Those passes do not establish
-arbitrary crash recovery, Android wallet recovery, funded mobile Release,
-physical-device, public-network, VSS recovery or full Lightning justice/commit
-boundary qualification. BFA Lightning API availability is not a WDK BFA channel
-guarantee. See [PRODUCTION-GATES.md](./PRODUCTION-GATES.md) for exact sources,
-evidence and remaining qualification, and the
-[release procedure](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/RELEASING.md)
-for package verification.
-
 ## Contents
 
-- [Upgrade restrictions](#upgrade-restrictions)
-- [Known limitations](#known-limitations)
 - [Architecture](#architecture)
 - [Installation](#installation)
 - [Quick start](#quick-start)
@@ -112,114 +43,7 @@ for package verification.
 - [Testing and local development](#testing-and-local-development)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
-
-## Mainnet policy and capabilities
-
-RLN disables Lightning **on mainnet only**. Account channel, peer, invoice
-(including BOLT11 decoding), payment, HODL, APay and onion-message methods reject
-with `LightningDisabledError`, code `LIGHTNING_DISABLED_ON_MAINNET`, before
-native execution. Lightning recipients in `transfer` and `quoteTransfer`,
-wallet-connected LSP methods and standalone account-taking LSP helpers use the
-same policy before HTTP side effects. Read-only accounts follow it too.
-
-Signet, testnet and regtest retain their Lightning APIs; availability is not a
-claim that their recorded release gates are resolved. BTC/RGB on-chain methods,
-identity queries, message signing/verification and standalone LSP discovery
-remain available. `getTransactionReceipt` does not query Lightning history on
-mainnet, so an unknown on-chain hash returns `null`.
-
-```js
-const capabilities = account.getCapabilities()
-// { network, signer: 'external', lightning, consignmentExport: true,
-//   bfaAssetListing: true, bfaValidation: true, burn: true }
-
-try {
-  await account.listChannels()
-} catch (error) {
-  if (error.code !== 'LIGHTNING_DISABLED_ON_MAINNET') throw error
-}
-```
-
-`getNetwork()` reads the configured network without unlocking.
-`getCapabilities()` describes this package/signer combination, not wallet
-readiness, balance or successful qualification. `getBfaCapabilities()` returns
-`{ bfa: true, burn: true, consignment: true }` on a full account. The read-only
-facade reports `burn: false` in both capability methods and has no `burnAsset`.
-Configure `eth_rpc_url` when
-unlocking to enable native validation of BFA bridge events:
-
-```js
-await account.unlock({
-  ldk_chain_sync: {
-    mode: 'TransactionSync',
-    config: { indexer_url: bitcoinIndexerUrl }
-  },
-  indexer_url: bitcoinIndexerUrl,
-  proxy_endpoint: rgbProxyUrl,
-  eth_rpc_url: ethereumRpcUrl,
-  announce_addresses: []
-})
-```
-
-Choose the Ethereum RPC for the chain containing the asset's bridge contract.
-Omitting the field, or supplying `null`, keeps the non-BFA unlock behavior.
-No endpoint is inferred or substituted. A capability flag does not establish
-endpoint health, chain identity or the validity of any particular consignment.
-Consignment export uses the existing account API. The
-[BFA qualification report](./BFA-QUALIFICATION.md) identifies the sources and
-scenarios tested; it does not establish bridge or deployment approval.
-
-### Native Asset Burn
-
-`account.burnAsset(request)` invokes the native `SdkNode.burn` once. It accepts
-the existing RLN C-FFI request, not a WebRGB or WalletConnect request:
-
-```js
-const { txid, batch_transfer_idx } = await account.burnAsset({
-  asset_id: assetId,
-  amount: '1000000',
-  fee_rate: 2,
-  min_confirmations: 3,
-  burn_recipient: recipientHex // BFA: 32-byte hex, without a 0x prefix
-})
-```
-
-`amount` and `fee_rate` must be positive safe-integer numbers or canonical
-decimal strings up to `18446744073709551615`. Native wrappers encode strings
-as exact u64 JSON numbers. `min_confirmations` is an integer from 0 to 255;
-the application owns its confirmation policy. Omit `burn_recipient` (or use
-`null`) for assets that do not require it. WDK does not infer a recipient,
-encode EVM addresses, choose a chain, or perform an Ethereum payout.
-
-Await `unlock()` first. Burns are rejected during activation or after shutdown
-starts. Node/Bare native calls are synchronous; RLN serializes preparation,
-signing and completion under the RGB wallet mutex. The successful response
-contains the native `txid` and `batch_transfer_idx`, not proof of settlement.
-
-Failures may retain an `Initiated` transfer and input reservations. WDK passes
-native errors through, never retries or automatically frees inputs. Reconcile
-transfer history and on-chain state before requesting another burn, including
-after a malformed or lost response. A subsequent call is a new burn, not an
-idempotent retry. Persistent operation records, user approvals, transport and
-bridge recovery belong to the application; none are added here. Export an
-available proof separately with `getConsignment(assetId, txid)`.
-
-The runtime gate requires the exact source/adapter identity plus
-`external-signer-burn-v1`. API availability does not qualify a funded wallet,
-bridge, payout or device. See the [release tracker](./RELEASE-0.15-TRACKER.md).
-
-## WebRGB integration
-
-The optional `@utexo/wdk-rgb-lightning/webrgb` export adapts a native WDK account
-to WebRGB's receiving/read subset. It does not run RLN in a browser, inject
-`window.rgb`, or establish WalletConnect sessions. It has no runtime dependency
-on WebRGB or WalletConnect. TypeScript consumers of this subpath should install
-the optional type peer `@utexo/webrgb@^0.1.0`; the unchanged read subset is
-checked against `0.1.0` and `0.1.2`. Ordinary WDK consumers do not need it.
-
-See [WEBRGB.md](./WEBRGB.md) for session authorization, approval handling, API
-mapping and native-runtime integration. The subset matches the non-burn scope
-of [rgb-sdk-rn #59](https://github.com/UTEXO-Protocol/rgb-sdk-rn/pull/59).
+- [Known limitations](#known-limitations)
 
 ## Architecture
 
@@ -252,96 +76,31 @@ module-load differs.
 
 ## Installation
 
-Install this module and the exact native binding for your runtime:
+Install this module with the native binding for your runtime:
 
 ```sh
-npm install @utexo/wdk-rgb-lightning@0.2.0-beta.4
+# Node.js
+npm install @utexo/wdk-rgb-lightning@0.2.0-beta.4 @utexo/rgb-lightning-node-nodejs@0.2.0-beta.4
 
-# Plus the native binding matching your runtime (optional peer deps):
-npm install @utexo/rgb-lightning-node-nodejs@0.2.0-beta.4   # Node host
-# or
-npm install @utexo/rgb-lightning-node-bare@0.2.0-beta.4     # Bare / React Native host
+# Bare / React Native
+npm install @utexo/wdk-rgb-lightning@0.2.0-beta.4 @utexo/rgb-lightning-node-bare@0.2.0-beta.4
 ```
 
-Both bindings are declared as **optional** peer dependencies — install only
-the one for your runtime. Bare itself requires three data
-packages at exact version `0.2.0-beta.4`; they are not additional WDK peers:
+Choose one binding. Bare installs its required native payload dependencies
+automatically. Standalone Bare requires >=1.33.0; see the
+[Bare setup guide](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/8b692da2e896e8acfef2bf15b1e501103100c070/README.md)
+for React Native integration.
 
-| Required Bare dependency | Targets |
-| --- | --- |
-| `@utexo/rgb-lightning-node-bare-ios` | iOS device and both simulator slices |
-| `@utexo/rgb-lightning-node-bare-android-arm` | Android ARMv7 and ARM64 |
-| `@utexo/rgb-lightning-node-bare-android-x64` | Android x64 |
-
-npm installs all three on every host, including when optional dependencies are
-omitted. The wrapper contains Darwin only. Its postinstall admits every data
-package and all hashes before copying six mobile files into the canonical
-prebuild paths, then verifies all seven targets. The data packages have no hooks,
-executable entry points, dependencies or platform filters. Complete payloads are
-required even when building for a single platform.
-
-Packed Bare installation fails if any required payload or identity is missing or
-incorrect; it does not fall back to a private source build. If install scripts
-were skipped, assemble and verify the installed package before bundling:
+Allow the native package's install scripts to run. If Bare's scripts were
+skipped, assemble its native files before bundling:
 
 ```sh
 npm --prefix node_modules/@utexo/rgb-lightning-node-bare run hydrate-native
 ```
 
-Standalone Bare requires >=1.33.0. Qualify a React Native app's embedded Bare
-runtime separately. The parser-only `@utexo/wdk-rgb-lightning/lsp-info` entry is
-pure JS and does not require a native binding.
-
-npm 12 requires approval before dependency install scripts run. Review and
-authorize the exact native package source; a registry `name@version` grant does
-not authorize a local tarball, which needs its exact file-source grant. See the
-[release procedure](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/RELEASING.md)
-for the restricted script policy and packed-consumer verification commands.
-
-For Android, use `react-native-bare-kit@0.15.5` and apply the native package's
-[Android staging hook](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/8b692da2e896e8acfef2bf15b1e501103100c070/android/README.md)
-in the root Android Gradle build. The hook verifies the pinned original addon
-and packages it without the ELF rewrite that damages RELRO/DYNAMIC protection.
-Installing WDK or its Bare peer does not apply this hook automatically. This
-integration supports ARM64, ARMv7 and x86-64; it does not change WDK APIs or
-RLN's source revision. Validate the final app artifact and runtime separately.
-
-### Native source identity and source builds
-
-The exact native source pins are recorded in
-[`native-peer-sources.json`](./native-peer-sources.json):
-
-| Binding | Reviewed main commit |
-| --- | --- |
-| Bare wrapper and Android data | `8b692da2e896e8acfef2bf15b1e501103100c070` |
-| Node | `04b641dce121ac690d5d0866eeba4fa76aebe7a5` |
-
-The immutable iOS data package retains source
-`15b0ff68d1b59fa88131cfb9be6fe48c30287e6b`. Distribution splitting preserves all
-seven original Bare binaries and their native build inputs. Package source,
-publication builder and original native compilation are distinct identities;
-the [release procedure](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/RELEASING.md)
-records their provenance and verification.
-
-Source builds require authorized access to private upstream BFA repositories,
-Rust 1.94.0, Git, CMake and the target SDK/toolchain. Use an explicit pinned clone
-and the native binding's documented preparation commands. Installing a Git
-dependency does not prepare the complete Bare distribution. Follow the
-[Bare source-build instructions](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/8b692da2e896e8acfef2bf15b1e501103100c070/README.md)
-for `prepare-native`, staging all three payloads and verifying all four archives,
-or the [Node source-build instructions](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/blob/04b641dce121ac690d5d0866eeba4fa76aebe7a5/README.md).
-The complete Bare target set requires macOS with the iOS SDK and Android NDK.
-A local packed consumer must install the three payload archives alongside the
-wrapper; workspace links are not a substitute for those archives.
-
-Saved transfer consignments can be exported without exposing native paths:
-
-```js
-const bytes = await account.getConsignment(assetId, transactionId) // Uint8Array
-```
-
-This reads a consignment already stored by RLN. It does not construct a new
-transfer or replace the receive/validation/settlement flow.
+For Android, use `react-native-bare-kit@0.15.5` and apply the
+[native Android setup hook](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/8b692da2e896e8acfef2bf15b1e501103100c070/android/README.md)
+in your root Gradle build.
 
 ## Quick start
 
@@ -547,6 +306,114 @@ try {
 }
 ```
 
+## Mainnet policy and capabilities
+
+RLN disables Lightning **on mainnet only**. Account channel, peer, invoice
+(including BOLT11 decoding), payment, HODL, APay and onion-message methods reject
+with `LightningDisabledError`, code `LIGHTNING_DISABLED_ON_MAINNET`, before
+native execution. Lightning recipients in `transfer` and `quoteTransfer`,
+wallet-connected LSP methods and standalone account-taking LSP helpers use the
+same policy before HTTP side effects. Read-only accounts follow it too.
+
+Signet, testnet and regtest retain their Lightning APIs; availability is not a
+claim that their recorded release gates are resolved. BTC/RGB on-chain methods,
+identity queries, message signing/verification and standalone LSP discovery
+remain available. `getTransactionReceipt` does not query Lightning history on
+mainnet, so an unknown on-chain hash returns `null`.
+
+```js
+const capabilities = account.getCapabilities()
+// { network, signer: 'external', lightning, consignmentExport: true,
+//   bfaAssetListing: true, bfaValidation: true, burn: true }
+
+try {
+  await account.listChannels()
+} catch (error) {
+  if (error.code !== 'LIGHTNING_DISABLED_ON_MAINNET') throw error
+}
+```
+
+`getNetwork()` reads the configured network without unlocking.
+`getCapabilities()` describes this package/signer combination, not wallet
+readiness, balance or successful qualification. `getBfaCapabilities()` returns
+`{ bfa: true, burn: true, consignment: true }` on a full account. The read-only
+facade reports `burn: false` in both capability methods and has no `burnAsset`.
+Configure `eth_rpc_url` when
+unlocking to enable native validation of BFA bridge events:
+
+```js
+await account.unlock({
+  ldk_chain_sync: {
+    mode: 'TransactionSync',
+    config: { indexer_url: bitcoinIndexerUrl }
+  },
+  indexer_url: bitcoinIndexerUrl,
+  proxy_endpoint: rgbProxyUrl,
+  eth_rpc_url: ethereumRpcUrl,
+  announce_addresses: []
+})
+```
+
+Choose the Ethereum RPC for the chain containing the asset's bridge contract.
+Omitting the field, or supplying `null`, keeps the non-BFA unlock behavior.
+No endpoint is inferred or substituted. A capability flag does not establish
+endpoint health, chain identity or the validity of any particular consignment.
+Consignment export uses the existing account API. The
+[BFA qualification report](./BFA-QUALIFICATION.md) identifies the sources and
+scenarios tested; it does not establish bridge or deployment approval.
+
+### Native Asset Burn
+
+`account.burnAsset(request)` invokes the native `SdkNode.burn` once. It accepts
+the existing RLN C-FFI request, not a WebRGB or WalletConnect request:
+
+```js
+const { txid, batch_transfer_idx } = await account.burnAsset({
+  asset_id: assetId,
+  amount: '1000000',
+  fee_rate: 2,
+  min_confirmations: 3,
+  burn_recipient: recipientHex // BFA: 32-byte hex, without a 0x prefix
+})
+```
+
+`amount` and `fee_rate` must be positive safe-integer numbers or canonical
+decimal strings up to `18446744073709551615`. Native wrappers encode strings
+as exact u64 JSON numbers. `min_confirmations` is an integer from 0 to 255;
+the application owns its confirmation policy. Omit `burn_recipient` (or use
+`null`) for assets that do not require it. WDK does not infer a recipient,
+encode EVM addresses, choose a chain, or perform an Ethereum payout.
+
+Await `unlock()` first. Burns are rejected during activation or after shutdown
+starts. Node/Bare native calls are synchronous; RLN serializes preparation,
+signing and completion under the RGB wallet mutex. The successful response
+contains the native `txid` and `batch_transfer_idx`, not proof of settlement.
+
+Failures may retain an `Initiated` transfer and input reservations. WDK passes
+native errors through, never retries or automatically frees inputs. Reconcile
+transfer history and on-chain state before requesting another burn, including
+after a malformed or lost response. A subsequent call is a new burn, not an
+idempotent retry. Persistent operation records, user approvals, transport and
+bridge recovery belong to the application; none are added here. Export an
+available proof separately with `getConsignment(assetId, txid)`.
+
+The runtime gate requires the exact source/adapter identity plus
+`external-signer-burn-v1`. API availability does not qualify a funded wallet,
+bridge, payout or device. See the [release tracker](./RELEASE-0.15-TRACKER.md).
+
+## WebRGB integration
+
+The optional `@utexo/wdk-rgb-lightning/webrgb` export adapts a native WDK account
+to WebRGB's receiving/read subset. It does not run RLN in a browser, inject
+`window.rgb`, or establish WalletConnect sessions. It has no runtime dependency
+on WebRGB or WalletConnect. TypeScript consumers of this subpath should install
+the optional type peer `@utexo/webrgb@^0.1.0`; the unchanged read subset is
+checked against `0.1.0` and `0.1.2`. Ordinary WDK consumers do not need it.
+
+See [WEBRGB.md](./WEBRGB.md) for session authorization, approval handling, API
+mapping and native-runtime integration. The subset matches the non-burn scope
+of [rgb-sdk-rn #59](https://github.com/UTEXO-Protocol/rgb-sdk-rn/pull/59).
+
 ## LSP integration
 
 Low-level `LspClient` methods do not authorize local payments. In particular,
@@ -727,6 +594,36 @@ updated package declaration does not qualify a mobile application.
 ## License
 
 Apache-2.0. See [`LICENSE`](./LICENSE).
+
+## Known limitations
+
+The pinned native graph retains the following financial and security limitations:
+
+1. **Interrupted BTC send:** process death during a send can leave an
+   orphaned input reservation and reduce reported spendable balance after restart.
+   Automatic reconciliation or safe abort recovery is not provided.
+2. **RGB reorg accounting:** a disconnected settled receipt can remain in
+   `settled` and `spendable` balances, including after cold restart. These fields
+   are **not a reorg-safe current-confirmation guarantee**.
+3. **Pending RGB accounting:** one incoming witness receipt can be counted
+   twice in `future` before settlement. Correct settled balances do not make the
+   pending projection reliable.
+4. **BFA event selection:** an earlier wrong-amount lock for a mint can
+   cause validation to reject a later valid lock for the same mint. Ordinary BFA
+   receive/send and burn passes do not cover this event-order case.
+5. **Native dependency security:** security findings in the selected Rust
+   dependency graph still require disposition. A clean npm audit covers the npm
+   tree and does not resolve these native findings.
+
+The signer shutdown and session cleanup repair passes its recorded host and
+normal funded iOS 27 Debug regtest scopes. Those passes do not establish
+arbitrary crash recovery, Android wallet recovery, funded mobile Release,
+physical-device, public-network, VSS recovery or full Lightning justice/commit
+boundary qualification. BFA Lightning API availability is not a WDK BFA channel
+guarantee. See [PRODUCTION-GATES.md](./PRODUCTION-GATES.md) for exact sources,
+evidence and remaining qualification, and the
+[release procedure](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/RELEASING.md)
+for package verification.
 
 [rgb-lightning-node]: https://github.com/UTEXO-Protocol/rgb-lightning-node
 [rgb-lightning-node-nodejs]: https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs
