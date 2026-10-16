@@ -41,9 +41,9 @@ module always uses. Issue assets in a separate on-chain wallet, such as
 - [Async payments (APay)](#async-payments-apay)
 - [Security model](#security-model)
 - [Testing and local development](#testing-and-local-development)
+- [Known limitations](#known-limitations)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
-- [Known limitations](#known-limitations)
 
 ## Architecture
 
@@ -571,6 +571,26 @@ and [mobile fixture](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0
 retain their historical source/framework scopes. A passing host test or an
 updated package declaration does not qualify a mobile application.
 
+## Known limitations
+
+The pinned native graph retains the following financial and security limitations:
+
+1. **Interrupted BTC send:** process death during a send can leave an
+   orphaned input reservation and reduce reported spendable balance after restart.
+   Automatic reconciliation or safe abort recovery is not provided.
+2. **RGB reorg accounting:** a disconnected settled receipt can remain in
+   `settled` and `spendable` balances, including after cold restart. These fields
+   are **not a reorg-safe current-confirmation guarantee**.
+3. **Pending RGB accounting:** one incoming witness receipt can be counted
+   twice in `future` before settlement. Correct settled balances do not make the
+   pending projection reliable.
+4. **BFA event selection:** an earlier wrong-amount lock for a mint can
+   cause validation to reject a later valid lock for the same mint. Ordinary BFA
+   receive/send and burn passes do not cover this event-order case.
+5. **Native dependency security:** security findings in the selected Rust
+   dependency graph still require disposition. A clean npm audit covers the npm
+   tree and does not resolve these native findings.
+
 ## Troubleshooting
 
 - **`Rln(Conflict)` on a re-launch** — expected on every launch after the
@@ -594,36 +614,6 @@ updated package declaration does not qualify a mobile application.
 ## License
 
 Apache-2.0. See [`LICENSE`](./LICENSE).
-
-## Known limitations
-
-The pinned native graph retains the following financial and security limitations:
-
-1. **Interrupted BTC send:** process death during a send can leave an
-   orphaned input reservation and reduce reported spendable balance after restart.
-   Automatic reconciliation or safe abort recovery is not provided.
-2. **RGB reorg accounting:** a disconnected settled receipt can remain in
-   `settled` and `spendable` balances, including after cold restart. These fields
-   are **not a reorg-safe current-confirmation guarantee**.
-3. **Pending RGB accounting:** one incoming witness receipt can be counted
-   twice in `future` before settlement. Correct settled balances do not make the
-   pending projection reliable.
-4. **BFA event selection:** an earlier wrong-amount lock for a mint can
-   cause validation to reject a later valid lock for the same mint. Ordinary BFA
-   receive/send and burn passes do not cover this event-order case.
-5. **Native dependency security:** security findings in the selected Rust
-   dependency graph still require disposition. A clean npm audit covers the npm
-   tree and does not resolve these native findings.
-
-The signer shutdown and session cleanup repair passes its recorded host and
-normal funded iOS 27 Debug regtest scopes. Those passes do not establish
-arbitrary crash recovery, Android wallet recovery, funded mobile Release,
-physical-device, public-network, VSS recovery or full Lightning justice/commit
-boundary qualification. BFA Lightning API availability is not a WDK BFA channel
-guarantee. See [PRODUCTION-GATES.md](./PRODUCTION-GATES.md) for exact sources,
-evidence and remaining qualification, and the
-[release procedure](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/RELEASING.md)
-for package verification.
 
 [rgb-lightning-node]: https://github.com/UTEXO-Protocol/rgb-lightning-node
 [rgb-lightning-node-nodejs]: https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs
