@@ -20,6 +20,18 @@ while pre-`1.0`.
   strict native result validation and signing-operation drain before shutdown.
   Existing Lightning node-identity `sign()` / `verify()` semantics are unchanged.
 
+### Security
+
+- Disable VSS backup, recovery and fence takeover pending upstream fixes for
+  public-derived external-signer credentials and unsafe chunked snapshot
+  replacement. Supplied VSS URLs fail before native creation with
+  `VssUnsupportedError` / `ERR_VSS_UNSAFE_UPSTREAM`; no unsafe override, scheduler
+  or automatic fence deletion is introduced.
+- Require the exact compiled `vss-safety-policy-v1` capability and disabled-policy
+  metadata. Advertise unavailable backup/recovery capabilities and local disabled
+  status, without treating old checkpoint evidence or mixed upload counters as
+  proof of remote health or complete recovery.
+
 ## [0.2.0-beta.4] — 2026-10-16
 
 This breaking beta consolidates the changes developed under the unpublished

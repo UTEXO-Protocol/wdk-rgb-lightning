@@ -4,6 +4,7 @@
 // you may not use this file except in compliance with the License.
 'use strict'
 
+import { assertVssConfigurationSafe } from './vss-policy.js'
 import WalletManager from '@tetherto/wdk-wallet'
 import { mnemonicToSeedSync } from 'bip39'
 import { normalizeAutoUnlockRequest } from './node-unlock-request.js'
@@ -102,6 +103,7 @@ export default class WalletManagerRgbLightning extends WalletManager {
    * @param {RgbLightningWalletConfig} config
    */
   constructor (seed, config = {}) {
+    assertVssConfigurationSafe(config)
     const { autoUnlockRequest, ...managerConfig } = config
     super(seed, managerConfig)
 

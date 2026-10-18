@@ -42,8 +42,6 @@ describe('BareRgbLightningBinding', () => {
     const createSpy = jest.spyOn(rln.SdkNode, 'create').mockReturnValue(node)
     const binding = makeBinding({
       virtualPeerPubkeys: ['02lsp'],
-      vssUrl: 'https://vss.example',
-      vssAllowEmptyRestore: true,
       lspBaseUrl: 'https://lsp.example',
       lspBearerToken: 'token'
     })
@@ -56,8 +54,6 @@ describe('BareRgbLightningBinding', () => {
       network: 'regtest',
       reuse_addresses: true,
       virtual_peer_pubkeys: ['02lsp'],
-      vss_url: 'https://vss.example',
-      vss_allow_empty_restore: true,
       lsp_base_url: 'https://lsp.example',
       lsp_bearer_token: 'token'
     }))
@@ -304,40 +300,19 @@ describe('BareRgbLightningBinding', () => {
     expect(fallbackSigner.destroy).toHaveBeenCalledTimes(failureMethod === 'shutdown' ? 1 : 3)
   })
 
-  it('forwards the remaining native instance methods', () => {
-    const binding = makeBinding({ vssUrl: 'https://vss.example', vssAllowHttp: true })
+  it('forwards supported methods while blocking VSS before native dispatch', () => {
+    const binding = makeBinding()
     const node = fakeNode()
-    const signer = fakeSigner()
     binding._node = node
-    binding._signer = signer
-
+    binding._signer = fakeSigner()
     expect(binding.bootstrap()).toEqual({ node_id: '03beef' })
-    binding.clearVssFence('pw')
-    expect(binding.vssBackup()).toEqual({ version: 7 })
-    expect(binding.vssStatus()).toEqual({
-      configured: true,
-      url: 'https://vss.example',
-      allowHttp: true,
-      lastBackupVersion: 7
-    })
     expect(binding.apayNew('02host')).toEqual({ order_id: 'order-1' })
-    expect(node.vssClearFence).toHaveBeenCalledWith({ password: 'pw' })
     expect(node.apayNew).toHaveBeenCalledWith('02host')
-
-    node.vssBackup
-      .mockReturnValueOnce({ version: 'unknown' })
-      .mockReturnValueOnce('unexpected')
-      .mockReturnValueOnce(null)
-    expect(binding.vssBackup()).toEqual({ version: 'unknown' })
-    expect(binding.vssBackup()).toBe('unexpected')
-    expect(binding.vssBackup()).toBeNull()
-    expect(binding.vssStatus().lastBackupVersion).toBe(7)
-    expect(makeBinding().vssStatus()).toEqual({
-      configured: false,
-      url: null,
-      allowHttp: false,
-      lastBackupVersion: null
-    })
+    expect(() => binding.clearVssFence('private-password')).toThrow(expect.objectContaining({ code: 'ERR_VSS_UNSAFE_UPSTREAM' }))
+    expect(() => binding.vssBackup()).toThrow(expect.objectContaining({ code: 'ERR_VSS_UNSAFE_UPSTREAM' }))
+    expect(node.vssClearFence).not.toHaveBeenCalled()
+    expect(node.vssBackup).not.toHaveBeenCalled()
+    expect(binding.vssStatus()).toMatchObject({ configured: false, supported: false, enabled: false, lastBackupVersion: null })
   })
 
   it('retains live handles and permits shutdown retry after node failure', () => {

@@ -6,7 +6,7 @@ WDK module for RGB-over-Lightning, built on
 [`rgb-lightning-node`][rgb-lightning-node] (RLN). It runs a full LDK +
 `rgb-lib` Lightning node behind WDK's wallet-manager/account contract and
 adds BTC/RGB on-chain transfers, channels, BOLT11 + RGB invoices, payments,
-HODL invoices, async payments (APay), optional VSS cloud backup, and an LSP
+HODL invoices, async payments (APay), and an LSP
 client for the UTEXO Lightning Service Provider.
 
 The node runs in **external-signer** mode: the BIP-39 mnemonic stays in the
@@ -110,9 +110,6 @@ import WalletManagerRgbLightning from '@utexo/wdk-rgb-lightning'
 const manager = new WalletManagerRgbLightning(seedPhrase, {
   network: 'regtest',
   dataDir: '/path/to/persistent/dir',
-  // Optional VSS cloud backup — omit to disable.
-  vssUrl: 'https://vss.example.com',
-  vssAllowHttp: false,
   // Optional LSP wiring for async payments.
   lspBaseUrl: 'https://lsp.example.com',
   lspBearerToken: '<token>'
@@ -177,7 +174,7 @@ and a regtest stack via Docker Compose — lives in
 | `permissiveSignerPolicy` | `false` | Strict policy by default; permissive mode is an explicit non-mainnet option. |
 | `autoUnlockRequest` | absent | Opt into address-triggered activation with a canonical or supported legacy unlock request. |
 | `nodeSeedDerivation` | `auto` | New nodes use WDK's normalized BIP-39 seed directly; existing beta nodes retry the legacy identity only on an exact persisted-identity mismatch. Use `wdk-seed-v2` or `legacy-v1` to disable auto-detection. |
-| `vssUrl` / `vssAllowHttp` / `vssAllowEmptyRestore` | — | VSS cloud backup; see [below](#vss-cloud-backup). |
+| `vssUrl` / `vssAllowHttp` / `vssAllowEmptyRestore` | — | VSS is unavailable. A supplied `vssUrl` is rejected; see [below](#vss-cloud-backup). |
 | `lspBaseUrl` / `lspBearerToken` | — | LSP wiring for APay and the LSP client; see [below](#lsp-integration). |
 
 ## Account API
@@ -203,7 +200,7 @@ are async and forward to the active binding.
 | WDK-standard | `index`, `path`, `keyPair`, `sign(message)`, `verify(message, signature)`, `transfer(options)`, `quoteTransfer(options)`, `quoteSendTransaction(tx)`, `getTransactionReceipt(hash)`, `toReadOnlyAccount()` |
 | Bitcoin message proofs | `getMessageSigningAddress()`, `signMessageBip322(message, address)`, `verifyMessageBip322(message, address, signature)` |
 | Diagnostics | `sendOnionMessage(request)`, `checkIndexerUrl(url)`, `checkProxyEndpoint(endpoint)` |
-| VSS | `vssStatus()`, `vssBackup()`, `clearVssFence(password)` |
+| VSS | Local disabled policy via `vssStatus()`; backup and fence takeover reject |
 | APay / LSP | `apayNew(hostNodeId)`, `bootstrapLsp({ peerPubkeyAndAddr, hostNodeId? })`, `getLspConfig()`, `createLsp(peer?)` |
 
 Notes:
@@ -328,7 +325,8 @@ RgbLightningError            code: RGB_LIGHTNING_ERROR
 ├── AccountLockedError       code: ACCOUNT_LOCKED
 ├── LightningDisabledError   code: LIGHTNING_DISABLED_ON_MAINNET
 ├── VssError                 code: VSS_ERROR
-│   └── VssNotConfiguredError code: VSS_NOT_CONFIGURED
+│   ├── VssNotConfiguredError code: VSS_NOT_CONFIGURED (legacy)
+│   └── VssUnsupportedError   code: ERR_VSS_UNSAFE_UPSTREAM
 ├── ApayError                code: APAY_ERROR (e.g. APAY_PEER_NOT_VISIBLE)
 └── NotImplementedError      code: NOT_IMPLEMENTED
 ```
@@ -338,7 +336,7 @@ All are exported from the package root:
 ```js
 import {
   RgbLightningError, UnlockError, AccountLockedError, VssError,
-  VssNotConfiguredError, ApayError, NotImplementedError
+  VssNotConfiguredError, VssUnsupportedError, ApayError, NotImplementedError
 } from '@utexo/wdk-rgb-lightning'
 
 try {
@@ -528,25 +526,31 @@ cross-host callbacks require the explicit `allowCrossHostCallback: true` opt-in.
 
 ## VSS cloud backup
 
-Set `vssUrl` at construction to mirror LDK channel state and RGB wallet data
-to a remote VSS key-value store in near-real-time. Payloads are client-side
-encrypted (XChaCha20-Poly1305, keyed via HKDF of a signing key derived from
-the BIP-39 mnemonic at BIP-32 path `m/535'/1'`); the server sees only
-ciphertext, and recovery requires the original seed. Plain `http://` is
-rejected for non-loopback hosts unless `vssAllowHttp: true`.
+VSS backup and recovery are unavailable in this candidate. Upstream external-signer
+credentials are derived from public bootstrap data, and interrupted replacement
+of a chunked RGB backup can invalidate the previous snapshot. This package does
+not repair those protocols or offer an unsafe override.
 
-- `account.vssStatus()` — local view: whether VSS is configured, the URL +
-  allow-http flag, and the snapshot version from the most recent
-  `vssBackup()` this session.
-- `account.vssBackup()` — force an immediate flush, returning `{ version }`.
-  Useful for app-controlled checkpoints (e.g. before app suspend).
-- `account.clearVssFence(password)` — forcibly take over a stale VSS
-  ownership fence after a previous node died holding it (restarts otherwise
-  fail with `Rln(VssFenceHeld)`). Only call this when certain the previous
-  owner is gone — pointing two live nodes at one VSS store corrupts state.
+Supplying `vssUrl` (including an empty, null or malformed value) throws
+`VssUnsupportedError` with code `ERR_VSS_UNSAFE_UPSTREAM` before signer or node
+creation. Omit the option to use the local wallet. `vssBackup()` and
+`clearVssFence()` always reject locally; they do not upload, delete a fence or
+retry. `vssAllowHttp` and `vssAllowEmptyRestore` cannot enable these operations.
+These restrictions also apply when an account receives a custom binding.
 
-VSS operations on a wallet constructed without `vssUrl` throw
-`VssNotConfiguredError`.
+`getCapabilities().vss` reports all backup/recovery operations unsupported, with
+a stable code and reason. `vssStatus()` is local policy only: `configured: false`,
+`url: null`, `allowHttp: false`, `lastBackupVersion: null`, `supported: false`,
+`enabled: false`, `disabledReason: 'unsafe-upstream-vss'`. It never queries remote
+health or establishes restore readiness. Missing/older native safety policy is
+rejected during native runtime admission.
+
+Historical manual backup versions identified a particular RGB upload, not an
+atomic snapshot of LDK, signer or application state. Single-object and chunked
+uploads use different version counters, so their values are not a global,
+monotonically increasing checkpoint. Existing successful functional experiments
+do not establish backup confidentiality, interruption safety or device-loss
+recovery. The VLS signer database is separate and is not replicated by VSS.
 
 ## Async payments (APay)
 
@@ -579,10 +583,10 @@ the wallet's behalf. Against a production LSP this requires
   zeroizable buffers and are erased with `sodium_memzero` on successful
   fallback resolution and successful shutdown. Failed shutdown retains handles
   and required state for explicit retry; errors must not be ignored.
-- **VSS payloads are client-side encrypted** (see above); the server only
-  ever holds ciphertext.
-- **Plain `http://` is rejected by default** for VSS and LSP endpoints; opt
-  in (`vssAllowHttp` / `LspClient({ allowHttp: true })`) only for loopback
+- **VSS is unavailable** until upstream backup security and recovery defects
+  are fixed; local wallet operation does not constitute a remote backup.
+- **Plain `http://` is rejected by default** for LSP endpoints; opt
+  in with `LspClient({ allowHttp: true })` only for loopback
   or development.
 
 ## Testing and local development
@@ -641,10 +645,9 @@ The pinned native graph retains the following financial and security limitations
   initial wallet create. The binding swallows it internally; if it bubbles
   up you're calling the lower-level binding directly instead of going
   through the WDK account.
-- **`UnlockError` / `Rln(FailedVssInit)`** — bad bitcoind/indexer/proxy
-  credentials or an unreachable backend; for VSS, an unreachable URL or a
-  rejected auth challenge. Check `vssUrl` (https vs http) and reachability;
-  for fence takeover see `clearVssFence`.
+- **`VssUnsupportedError` / `ERR_VSS_UNSAFE_UPSTREAM`** — this candidate blocks
+  VSS. Remove the VSS URL to use local wallet operation. Do not clear a remote
+  fence or assume a previous snapshot is safe to restore.
 - **`ApayError` (`APAY_PEER_NOT_VISIBLE`)** — `apayNew` was attempted before
   the LSP peer reached `listPeers`. Use `bootstrapLsp` or retry once the
   peer is visible.

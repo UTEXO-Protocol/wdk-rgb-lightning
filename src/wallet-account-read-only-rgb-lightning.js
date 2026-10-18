@@ -4,6 +4,7 @@
 // you may not use this file except in compliance with the License.
 'use strict'
 
+import { vssCapabilities, disabledVssStatus } from './vss-policy.js'
 import { exactUnsignedNumber, validateUnspents } from './released-native-contract.js'
 import { receiveAddress } from './receive-address.js'
 import { consignmentLookup, consignmentBytes } from './consignment-export.js'
@@ -99,7 +100,7 @@ export function createReadOnlyRgbLightningAdapter (binding) {
     getNetwork: () => network,
     isDisposed: () => binding._closed === true,
     bootstrap: () => binding.bootstrap(),
-    vssStatus: () => binding.vssStatus(),
+    vssStatus: () => disabledVssStatus(),
     nodeInfo: () => callNode('nodeInfo'),
     networkInfo: () => callNode('networkInfo'),
     address: () => receiveAddress(binding),
@@ -182,6 +183,7 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
       bfaAssetListing: true,
       bfaValidation: true,
       burn: false,
+      vss: vssCapabilities(),
       bip322: bip322Capabilities(this._reader, true)
     }
   }
@@ -202,19 +204,8 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
    */
   async getBootstrap () { return this._reader.bootstrap() }
 
-  /**
-   * Returns the local VSS configuration and backup status.
-   *
-   * This query does not contact the VSS server.
-   *
-   * @returns {Promise<{
-   *   configured: boolean,
-   *   url: string | null,
-   *   allowHttp: boolean,
-   *   lastBackupVersion: number | null
-   * }>} The local VSS status.
-   */
-  async vssStatus () { return this._reader.vssStatus() }
+  /** Local disabled policy only; no remote health or restore guarantee. */
+  async vssStatus () { return disabledVssStatus() }
 
   /**
    * Returns identity and runtime information for the Lightning node.

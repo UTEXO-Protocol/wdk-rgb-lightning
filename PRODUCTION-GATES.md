@@ -1,5 +1,13 @@
 # Release qualification: 0.2.0-beta.4
 
+**19 October 2026 safety restriction:** the current unpublished candidate disables
+VSS initialization, automatic/manual backup, restore and fence takeover. Upstream
+external-signer credentials derive from public identity material, and interrupted
+chunked replacement can invalidate the preceding backup. No unsafe override is
+provided. Dated VSS/lifecycle observations below retain their original sources;
+they do not qualify this protocol for confidential or interruption-safe recovery.
+
+
 Working branch: `release/rln-0.15.0-beta.3`. This register separates engineering
 verification from decisions about release scope. An item is closed only by the
 evidence listed here, not by a general CI success.
@@ -571,7 +579,7 @@ and final artifact approval remain open.
 | S02 | Keep the #192 native source or adopt newer merged upstream work? | The October 14 exact pin adopts v0.17.0-beta.3 with rgb-lib beta.50-bfa and rust-lightning `79b9eb5`. The dependency graph changed, not only a capability flag. Native builds, security review and funded/recovery/device qualification remain separate from WDK API tests. |
 | S03 | Include burn in this release? | Generic WDK `burnAsset` and native capability gating are implemented. Full accounts report support; read-only accounts do not. Exact-source Bare-host funded burn/proof passes as scoped above; Node-funded, mobile, payout and uncertain-outcome recovery remain gates. Durable bridge operation recovery, sessions, approval and transport are Iris/application responsibilities and are not added to WDK. |
 | S04 | Which asset schemas and deployments are supported? | Mainnet IFA is rejected by the current upstream library. Local six-decimal IFA/NIA fixtures are not production USDT. Mainnet BFA needs an approved bridge/token/contract identity and Ethereum RPC configuration, plus P06 closure. |
-| S05 | Is VSS part of this release? | Deferred by request. No device-loss or VSS recovery claim. The source contains VSS APIs but that does not qualify the service or recovery policy. |
+| S05 | Is VSS part of this release? | Unavailable under the current safety policy. Configuration, backup, restore and fence takeover are blocked pending upstream security/recovery fixes; no device-loss claim. Historical functional passes remain dated evidence. |
 | S06 | Retain the breaking 0.2 API boundary? | Thirteen legacy custom on-chain operations and related unreleased semantics remain explicit unsupported capabilities. No broad behavior fork is added. WDK base-contract upgrades are a separate change from this native release. |
 
 RLN #180 also merged to `dev`, but it authenticates the separate TCP signer

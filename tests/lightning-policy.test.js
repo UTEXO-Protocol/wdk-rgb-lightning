@@ -1,3 +1,4 @@
+import { vssCapabilities } from '../src/vss-policy.js'
 import { jest } from '@jest/globals'
 import WalletAccount from '../src/wallet-account-rgb-lightning.js'
 import { LightningDisabledError } from '../index-node.js'
@@ -116,6 +117,7 @@ describe('mainnet Lightning policy', () => {
       bfaAssetListing: true,
       bfaValidation: true,
       burn: true,
+      vss: vssCapabilities(),
       bip322: {
         signing: false,
         verification: false,

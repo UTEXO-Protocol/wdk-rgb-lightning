@@ -34,8 +34,7 @@ import WalletAccountReadOnlyRgbLightning, {
 } from './wallet-account-read-only-rgb-lightning.js'
 import {
   UnlockError,
-  VssError,
-  VssNotConfiguredError,
+  VssUnsupportedError,
   ApayError,
   AccountLockedError,
   NotImplementedError,
@@ -156,72 +155,11 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     }
   }
 
-  /**
-   * Forcibly take over a stale VSS ownership fence after the previous
-   * node died holding it. Authenticates with the wallet password.
-   * Throws if VSS isn't configured (no `vssUrl` at construction).
-   *
-   * Recovery flow only. Do not call while another live node may still
-   * hold the fence. Doing so corrupts the shared VSS state. See the VSS
-   * docs section "Single-writer ownership" for the contract.
-   *
-   * @param {string} password
-   * @throws {VssNotConfiguredError} if the wallet was built without a vssUrl.
-   * @throws {VssError} if the takeover is rejected by the VSS server.
-   */
-  async clearVssFence (password) {
-    this._assertVssConfigured()
-    try {
-      this._binding.clearVssFence(password)
-    } catch (e) {
-      throw wrapError(e, VssError)
-    }
-    return { ok: true }
-  }
+  /** VSS takeover is unavailable, including for custom bindings. */
+  async clearVssFence (password) { throw new VssUnsupportedError() }
 
-  /**
-   * @private
-   * @throws {VssNotConfiguredError} if no vssUrl was set at construction.
-   */
-  _assertVssConfigured () {
-    const status = this._binding.vssStatus()
-    if (!status || !status.configured) {
-      throw new VssNotConfiguredError()
-    }
-  }
-
-  /**
-   * Force an immediate VSS backup flush. Returns `{ version }` where
-   * version is the monotonically-increasing snapshot index just
-   * persisted. The number is useful for ordering / "is this device
-   * caught up with my last known checkpoint" comparisons; it carries
-   * no other semantics.
-   *
-   * Throws if VSS isn't configured (no `vssUrl` at construction) or
-   * the flush fails (server unreachable, auth rejected). Backed by
-   * upstream `vss_backup()` UniFFI method. Requires the C-FFI patch
-   * series at `rgb-lightning-node-bare/patches/` to be applied
-   * before the static lib is built (adds `rln_sdk_node_vss_backup`).
-   *
-   * Use for app-controlled checkpoints (e.g. "save state before app
-   * suspend") rather than relying on RLN's implicit on-write flush.
-   * RLN already syncs to VSS on every state-changing operation; this
-   * method is for the moments your app knows are critical (closing,
-   * backgrounding, payment-just-settled) and wants a "fsync now"
-   * round-trip with the cloud before potentially being killed.
-   *
-   * @returns {Promise<{version: number}>}
-   * @throws {VssNotConfiguredError} if the wallet was built without a vssUrl.
-   * @throws {VssError} if the flush fails (server unreachable, auth rejected).
-   */
-  async vssBackup () {
-    this._assertVssConfigured()
-    try {
-      return this._binding.vssBackup()
-    } catch (e) {
-      throw wrapError(e, VssError)
-    }
-  }
+  /** VSS backup is unavailable; this does not flush LDK, app or signer state. */
+  async vssBackup () { throw new VssUnsupportedError() }
 
   /**
    * Register this node with an LSP as an async-payments (APay) recipient.

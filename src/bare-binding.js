@@ -24,6 +24,8 @@
 //   file on disk — while the VLS store preserves channel commitment state
 //   across restarts.
 
+import { assertVssConfigurationSafe, disabledVssStatus } from './vss-policy.js'
+import { VssUnsupportedError } from './errors.js'
 import rln from '@utexo/rgb-lightning-node-bare'
 import { retainSecret, revealSecret, secretMatches, wipeSecret } from './secret-buffer.js'
 import { signerStoragePath } from './signer-storage-path.js'
@@ -73,6 +75,7 @@ export class BareRgbLightningBinding {
    *   configuration.
    */
   constructor (config) {
+    assertVssConfigurationSafe(config)
     assertNativeRuntime(rln)
     this._config = { ...config }
     this._closed = false
@@ -91,11 +94,7 @@ export class BareRgbLightningBinding {
     if (Array.isArray(config.virtualPeerPubkeys) && config.virtualPeerPubkeys.length > 0) {
       this._initRequest.virtual_peer_pubkeys = config.virtualPeerPubkeys
     }
-    // VSS fields are only forwarded when the host opts in. Omitting them
-    // lets the RLN-side `#[serde(default)]` keep VSS fully disabled.
-    if (config.vssUrl) this._initRequest.vss_url = config.vssUrl
-    if (config.vssAllowHttp) this._initRequest.vss_allow_http = true
-    if (config.vssAllowEmptyRestore) this._initRequest.vss_allow_empty_restore = true
+    // VSS is deliberately unavailable; never forward backup options.
     // LSP / APay wiring — needed for RLN's internal async-payments client
     // to reach the LSP's /internal/async_order/* endpoints from inside
     // `account.apayNew()` / `account.bootstrapLsp()`. Omit both to leave
@@ -114,8 +113,6 @@ export class BareRgbLightningBinding {
     this._fallbackSeedHex = undefined
     /** @type {boolean} */
     this._sdkInitDone = false
-    /** @type {number | null} Snapshot version returned by the most recent vssBackup(). */
-    this._lastVssVersion = null
   }
 
   /**
@@ -259,57 +256,14 @@ export class BareRgbLightningBinding {
     return this._signer.bootstrap()
   }
 
-  /**
-   * Take over a stale VSS ownership fence after a previous node died
-   * holding it. Authenticates with the wallet password.
-   *
-   * @param {string} password - Wallet password used to authenticate the VSS
-   *   fence takeover.
-   * @throws {Error} - If VSS is not configured or the native takeover fails.
-   */
-  clearVssFence (password) {
-    const node = this.ensureNode()
-    node.vssClearFence({ password })
-  }
+  /** VSS takeover is unavailable; no native call or fence deletion occurs. */
+  clearVssFence (password) { throw new VssUnsupportedError() }
 
-  /**
-   * Force an immediate VSS backup flush. Returns the snapshot index just
-   * persisted, allowing app-controlled checkpoints instead of relying only on
-   * implicit on-write flushes.
-   *
-   * @returns {{version: number}} - Persisted VSS snapshot version.
-   * @throws {Error} - If VSS is not configured or the backup flush fails.
-   */
-  vssBackup () {
-    const node = this.ensureNode()
-    const r = node.vssBackup()
-    if (r && typeof r === 'object' && 'version' in r && typeof r.version === 'number') {
-      this._lastVssVersion = r.version
-    }
-    return r
-  }
+  /** VSS backup is unavailable; no upload or local checkpoint is claimed. */
+  vssBackup () { throw new VssUnsupportedError() }
 
-  /**
-   * Local-view VSS status. RLN's C-FFI exposes no read-only
-   * server-side backup-info query (unlike rgb-lib's `vssBackupInfo`),
-   * so this reports what the host can know without a round-trip:
-   * whether VSS was configured at construction, the configured URL +
-   * allow-http flag, and the snapshot version from the most recent
-   * `vssBackup()` call this session (`null` if none yet). For a live
-   * server version, call `vssBackup()` (it flushes and returns the
-   * fresh `{ version }`).
-   *
-   * @returns {{ configured: boolean, url: string|null, allowHttp: boolean, lastBackupVersion: number|null }} - Local
-   *   VSS configuration and last observed backup version.
-   */
-  vssStatus () {
-    return {
-      configured: !!this._config.vssUrl,
-      url: this._config.vssUrl ?? null,
-      allowHttp: !!this._config.vssAllowHttp,
-      lastBackupVersion: this._lastVssVersion
-    }
-  }
+  /** Local disabled policy only; never contacts a server. */
+  vssStatus () { return disabledVssStatus() }
 
   /**
    * Register this node with an LSP as an APay recipient so the LSP can accept

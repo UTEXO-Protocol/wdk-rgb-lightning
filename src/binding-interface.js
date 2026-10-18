@@ -37,16 +37,10 @@
  * @property {boolean} [permissiveSignerPolicy] - Whether the in-process VLS
  *   signer uses its permissive policy filter. Defaults to `false`; the released
  *   native runtime rejects permissive mode on mainnet.
- * @property {string} [vssUrl] - VSS cloud-backup service URL. Omit to disable
- *   VSS. Only HTTPS and loopback HTTP URLs are accepted unless `vssAllowHttp`
- *   is enabled. Backup encryption is derived from the wallet seed, which is
- *   required for recovery.
- * @property {boolean} [vssAllowHttp] - Permit non-loopback VSS URLs to use
- *   plain HTTP. Defaults to `false` to avoid transmitting channel state in
- *   plaintext accidentally.
- * @property {boolean} [vssAllowEmptyRestore] - Continue with empty local state
- *   when VSS restore fails on a fresh device. Defaults to `false`; enable only
- *   when intentionally bootstrapping a new node without restored state.
+ * @property {string} [vssUrl] - Deprecated. Any supplied value is rejected with
+ *   VssUnsupportedError before native creation. VSS is unavailable in this release.
+ * @property {boolean} [vssAllowHttp] - Deprecated; does not enable VSS.
+ * @property {boolean} [vssAllowEmptyRestore] - Deprecated; does not enable restore.
  * @property {string} [lspBaseUrl] - Base URL for RLN's internal APay client.
  *   Required by `apayNew()` and `bootstrapLsp()`; omit to disable APay.
  * @property {string} [lspBearerToken] - Bearer token sent to the LSP's
@@ -69,22 +63,11 @@
  *   with unlock.
  * @property {() => object} bootstrap - Return the signer's bootstrap payload
  *   (`node_id`, xpubs, and master fingerprint).
- * @property {(password: string) => void} clearVssFence - Forcibly take over a
- *   stale VSS ownership fence after the previous node died holding it. Requires
- *   the wallet password and configured VSS. Only call this after confirming the
- *   previous owner is gone; two live owners can corrupt channel state.
- * @property {() => {version: number}} vssBackup - Force an immediate VSS
- *   backup flush. Returns `{ version }` where
- *   version is the snapshot index just persisted. Useful for app-
- *   controlled checkpoints (e.g. "save state before app suspend") rather than
- *   relying on the implicit on-write flush. Requires configured VSS and a
- *   successful server flush.
- * @property {() => { configured: boolean, url: string|null, allowHttp: boolean, lastBackupVersion: number|null }} vssStatus - Return
- *   local-view VSS status without a server round-trip: whether VSS was
- *   configured at construction, the URL + allow-http flag, and the
- *   version from the most recent `vssBackup()` this session. RLN's
- *   C-FFI exposes no read-only server-side backup-info query, so for
- *   a live server version call `vssBackup()`.
+ * @property {(password: string) => never} clearVssFence - Always throws
+ *   VssUnsupportedError locally. No fence deletion or remote request occurs.
+ * @property {() => never} vssBackup - Always throws VssUnsupportedError locally.
+ * @property {() => object} vssStatus - Local disabled policy; no remote health
+ *   query, backup version or restore guarantee is reported.
  * @property {(hostNodeId: string) => object} apayNew - Register this node
  *   with an LSP as an async-payments (APay) recipient.
  *   Used for offline-receive over Lightning Address: the wallet uploads

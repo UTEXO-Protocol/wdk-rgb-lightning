@@ -132,6 +132,8 @@ export interface RgbLightningCapabilities {
   burn: boolean
   /** Advertised only when the installed native peer exposes the BIP-322 extension. */
   bip322: Bip322Capabilities
+  /** VSS backup and recovery are deliberately unavailable in this release. */
+  vss: VssCapabilities
 }
 
 export interface Bip322Capabilities {
@@ -211,13 +213,27 @@ export interface TransferResult {
 
 export type QuoteResult = Omit<TransferResult, 'hash'>
 
-/** Local-view VSS status (no server round-trip). See `vssStatus()`. */
+/** VSS is deliberately unavailable; no backup or recovery guarantee. */
+export interface VssCapabilities {
+  supported: false
+  automaticBackup: false
+  manualBackup: false
+  restore: false
+  remoteErasure: false
+  code: 'ERR_VSS_UNSAFE_UPSTREAM'
+  reason: 'VSS is unavailable until upstream backup security and recovery defects are fixed.'
+}
+
+/** Local disabled policy only; no server round-trip. */
 export interface VssStatus {
   configured: boolean
   url: string | null
   allowHttp: boolean
-  /** Snapshot version from the most recent `vssBackup()` this session. */
-  lastBackupVersion: number | null
+  /** @deprecated Always null. Not a cross-format or monotonic backup checkpoint. */
+  lastBackupVersion: null
+  supported: false
+  enabled: false
+  disabledReason: 'unsafe-upstream-vss'
 }
 
 export interface BootstrapLspResult {
@@ -387,7 +403,7 @@ export interface RgbLightningBindingConfig {
   virtualPeerPubkeys?: string[]
   /** Strict by default. Permissive mainnet signing is rejected natively. */
   permissiveSignerPolicy?: boolean
-  /** Enables VSS cloud backup. Only https:// (or loopback http) unless `vssAllowHttp`. */
+  /** @deprecated Supplying this option throws VssUnsupportedError before native creation. */
   vssUrl?: string
   vssAllowHttp?: boolean
   vssAllowEmptyRestore?: boolean
@@ -423,8 +439,10 @@ export interface IRgbLightningBinding {
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
   unlock(unlockRequest: ExternalUnlockRequest | LegacyExternalUnlockRequest): void
   bootstrap(): object
-  clearVssFence(password: string): void
-  vssBackup(): { version: number }
+  /** @deprecated Always throws VssUnsupportedError without native dispatch. */
+  clearVssFence(password: string): never
+  /** @deprecated Always throws VssUnsupportedError without native dispatch. */
+  vssBackup(): never
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
@@ -441,8 +459,10 @@ export class NodeRgbLightningBinding implements IRgbLightningBinding {
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
   unlock(unlockRequest: ExternalUnlockRequest | LegacyExternalUnlockRequest): void
   bootstrap(): object
-  clearVssFence(password: string): void
-  vssBackup(): { version: number }
+  /** @deprecated Always throws VssUnsupportedError without native dispatch. */
+  clearVssFence(password: string): never
+  /** @deprecated Always throws VssUnsupportedError without native dispatch. */
+  vssBackup(): never
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
@@ -463,8 +483,10 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
   unlock(unlockRequest: ExternalUnlockRequest | LegacyExternalUnlockRequest): void
   bootstrap(): object
-  clearVssFence(password: string): void
-  vssBackup(): { version: number }
+  /** @deprecated Always throws VssUnsupportedError without native dispatch. */
+  clearVssFence(password: string): never
+  /** @deprecated Always throws VssUnsupportedError without native dispatch. */
+  vssBackup(): never
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
@@ -636,10 +658,10 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   shutdown(): Promise<{ ok: true }>
 
   // VSS
-  /** @throws {VssNotConfiguredError} if built without a vssUrl. @throws {VssError} on server rejection. */
-  clearVssFence(password: string): Promise<{ ok: true }>
-  /** @throws {VssNotConfiguredError} if built without a vssUrl. @throws {VssError} on failure. */
-  vssBackup(): Promise<{ version: number }>
+  /** @deprecated Always rejects with VssUnsupportedError; no fence is deleted. */
+  clearVssFence(password: string): Promise<never>
+  /** @deprecated Always rejects with VssUnsupportedError; no upload occurs. */
+  vssBackup(): Promise<never>
   /** Local-view status; does not hit the server. */
   vssStatus(): Promise<VssStatus>
 
@@ -772,6 +794,10 @@ export class LightningDisabledError extends RgbLightningError {
 }
 export class VssError extends RgbLightningError {}
 export class VssNotConfiguredError extends VssError {}
+export class VssUnsupportedError extends VssError {
+  constructor()
+  readonly code: 'ERR_VSS_UNSAFE_UPSTREAM'
+}
 export class ApayError extends RgbLightningError {}
 export class NotImplementedError extends RgbLightningError {}
 
