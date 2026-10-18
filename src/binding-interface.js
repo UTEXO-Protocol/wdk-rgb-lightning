@@ -100,6 +100,14 @@
  *   unchanged.
  * @property {() => void} shutdown - Idempotently release the node handle and
  *   destroy the signer.
+ * @property {() => { signing: boolean, verification: boolean }} [getMessageSigningCapabilities] -
+ *   Detect the native BIP-322 simple extension without constructing a handle.
+ * @property {() => string} [getMessageSigningAddress] - Read the fixed owned
+ *   first vanilla BIP86 address without allocating or rotating a script.
+ * @property {(message: string, address: string) => string} [signMessageBip322] -
+ *   Sign an exact UTF-8 message for the explicitly supplied owned address.
+ * @property {(message: string, address: string, signature: string) => boolean} [verifyMessageBip322] -
+ *   Public-key verification of a BIP-322 simple proof on the configured network.
  */
 
 export {}

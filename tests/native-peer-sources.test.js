@@ -26,11 +26,18 @@ function packageFixture () {
 }
 
 describe('native peer source manifest configuration', () => {
-  it('requires both known native repositories with frozen main commits and exact peer versions', () => {
+  it('requires both known native repositories with frozen commits and exact peer versions', () => {
     const sources = readNativePeerSources()
     expect(validateNativePeerSources(sources, packageFixture())).toBe(sources)
-    expect(sources.peers[bare].ref).toBe('main')
-    expect(sources.peers[node].ref).toBe('main')
+    for (const name of [bare, node]) expect(['main', sources.peers[name].commit]).toContain(sources.peers[name].ref)
+  })
+
+  it('admits an immutable feature commit without falsely labelling it as main', () => {
+    const sources = readNativePeerSources()
+    for (const name of [bare, node]) sources.peers[name].ref = sources.peers[name].commit
+    expect(validateNativePeerSources(sources, packageFixture())).toBe(sources)
+    sources.peers[bare].ref = '0'.repeat(40)
+    expect(() => validateNativePeerSources(sources, packageFixture())).toThrow(/Invalid native peer source/)
   })
 
   it.each([
@@ -98,6 +105,7 @@ describe('read-only native source checkout admission', () => {
       writeFileSync(path.join(directory, '.gitignore'), 'prebuilds/\n')
       git(directory, ['init', '--quiet', '--initial-branch=main'])
       sources.peers[packageName].commit = commit(directory)
+      sources.peers[packageName].ref = 'main'
     }
   })
 

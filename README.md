@@ -201,11 +201,15 @@ are async and forward to the active binding.
 | RGB issuance (unsupported in this mode) | `issueAssetNia(request)`, `issueAssetUda(request)`, `issueAssetCfa(request)`, `issueAssetIfa(request)`, `inflate(request)` forward the released `UnsupportedInExternalSignerMode` error; use a separate on-chain wallet |
 | BTC | `getBalance(skipSync?)`, `getBalanceDetails(skipSync?)`, `sendTransaction({ to, value, ... })`, `sendBtc(nativeRequest)`, `getTransactions(skipSync?)`, `getTransactionsByTxid(txid)`, `listUnspents(skipSync?)`, `createUtxos(request)`, `estimateFee(blocks)` |
 | WDK-standard | `index`, `path`, `keyPair`, `sign(message)`, `verify(message, signature)`, `transfer(options)`, `quoteTransfer(options)`, `quoteSendTransaction(tx)`, `getTransactionReceipt(hash)`, `toReadOnlyAccount()` |
+| Bitcoin message proofs | `getMessageSigningAddress()`, `signMessageBip322(message, address)`, `verifyMessageBip322(message, address, signature)` |
 | Diagnostics | `sendOnionMessage(request)`, `checkIndexerUrl(url)`, `checkProxyEndpoint(endpoint)` |
 | VSS | `vssStatus()`, `vssBackup()`, `clearVssFence(password)` |
 | APay / LSP | `apayNew(hostNodeId)`, `bootstrapLsp({ peerPubkeyAndAddr, hostNodeId? })`, `getLspConfig()`, `createLsp(peer?)` |
 
 Notes:
+
+- **Bitcoin message signing** uses the explicit BIP-322 API below. Existing
+  `sign()` and `verify()` retain their Lightning node-identity semantics.
 
 - **`createInvoice` / `createLightningInvoice`** accept either RLN's native
   snake_case request or a camelCase convenience shape
@@ -251,6 +255,46 @@ Notes:
 - `verify` uses RLN's canonical Lightning message verifier. Only raw
   `signTransaction` remains unsupported; use the operation-specific send
   methods, which sign through VLS policy checks.
+
+### Bitcoin message signing (BIP-322)
+
+Use the explicit Bitcoin message API to prove the ability to receive at an
+address. Check the installed native extension before offering signing:
+
+```js
+if (!account.getCapabilities().bip322.signing) {
+  throw new Error('Install matching native peers with BIP-322 support')
+}
+const address = await account.getMessageSigningAddress()
+// Show and authorize this exact address and message in your application.
+const message = 'My exact message\n'
+const signature = await account.signMessageBip322(message, address)
+const valid = await account.verifyMessageBip322(message, address, signature)
+```
+
+The native signer uses its fixed first vanilla BIP86 receive address,
+`m/86'/coin_type'/0'/0/0`, and checks the requested address against its own
+bootstrap xpub. Reading this address does not allocate or rotate a receive
+address. Signing requires an unlocked native wallet and attached signer; it
+does not require Lightning, funds, a network request or a transaction broadcast.
+Private keys remain in the native signer. Applications own the message review
+and fresh user authorization before each signing request.
+
+Messages are exact UTF-8, including spaces, line endings, empty strings and
+embedded NULs. There is a 4096-byte limit. Ill-formed UTF-16 is rejected rather
+than replaced or normalized. Returned proofs use BIP-322 v2's `smp` prefix
+followed by the base64 witness. A signature proves neither an account balance
+nor the origin of a previous payment.
+
+`verifyMessageBip322()` is also available on read-only accounts. It verifies
+P2TR key-path and P2WPKH simple proofs for the configured Bitcoin network,
+including historical prefixless simple signatures. Verification uses public
+data and does not create or unlock an RLN node. Full (`ful`), proof-of-funds
+(`pof`), script-path and other script types are outside this API's scope.
+Malformed inputs throw; a well-formed proof that fails verification returns
+`false`. The capability reports native support separately from wallet readiness.
+Older peers fail explicitly; this API never falls back to Lightning's legacy
+node-identity `sign()` or `verify()` methods.
 
 ### Read-only accounts
 

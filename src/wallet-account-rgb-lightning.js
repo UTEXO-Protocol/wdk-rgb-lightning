@@ -23,6 +23,7 @@ import { normalizeUnlockRequest, normalizeAutoUnlockRequest, sameUnlockRequest }
 import { exactUnsignedNumber, validatePaymentRequest, validateRefreshResult } from './released-native-contract.js'
 import { validateBurnRequest, validateBurnResponse } from './burn-contract.js'
 import { receiveAddress, joinAddressOperations, stopAddressOperations } from './receive-address.js'
+import { bip322Capabilities, requireBip322, validateBip322Address, validateBip322Message, validateBip322Signature } from './bip322-contract.js'
 import {
   validateImportRgbContractRequest, validateImportRgbContractResult,
   validateImportRgbTransferConsignmentRequest, validateImportRgbTransferConsignmentResult
@@ -68,6 +69,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     /** @private */ this._addressInFlight = null
     /** @private */ this._shutdownInFlight = null
     /** @private */ this._closed = false
+    /** @private */ this._messageSigningTail = Promise.resolve()
     /** @private @type {WalletAccountReadOnlyRgbLightning | null} */
     this._readOnlyAccount = null
   }
@@ -81,7 +83,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   isDisposed () { return this._closed || Boolean(this._shutdownInFlight) || super.isDisposed() }
 
   /** Package support, not wallet readiness or bridge payout qualification. */
-  getCapabilities () { return { ...super.getCapabilities(), burn: true } }
+  getCapabilities () { return { ...super.getCapabilities(), burn: true, bip322: bip322Capabilities(this._binding) } }
 
   async getBfaCapabilities () { return { bfa: true, burn: true, consignment: true } }
 
@@ -143,6 +145,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       // Unlock has no released cancellation API. Join it before teardown.
       if (this._unlockInFlight) await this._unlockInFlight.promise.catch(() => {})
       await joinAddressOperations(this._binding)
+      await this._messageSigningTail
       await this._binding.shutdown()
       this._closed = true
       return { ok: true }
@@ -821,6 +824,47 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       throw new Error('RGB Lightning node returned an invalid message signature')
     }
     return signature
+  }
+
+  /** @private Serialize proofs with teardown; never retry a signing request. */
+  _messageSigningOperation (operation) {
+    if (this._closed || this._shutdownInFlight) return Promise.reject(new AccountLockedError('RGB Lightning account is closed'))
+    const pendingUnlock = this._unlockInFlight?.promise
+    const pending = this._messageSigningTail.then(async () => {
+      if (pendingUnlock) await pendingUnlock
+      return operation()
+    })
+    this._messageSigningTail = pending.catch(() => {})
+    return pending
+  }
+
+  /** Read the native signer's fixed owned address without allocating a script. */
+  async getMessageSigningAddress () {
+    requireBip322(this._binding, 'signing')
+    return this._messageSigningOperation(async () => {
+      const address = await this._binding.getMessageSigningAddress()
+      return validateBip322Address(address, this.getNetwork())
+    })
+  }
+
+  /**
+   * Sign the exact UTF-8 message for the explicitly reviewed owned P2TR address.
+   * The native signer validates ownership and returns a v2 smp-prefixed proof.
+   * This does not broadcast or sign a spendable Bitcoin transaction.
+   */
+  async signMessageBip322 (message, address) {
+    validateBip322Message(message)
+    validateBip322Address(address, this.getNetwork())
+    requireBip322(this._binding, 'signing')
+    return this._messageSigningOperation(async () => {
+      const signature = await this._binding.signMessageBip322(message, address)
+      validateBip322Signature(signature, true)
+      // Fail closed if transport corruption or a mismatched native response
+      // would otherwise escape to a caller as an apparently successful proof.
+      const valid = await this._binding.verifyMessageBip322(message, address, signature)
+      if (valid !== true) throw new Error('BIP-322 signer returned a proof that does not verify')
+      return signature
+    })
   }
 
   // ==========================================================================

@@ -7,6 +7,7 @@
 import { exactUnsignedNumber, validateUnspents } from './released-native-contract.js'
 import { receiveAddress } from './receive-address.js'
 import { consignmentLookup, consignmentBytes } from './consignment-export.js'
+import { bip322Capabilities, requireBip322, validateBip322Address, validateBip322Message, validateBip322Signature } from './bip322-contract.js'
 
 import { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 
@@ -123,6 +124,9 @@ export function createReadOnlyRgbLightningAdapter (binding) {
     listUnspents: (skipSync) => callNode('listUnspents', skipSync),
     estimateFee: (blocks) => callNode('estimateFee', blocks),
     verifyMessage: (message, signature) => callNode('verifyMessage', message, signature),
+    // Verification is public-key only and never creates or unlocks RLN.
+    getMessageSigningCapabilities: () => bip322Capabilities(binding, true),
+    verifyMessageBip322: (message, address, signature) => binding.verifyMessageBip322(message, address, signature),
     checkIndexerUrl: (indexerUrl) => callNode('checkIndexerUrl', indexerUrl),
     checkProxyEndpoint: (proxyEndpoint) => callNode('checkProxyEndpoint', proxyEndpoint)
   })
@@ -177,7 +181,8 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
       consignmentExport: true,
       bfaAssetListing: true,
       bfaValidation: true,
-      burn: false
+      burn: false,
+      bip322: bip322Capabilities(this._reader, true)
     }
   }
 
@@ -540,6 +545,21 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
       throw error
     }
     return typeof result === 'boolean' ? result : result?.valid === true
+  }
+
+  /**
+   * Verify a public BIP-322 simple proof for an explicit Bitcoin address.
+   * Accepts the v2 smp prefix and historical prefixless simple proofs. This
+   * never invokes the legacy Lightning node-identity verifier.
+   */
+  async verifyMessageBip322 (message, address, signature) {
+    validateBip322Message(message)
+    validateBip322Address(address, this.getNetwork())
+    validateBip322Signature(signature)
+    requireBip322(this._reader, 'verification')
+    const result = await this._reader.verifyMessageBip322(message, address, signature)
+    if (typeof result !== 'boolean') throw new Error('BIP-322 verifier returned an invalid result')
+    return result
   }
 
   /**

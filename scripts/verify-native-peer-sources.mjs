@@ -39,7 +39,7 @@ export function validateNativePeerSources (sources, packageJson) {
   for (const packageName of NATIVE_PEER_NAMES) {
     const source = sources.peers[packageName]
     if (!source || source.repository !== nativeRepositories[packageName] ||
-        source.ref !== 'main' || !/^[a-f0-9]{40}$/.test(source.commit) ||
+        (source.ref !== 'main' && source.ref !== source.commit) || !/^[a-f0-9]{40}$/.test(source.commit) ||
         typeof source.version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(source.version)) {
       throw new Error(`Invalid native peer source for ${packageName}`)
     }

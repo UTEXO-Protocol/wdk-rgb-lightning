@@ -115,7 +115,15 @@ describe('mainnet Lightning policy', () => {
       consignmentExport: true,
       bfaAssetListing: true,
       bfaValidation: true,
-      burn: true
+      burn: true,
+      bip322: {
+        signing: false,
+        verification: false,
+        protocol: 'bip322-simple',
+        specVersion: '2.0.0',
+        addressTypes: ['p2tr'],
+        verificationAddressTypes: ['p2tr', 'p2wpkh']
+      }
     })
     await expect(account.getBfaCapabilities()).resolves.toEqual({ bfa: true, burn: true, consignment: true })
     const readOnly = await account.toReadOnlyAccount()

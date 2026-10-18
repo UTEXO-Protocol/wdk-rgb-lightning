@@ -16,6 +16,7 @@ import { signerStoragePath } from './signer-storage-path.js'
 import { normalizeUnlockRequest } from './node-unlock-request.js'
 import { assertNativeRuntime } from './native-runtime-contract.js'
 import { addressReuse } from './receive-address.js'
+import { nativeSupportsBip322, requireBip322, validateBip322Message, validateBip322Address, validateBip322Signature } from './bip322-contract.js'
 
 const {
   SdkNode,
@@ -317,6 +318,35 @@ export class NodeRgbLightningBinding {
       )
     }
     return node.apayNewWithAddress(hostNodeId, username, domain)
+  }
+
+  /** Native feature support, without constructing an RLN node or signer. */
+  getMessageSigningCapabilities () {
+    const supported = nativeSupportsBip322(rln)
+    return { signing: supported, verification: supported }
+  }
+
+  /** Fixed first vanilla BIP86 receive address; no allocation or rotation. */
+  getMessageSigningAddress () {
+    requireBip322(this, 'signing')
+    return validateBip322Address(this.ensureNode().getMessageSigningAddress(), this._config.network)
+  }
+
+  signMessageBip322 (message, address) {
+    validateBip322Message(message)
+    validateBip322Address(address, this._config.network)
+    requireBip322(this, 'signing')
+    return validateBip322Signature(this.ensureNode().signMessageBip322(message, address), true)
+  }
+
+  verifyMessageBip322 (message, address, signature) {
+    validateBip322Message(message)
+    validateBip322Address(address, this._config.network)
+    validateBip322Signature(signature)
+    requireBip322(this, 'verification')
+    const result = rln.verifyMessageBip322(message, address, signature, this._config.network)
+    if (typeof result !== 'boolean') throw new Error('BIP-322 verifier returned an invalid result')
+    return result
   }
 
   /**

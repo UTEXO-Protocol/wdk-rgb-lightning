@@ -22,6 +22,30 @@ const mainCommits = {
   [node]: '04b641dce121ac690d5d0866eeba4fa76aebe7a5'
 }
 
+// Keep the published beta.4 fixture historical when an unreleased feature
+// candidate changes its own source pins. This exercises the same verifier with
+// the release's actual expected inputs, without relabelling registry evidence.
+const releasedSources = {
+  schemaVersion: 1,
+  sharedCffiLockSha256: nativeManifest.cffiLockSha256,
+  peers: Object.fromEntries([bare, node].map(name => [name, {
+    repository: `https://github.com/UTEXO-Protocol/${name.slice('@utexo/'.length)}.git`,
+    ref: 'main',
+    commit: mainCommits[name],
+    version: '0.2.0-beta.4'
+  }]))
+}
+const releasedRuntime = {
+  abi_version: 1,
+  rln_version: nativeManifest.rlnVersion,
+  rln_commit: nativeManifest.commit,
+  lightning_commit: nativeManifest.lightningCommit,
+  adapter_sha256: nativeManifest.patchSha256
+}
+const verifyReleasedPeers = options => verifyNativePeerReleases({
+  sources: releasedSources, expectedRuntime: releasedRuntime, ...options
+})
+
 function packageFixture () {
   return {
     peerDependencies: {
@@ -57,7 +81,7 @@ describe('published native peer release admission', () => {
     packageJson.peerDependencies['unrelated-peer'] = '*'
     packageJson.peerDependenciesMeta['unrelated-peer'] = { optional: true }
 
-    const result = await verifyNativePeerReleases({ packageJson, fetchImpl: registry.fetchImpl })
+    const result = await verifyReleasedPeers({ packageJson, fetchImpl: registry.fetchImpl })
 
     expect(result).toEqual([
       { name: bare, range: '0.2.0-beta.4', minimum: '0.2.0-beta.4' },
@@ -76,12 +100,12 @@ describe('published native peer release admission', () => {
       ? Promise.resolve({ ok: false, status: 404, statusText: 'Not Found' })
       : registry.fetchImpl(url)
 
-    await expect(verifyNativePeerReleases({ packageJson: packageFixture(), fetchImpl }))
+    await expect(verifyReleasedPeers({ packageJson: packageFixture(), fetchImpl }))
       .rejects.toThrow(`${packageName}@0.2.0-beta.4 is unavailable (404 Not Found)`)
   })
 
   it('reports registry service failures without accepting an incomplete release', async () => {
-    await expect(verifyNativePeerReleases({
+    await expect(verifyReleasedPeers({
       packageJson: packageFixture(),
       fetchImpl: async () => ({ ok: false, status: 503, statusText: 'Service Unavailable' })
     })).rejects.toThrow('503 Service Unavailable')
@@ -97,7 +121,7 @@ describe('published native peer release admission', () => {
     packageJson.peerDependencies[node] = version
     const registry = registryFixture()
 
-    await expect(verifyNativePeerReleases({ packageJson, fetchImpl: registry.fetchImpl }))
+    await expect(verifyReleasedPeers({ packageJson, fetchImpl: registry.fetchImpl }))
       .rejects.toThrow(`Native peer ${node} must declare one exact version`)
     expect(registry.requested).toEqual([])
   })
@@ -107,7 +131,7 @@ describe('published native peer release admission', () => {
     ['version', '0.2.0-beta.3']
   ])('rejects registry identity mismatch in %s', async (field, value) => {
     const registry = registryFixture(metadata => ({ ...metadata, [field]: value }))
-    await expect(verifyNativePeerReleases({ packageJson: packageFixture(), fetchImpl: registry.fetchImpl }))
+    await expect(verifyReleasedPeers({ packageJson: packageFixture(), fetchImpl: registry.fetchImpl }))
       .rejects.toThrow('Registry returned the wrong identity')
   })
 
@@ -126,7 +150,7 @@ describe('published native peer release admission', () => {
       ...metadata,
       utexoNativeOverlay: { ...metadata.utexoNativeOverlay, [field]: value }
     }))
-    await expect(verifyNativePeerReleases({ packageJson: packageFixture(), fetchImpl: registry.fetchImpl }))
+    await expect(verifyReleasedPeers({ packageJson: packageFixture(), fetchImpl: registry.fetchImpl }))
       .rejects.toThrow('Registry native release manifest mismatch')
   })
 
@@ -135,19 +159,19 @@ describe('published native peer release admission', () => {
       delete metadata.utexoNativeOverlay[field]
       return metadata
     })
-    await expect(verifyNativePeerReleases({ packageJson: packageFixture(), fetchImpl: registry.fetchImpl }))
+    await expect(verifyReleasedPeers({ packageJson: packageFixture(), fetchImpl: registry.fetchImpl }))
       .rejects.toThrow('Registry native release manifest mismatch')
   })
 
   it.each([undefined, null, {}])('rejects absent or incomplete native provenance %p', async manifest => {
     const registry = registryFixture(metadata => ({ ...metadata, utexoNativeOverlay: manifest }))
-    await expect(verifyNativePeerReleases({ packageJson: packageFixture(), fetchImpl: registry.fetchImpl }))
+    await expect(verifyReleasedPeers({ packageJson: packageFixture(), fetchImpl: registry.fetchImpl }))
       .rejects.toThrow('Registry native release manifest mismatch')
   })
 
   it.each([undefined, '0'.repeat(40)])('rejects missing or unexpected registry gitHead %p', async gitHead => {
     const registry = registryFixture(metadata => ({ ...metadata, gitHead }))
-    await expect(verifyNativePeerReleases({ packageJson: packageFixture(), fetchImpl: registry.fetchImpl }))
+    await expect(verifyReleasedPeers({ packageJson: packageFixture(), fetchImpl: registry.fetchImpl }))
       .rejects.toThrow(`Registry gitHead mismatch for ${bare}`)
   })
 
@@ -155,7 +179,7 @@ describe('published native peer release admission', () => {
     const registry = registryFixture(metadata => metadata.name === node
       ? { ...metadata, utexoNativeOverlay: { ...nativeManifest, commit: '0'.repeat(40) } }
       : metadata)
-    await expect(verifyNativePeerReleases({ packageJson: packageFixture(), fetchImpl: registry.fetchImpl }))
+    await expect(verifyReleasedPeers({ packageJson: packageFixture(), fetchImpl: registry.fetchImpl }))
       .rejects.toThrow(`Registry native release manifest mismatch for ${node}`)
     expect(registry.requested).toHaveLength(2)
   })

@@ -130,6 +130,19 @@ export interface RgbLightningCapabilities {
   bfaValidation: true
   /** True for a full account; false for its read-only facade. Not a readiness check. */
   burn: boolean
+  /** Advertised only when the installed native peer exposes the BIP-322 extension. */
+  bip322: Bip322Capabilities
+}
+
+export interface Bip322Capabilities {
+  /** False for a read-only account and for native peers without this extension. */
+  signing: boolean
+  verification: boolean
+  protocol: 'bip322-simple'
+  specVersion: '2.0.0'
+  /** This signer owns the fixed first vanilla BIP86 receive address. */
+  addressTypes: ['p2tr']
+  verificationAddressTypes: ['p2tr', 'p2wpkh']
 }
 
 export interface BfaCapabilities {
@@ -415,6 +428,10 @@ export interface IRgbLightningBinding {
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
+  getMessageSigningCapabilities?(): { signing: boolean; verification: boolean }
+  getMessageSigningAddress?(): string
+  signMessageBip322?(message: string, address: string): string
+  verifyMessageBip322?(message: string, address: string, signature: string): boolean
   shutdown(): void
 }
 
@@ -429,6 +446,10 @@ export class NodeRgbLightningBinding implements IRgbLightningBinding {
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
+  getMessageSigningCapabilities(): { signing: boolean; verification: boolean }
+  getMessageSigningAddress(): string
+  signMessageBip322(message: string, address: string): string
+  verifyMessageBip322(message: string, address: string, signature: string): boolean
   shutdown(): void
   static healthcheck(): string
   static isInitialized(): boolean
@@ -447,6 +468,10 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
   vssStatus(): VssStatus
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
+  getMessageSigningCapabilities(): { signing: boolean; verification: boolean }
+  getMessageSigningAddress(): string
+  signMessageBip322(message: string, address: string): string
+  verifyMessageBip322(message: string, address: string, signature: string): boolean
   shutdown(): void
   static healthcheck(): string
   static isInitialized(): boolean
@@ -573,6 +598,15 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
    */
   verify(message: string, signature: string): Promise<boolean>
 
+  /**
+   * Verify a public BIP-322 simple proof for an explicit address on this network.
+   * Supports P2TR key-path and P2WPKH; accepts smp-prefixed and historical
+   * prefixless simple proofs. Message is exact UTF-8 (at most 4096 bytes), with
+   * no trimming, normalization, or ill-formed UTF-16 replacement.
+   * This is separate from the Lightning node-identity verify() method.
+   */
+  verifyMessageBip322(message: string, address: string, signature: string): Promise<boolean>
+
   /** Checks whether an indexer URL is reachable and compatible with the node. */
   checkIndexerUrl(indexerUrl: string): Promise<object>
 
@@ -678,6 +712,15 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   // Onion / signing / diagnostics
   sendOnionMessage(request: object): Promise<{ ok: true }>
   sign(message: string): Promise<string>
+  /** Fixed first vanilla BIP86 receive address; does not allocate or rotate an address. */
+  getMessageSigningAddress(): Promise<string>
+  /**
+   * Sign an exact UTF-8 message (at most 4096 bytes) for the explicitly reviewed
+   * owned address. Returns the BIP-322 v2 smp-prefixed simple proof. Does not
+   * broadcast, prove a balance, or sign a spendable transaction. The native
+   * signer checks ownership; no seed or private key crosses this API.
+   */
+  signMessageBip322(message: string, address: string): Promise<string>
 
   // Generic IWalletAccount surface
   transfer(options: TransferOptions): Promise<TransferResult>

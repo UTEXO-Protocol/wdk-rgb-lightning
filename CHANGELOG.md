@@ -8,6 +8,18 @@ while pre-`1.0`.
 
 ## [Unreleased]
 
+### Added
+
+- Explicit BIP-322 simple Bitcoin message proofs through
+  `getMessageSigningAddress()`, `signMessageBip322(message, address)` and
+  read-only `verifyMessageBip322(message, address, signature)`. Signing uses the
+  native signer's first vanilla BIP86 address, verifies ownership and emits the
+  v2 `smp` prefix without broadcasting. Messages retain their exact UTF-8 bytes,
+  with a 4096-byte bound and rejection of unpaired UTF-16 surrogates.
+- Runtime BIP-322 capability detection, public offline P2TR/P2WPKH verification,
+  strict native result validation and signing-operation drain before shutdown.
+  Existing Lightning node-identity `sign()` / `verify()` semantics are unchanged.
+
 ## [0.2.0-beta.4] — 2026-10-16
 
 This breaking beta consolidates the changes developed under the unpublished
