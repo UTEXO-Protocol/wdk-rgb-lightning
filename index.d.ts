@@ -268,6 +268,23 @@ export interface VssBackupResult {
 }
 
 /** Native observation; a version is not a whole-wallet recovery certificate. */
+export interface VssAutomaticBackupResult {
+  automatic_backup_enabled: boolean
+}
+
+/** Durable local successful-upload receipt. Unknown historical completion times remain null. */
+export interface VssBackupMetadata extends VssAutomaticBackupResult {
+  schema_version: 1
+  last_backup: null | Readonly<{
+    version: number
+    /** Unix milliseconds recorded only after an acknowledged native upload. */
+    completed_at_ms: number
+    network: Network
+    vss_url: string
+    node_id: string
+  }>
+}
+
 export interface VssBackupInfo {
   backup_exists: boolean
   version: number | null
@@ -446,6 +463,8 @@ export interface RgbLightningBindingConfig {
   vssUrl?: string
   vssAllowHttp?: boolean
   vssAllowEmptyRestore?: boolean
+  /** Initial snapshot preference, default true. A saved native wallet/network/endpoint choice wins. */
+  vssAutomaticBackupEnabled?: boolean
   /** LSP base URL for RLN's internal APay client. Required for apayNew/bootstrapLsp. */
   lspBaseUrl?: string
   /** Bearer token for the LSP's /internal/* endpoints. */
@@ -484,6 +503,8 @@ export interface IRgbLightningBinding {
   vssBackup(): VssBackupResult
   vssStatus(): VssStatus
   getVssBackupInfo(): VssBackupInfo
+  getVssBackupMetadata(): VssBackupMetadata
+  setVssAutomaticBackupEnabled(enabled: boolean): VssAutomaticBackupResult
   prepareVssRestore(expectedScope?: VssRecoveryScope): VssRestoreReceipt
   getVssRestoreInfo(): VssRestoreInfo
   apayNew(hostNodeId: string): object
@@ -507,6 +528,8 @@ export class NodeRgbLightningBinding implements IRgbLightningBinding {
   vssBackup(): VssBackupResult
   vssStatus(): VssStatus
   getVssBackupInfo(): VssBackupInfo
+  getVssBackupMetadata(): VssBackupMetadata
+  setVssAutomaticBackupEnabled(enabled: boolean): VssAutomaticBackupResult
   prepareVssRestore(expectedScope?: VssRecoveryScope): VssRestoreReceipt
   getVssRestoreInfo(): VssRestoreInfo
   apayNew(hostNodeId: string): object
@@ -534,6 +557,8 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
   vssBackup(): VssBackupResult
   vssStatus(): VssStatus
   getVssBackupInfo(): VssBackupInfo
+  getVssBackupMetadata(): VssBackupMetadata
+  setVssAutomaticBackupEnabled(enabled: boolean): VssAutomaticBackupResult
   prepareVssRestore(expectedScope?: VssRecoveryScope): VssRestoreReceipt
   getVssRestoreInfo(): VssRestoreInfo
   apayNew(hostNodeId: string): object
@@ -575,6 +600,7 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
   vssStatus(): Promise<VssStatus>
   /** Read backup state without upload, restore or takeover. Requires unlocked native wallet. */
   getVssBackupInfo(): Promise<VssBackupInfo>
+  getVssBackupMetadata(): Promise<VssBackupMetadata>
   getVssRestoreInfo(): Promise<VssRestoreInfo>
 
   /** Returns identity and runtime information for the Lightning node. */
@@ -715,10 +741,13 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   prepareVssRestore(expectedScope?: VssRecoveryScope): Promise<VssRestoreReceipt>
   /** Upload current RGB state. Does not certify a whole-wallet atomic snapshot. */
   vssBackup(): Promise<VssBackupResult>
+  /** Drain admitted snapshots, then atomically confirm the durable native snapshot preference. */
+  setVssAutomaticBackupEnabled(enabled: boolean): Promise<VssAutomaticBackupResult>
   /** Local-view status; does not hit the server. */
   vssStatus(): Promise<VssStatus>
   /** Read backup state without upload, restore or takeover. Requires unlocked native wallet. */
   getVssBackupInfo(): Promise<VssBackupInfo>
+  getVssBackupMetadata(): Promise<VssBackupMetadata>
   getVssRestoreInfo(): Promise<VssRestoreInfo>
 
   // APay / LSP bootstrap

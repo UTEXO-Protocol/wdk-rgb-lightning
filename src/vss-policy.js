@@ -5,7 +5,7 @@ export const VSS_SAFETY_POLICY = Object.freeze({ supported: true, code: null, re
 
 /** Validate before signer/node creation. Never downgrade invalid VSS to local-only. */
 export function assertVssConfigurationSafe (config) {
-  for (const key of ['vssAllowHttp', 'vssAllowEmptyRestore']) {
+  for (const key of ['vssAllowHttp', 'vssAllowEmptyRestore', 'vssAutomaticBackupEnabled']) {
     if (config?.[key] !== undefined && typeof config[key] !== 'boolean') throw new TypeError(`${key} must be a boolean`)
   }
   if (config?.vssUrl === undefined) return
@@ -97,4 +97,41 @@ export function validateVssRestoreReceipt (value, config, bootstrap, info = fals
     throw new Error('VSS returned invalid restore provenance')
   }
   return value
+}
+
+/** Confirmed policy is distinct from VSS configuration: manual backup stays available. */
+export function validateVssAutomaticBackupResult (result, expected) {
+  if (!result || typeof result !== 'object' || Array.isArray(result) ||
+      Object.keys(result).length !== 1 || !Object.hasOwn(result, 'automatic_backup_enabled') ||
+      typeof result.automatic_backup_enabled !== 'boolean' ||
+      (expected !== undefined && result.automatic_backup_enabled !== expected)) {
+    throw new Error('VSS returned invalid automatic backup policy')
+  }
+  return result
+}
+
+/** Local native receipt, bound to this wallet/endpoint; a remote observation is not a completion time. */
+export function validateVssBackupMetadata (value, config, bootstrap) {
+  const fields = ['schema_version', 'automatic_backup_enabled', 'last_backup']
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      Object.keys(value).length !== fields.length || fields.some(key => !Object.hasOwn(value, key)) ||
+      value.schema_version !== 1 || typeof value.automatic_backup_enabled !== 'boolean') {
+    throw new Error('VSS returned invalid backup metadata')
+  }
+  if (value.last_backup === null) return value
+  const receipt = value.last_backup
+  const receiptFields = ['version', 'completed_at_ms', 'network', 'vss_url', 'node_id']
+  const version = typeof receipt?.version === 'string' && /^[1-9][0-9]*$/.test(receipt.version)
+    ? Number(receipt.version)
+    : receipt?.version
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt) ||
+      Object.keys(receipt).length !== receiptFields.length || receiptFields.some(key => !Object.hasOwn(receipt, key)) ||
+      !Number.isSafeInteger(version) || version <= 0 ||
+      !Number.isSafeInteger(receipt.completed_at_ms) || receipt.completed_at_ms <= 0 || receipt.completed_at_ms > 8640000000000000 ||
+      receipt.network !== config.network || receipt.vss_url !== config.vssUrl ||
+      typeof receipt.node_id !== 'string' || !/^(02|03)[a-f0-9]{64}$/i.test(receipt.node_id) ||
+      receipt.node_id !== bootstrap?.node_id) {
+    throw new Error('VSS returned invalid backup completion receipt')
+  }
+  return { ...value, last_backup: { ...receipt, version } }
 }

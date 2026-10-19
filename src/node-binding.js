@@ -10,7 +10,7 @@
 // lockstep with `bare-binding.js` so the WDK layer is identical across
 // runtimes — see binding-interface.js for the contract.
 
-import { assertVssConfigurationSafe, localVssStatus, validateVssBackup, validateVssBackupInfo, assertVssRecoveryScope, validateVssRestoreReceipt } from './vss-policy.js'
+import { assertVssConfigurationSafe, localVssStatus, validateVssBackup, validateVssBackupInfo, assertVssRecoveryScope, validateVssRestoreReceipt, validateVssAutomaticBackupResult, validateVssBackupMetadata } from './vss-policy.js'
 import { VssNotConfiguredError, AccountLockedError, VssError } from './errors.js'
 import rln from '@utexo/rgb-lightning-node-nodejs'
 import { retainSecret, revealSecret, secretMatches, wipeSecret } from './secret-buffer.js'
@@ -78,6 +78,7 @@ export class NodeRgbLightningBinding {
       this._initRequest.vss_url = config.vssUrl
       this._initRequest.vss_allow_http = config.vssAllowHttp ?? false
       this._initRequest.vss_allow_empty_restore = config.vssAllowEmptyRestore ?? false
+      if (config.vssAutomaticBackupEnabled !== undefined) this._initRequest.vss_automatic_backup_enabled = config.vssAutomaticBackupEnabled
     }
     this._lastBackupVersion = null
     this._vssCheckpointFailed = false
@@ -295,6 +296,21 @@ export class NodeRgbLightningBinding {
       backup_required: info.backup_required || this._vssCheckpointFailed,
       last_auto_backup_failed: info.last_auto_backup_failed || this._vssCheckpointFailed
     }
+  }
+
+  /** Read durable local upload receipts without manufacturing a timestamp from a health read. */
+  getVssBackupMetadata () {
+    if (!this._config.vssUrl) throw new VssNotConfiguredError()
+    if (this._closed || !this._node) throw new AccountLockedError('Unlock the RGB Lightning account before reading backup metadata.')
+    return validateVssBackupMetadata(this._node.vssBackupMetadata(), this._config, this.bootstrap())
+  }
+
+  /** Native changes only snapshot scheduling; the VSS client remains available for manual backup/restore. */
+  setVssAutomaticBackupEnabled (enabled) {
+    if (typeof enabled !== 'boolean') throw new TypeError('Automatic VSS backup requires a boolean')
+    if (!this._config.vssUrl) throw new VssNotConfiguredError()
+    if (this._closed || !this._node) throw new AccountLockedError('Unlock the RGB Lightning account before changing automatic backup.')
+    return validateVssAutomaticBackupResult(this._node.setVssAutomaticBackupEnabled(enabled), enabled)
   }
 
   /** Local status only; failed backups never advance the last successful version. */

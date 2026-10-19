@@ -120,3 +120,16 @@ void umaAddress
 void nonStringUmaAddress
 void parsedAddress
 void parsedDomain
+
+const automaticPolicy: Promise<import('../index.js').VssAutomaticBackupResult> = account.setVssAutomaticBackupEnabled(false)
+const backupMetadata: Promise<import('../index.js').VssBackupMetadata> = account.getVssBackupMetadata()
+const readOnlyBackupMetadata: Promise<import('../index.js').VssBackupMetadata> = readOnlyAccount.getVssBackupMetadata()
+const nativeBackupMetadata: import('../index.js').VssBackupMetadata = binding.getVssBackupMetadata()
+void automaticPolicy
+void backupMetadata
+void readOnlyBackupMetadata
+void nativeBackupMetadata
+// @ts-expect-error The automatic snapshot policy requires a boolean.
+account.setVssAutomaticBackupEnabled('false')
+// @ts-expect-error Read-only accounts cannot change the automatic snapshot policy.
+readOnlyAccount.setVssAutomaticBackupEnabled(false)

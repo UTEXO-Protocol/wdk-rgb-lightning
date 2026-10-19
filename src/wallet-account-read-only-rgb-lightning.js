@@ -102,6 +102,7 @@ export function createReadOnlyRgbLightningAdapter (binding) {
     bootstrap: () => binding.bootstrap(),
     vssStatus: () => binding.vssStatus(),
     getVssBackupInfo: () => binding.getVssBackupInfo(),
+    getVssBackupMetadata: () => binding.getVssBackupMetadata(),
     getVssRestoreInfo: () => binding.getVssRestoreInfo(),
     nodeInfo: () => callNode('nodeInfo'),
     networkInfo: () => callNode('networkInfo'),
@@ -214,6 +215,15 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
     try { return await this._reader.getVssBackupInfo() } catch (error) {
       if (error instanceof AccountLockedError || error instanceof VssNotConfiguredError) throw error
       if (isLockedError(error)) throw new AccountLockedError('Unlock the RGB Lightning account before reading backup information.', { cause: error })
+      throw wrapError(error, VssError)
+    }
+  }
+
+  /** Native successful completion time and confirmed snapshot policy; never uploads. */
+  async getVssBackupMetadata () {
+    try { return await this._reader.getVssBackupMetadata() } catch (error) {
+      if (error instanceof AccountLockedError || error instanceof VssNotConfiguredError) throw error
+      if (isLockedError(error)) throw new AccountLockedError('Unlock the RGB Lightning account before reading backup metadata.', { cause: error })
       throw wrapError(error, VssError)
     }
   }

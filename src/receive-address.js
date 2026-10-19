@@ -35,9 +35,9 @@ export function stopAddressOperations (binding) {
 
 // The read-only facade and full account share one queue and current address.
 // Non-reuse allocates once per session/read, then only on an explicit request.
-export function receiveAddress (binding, fresh = false, rotateOnly = false) {
+export function receiveAddress (binding, fresh = false, rotateOnly = false, admitted = false) {
   const state = stateFor(binding)
-  if (state.closed) return Promise.reject(new Error('RGB Lightning account is closed'))
+  if (state.closed && !admitted) return Promise.reject(new Error('RGB Lightning account is closed'))
   state.pending++
   const operation = state.tail.then(async () => {
     const node = binding.ensureNode()

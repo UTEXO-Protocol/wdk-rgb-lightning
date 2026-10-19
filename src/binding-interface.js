@@ -40,6 +40,7 @@
  * @property {string} [vssUrl] - Explicit VSS endpoint; HTTPS required by default.
  * @property {boolean} [vssAllowHttp] - Explicitly permit HTTP for local testing.
  * @property {boolean} [vssAllowEmptyRestore] - Permit initialization when no remote backup exists.
+ * @property {boolean} [vssAutomaticBackupEnabled] - Initial automatic snapshot default; persisted native wallet policy wins.
  * @property {string} [lspBaseUrl] - Base URL for RLN's internal APay client.
  *   Required by `apayNew()` and `bootstrapLsp()`; omit to disable APay.
  * @property {string} [lspBearerToken] - Bearer token sent to the LSP's
@@ -67,6 +68,8 @@
  * @property {() => {version: number}} vssBackup - Upload current RGB state.
  * @property {(expectedScope?: object) => object} prepareVssRestore - Download and validate an existing RGB snapshot before first unlock.
  * @property {() => object|null} getVssRestoreInfo - Actual per-handle/durable restore receipt and native unlocked state.
+ * @property {() => object} getVssBackupMetadata - Durable native completion receipt and automatic snapshot policy.
+ * @property {(enabled: boolean) => {automatic_backup_enabled: boolean}} setVssAutomaticBackupEnabled - Confirmed automatic snapshot preference.
  * @property {() => object} getVssBackupInfo - Read actual backup state without writes.
  * @property {() => object} vssStatus - Local configuration and last successful RGB
  *   upload in this session, without a remote health query or recovery guarantee.

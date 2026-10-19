@@ -315,6 +315,8 @@ it.each(cases)('requires exact enabled compiled metadata for %p', (Binding, nati
     spy.mockReturnValue({ ...runtime, vss_policy: vssPolicy })
     expect(() => new Binding(configured)).toThrow(expect.objectContaining({ code: 'ERR_RLN_RUNTIME_MISMATCH' }))
   }
-  spy.mockReturnValue({ ...runtime, capabilities: runtime.capabilities.filter(value => value !== 'vss-backup-v1') })
-  expect(() => new Binding(configured)).toThrow(expect.objectContaining({ code: 'ERR_RLN_RUNTIME_MISMATCH' }))
+  for (const capability of ['vss-backup-v1', 'vss-automatic-backup-v1', 'vss-backup-metadata-v1']) {
+    spy.mockReturnValue({ ...runtime, capabilities: runtime.capabilities.filter(value => value !== capability) })
+    expect(() => new Binding(configured)).toThrow(expect.objectContaining({ code: 'ERR_RLN_RUNTIME_MISMATCH' }))
+  }
 })

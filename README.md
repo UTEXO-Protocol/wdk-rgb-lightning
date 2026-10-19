@@ -175,6 +175,7 @@ and a regtest stack via Docker Compose — lives in
 | `autoUnlockRequest` | absent | Opt into address-triggered activation with a canonical or supported legacy unlock request. |
 | `nodeSeedDerivation` | `auto` | New nodes use WDK's normalized BIP-39 seed directly; existing beta nodes retry the legacy identity only on an exact persisted-identity mismatch. Use `wdk-seed-v2` or `legacy-v1` to disable auto-detection. |
 | `vssUrl` / `vssAllowHttp` / `vssAllowEmptyRestore` | — / `false` / `false` | Explicit VSS endpoint, local HTTP opt-in and empty-restore opt-in; see [below](#vss-cloud-backup). |
+| `vssAutomaticBackupEnabled` | `true` for a new policy | Initial automatic snapshot preference; a saved wallet/network/endpoint choice takes precedence. |
 | `lspBaseUrl` / `lspBearerToken` | — | LSP wiring for APay and the LSP client; see [below](#lsp-integration). |
 
 ## Account API
@@ -559,12 +560,48 @@ remote state before opening the wallet. Its empty-store behavior is not restore
 evidence: use preparation above to require an existing snapshot. Other restore
 errors are not downgraded to local-only mode.
 
-Native VSS persistence remains active while unlocked. Full accounts also schedule
-serialized RGB checkpoints after on-chain sends, issuance, receive-invoice and
-address creation, RGB refresh/import/burn and output creation. Shutdown joins
-admitted checkpoints. A checkpoint failure does not change a completed financial
-operation into a failed payment: the last successful version stays unchanged.
-Use `vssBackup()` to explicitly await and observe a backup result or error.
+Automatic RGB snapshots default to on. The native runtime durably retains this
+preference for the wallet, network and exact VSS endpoint and loads it before
+unlock; an existing preference takes precedence over the optional initial config.
+Full accounts also schedule serialized checkpoints after on-chain sends, issuance,
+receive-invoice and address creation, RGB refresh/import/burn and output creation.
+
+Status, metadata and other pure reads do not upload snapshots. Synchronizing
+balance, transaction or unspent-output reads can discover wallet changes. An
+unchanged synchronization does not upload; changed incoming or spent Bitcoin
+state triggers an automatic snapshot when enabled. While automatic backup is
+off, discovered changes remain pending for manual backup or re-enable catch-up.
+
+```js
+await account.setVssAutomaticBackupEnabled(false)
+const metadata = await account.getVssBackupMetadata()
+// metadata.automatic_backup_enabled === false
+await account.vssBackup() // Manual backup remains available while automatic is off.
+await account.setVssAutomaticBackupEnabled(true) // Includes catch-up before acknowledgement.
+```
+
+A policy transition drains previously admitted mutations and snapshots and holds
+later mutation dispatch until it confirms. Disabling automatic snapshots retains
+the VSS client, manual backup and restore; other VSS configuration/key-value and
+writer-lock traffic can continue. Enabling backs up current state before saving
+the on preference. Upload failures retain the previous preference. After any
+transition error, re-read `getVssBackupMetadata()` before displaying a confirmed
+choice: a storage/rollback failure can leave the outcome unknown. Automatic hooks
+re-read native policy after an error and pause when it cannot be confirmed.
+Shutdown joins admitted work and never starts an extra automatic snapshot while
+the preference is off. A checkpoint failure does not change a completed financial
+operation into a failed payment. Use `vssBackup()` to explicitly await a backup.
+
+`getVssBackupMetadata()` is a separate, versioned local receipt API. It returns
+`schema_version: 1`, `automatic_backup_enabled`, and `last_backup`. The last field
+is null when the runtime has no reliable completion receipt, including historical
+backups created before timestamp tracking. Otherwise it contains the canonical
+`version`, `completed_at_ms` (Unix milliseconds), `network`, `vss_url` and `node_id`.
+The timestamp records acknowledged native upload completion, never the time a
+health read noticed an existing backup. The WDK validates the receipt's exact
+fields, chain, endpoint and wallet identity. A receipt is not current remote health
+or proof that later wallet changes are backed up. Read-only accounts can query this
+metadata but cannot change the automatic snapshot preference.
 
 `vssStatus()` returns exactly `configured`, `url`, `allowHttp`,
 `lastBackupVersion`, `supported`, `enabled`, and `disabledReason`. Support is
