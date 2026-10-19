@@ -8,11 +8,45 @@ provided. Dated VSS/lifecycle observations below retain their original sources;
 they do not qualify this protocol for confidential or interruption-safe recovery.
 
 
-Working branch: `release/rln-0.15.0-beta.3`. This register separates engineering
+Current working branch: `feat/bip322-message-signing`. This register separates engineering
 verification from decisions about release scope. An item is closed only by the
 evidence listed here, not by a general CI success.
 
-## Merged-main source and package admission
+## Current unpublished candidate: merged native sources
+
+Bare [#26](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/pull/26)
+and Node [#25](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/pull/25)
+merged on 19 October 2026. `native-peer-sources.json` now follows `main` at these
+exact commits:
+
+| Peer | Merged-main commit |
+| --- | --- |
+| Bare | `338d94e2ce5a1c2865296edf32f6c061ce0be175` |
+| Node | `3ccfdc72c8620a35871bddffd1f44d1dd0a9954e` |
+
+Their source trees are identical to the previously qualified feature heads
+`c1994daf1d14a4dfd37846f9f91915f357aa7b4b` and
+`b54ad25cdd80b244c84f9b309c07c0f37315efc1`, respectively. The adapter remains
+`d8b5be9809b12acd48fa5958014b4655ff94598c99800a2fafb9e3e81809aebf`.
+RLN, rgb-lib and LDK source pins, runtime code and native payload bytes are not
+changed by this WDK source-admission update. Prior native execution receipts keep
+their original feature-head compilation identities; a merge does not relabel a
+binary as rebuilt from the merge commit.
+
+The unpublished candidate adds BIP-322 proofs and VSS containment. Published
+`0.2.0-beta.4` artifacts do not contain those extensions. The existing package
+version is retained for source integration only; registry release admission must
+continue to reject the older published native graph. No publication or production
+approval is implied. Current checks and their exact candidate identity are
+recorded on [PR #48](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/pull/48).
+
+This source update passes the exact merged-main source verifier against clean
+native checkouts, all **31 Jest suites / 1,128 tests**, lint, declaration checks,
+WebRGB compatibility and all three fault-harness ownership tests. Only the source
+manifest, this current qualification note and the Unreleased changelog change;
+previous packed-consumer and mobile receipts retain their original WDK identities.
+
+## Historical beta.4 source and package admission
 
 Bare lifecycle #22, distributions #24/#25 and Node #24 are merged into `main`.
 Both Bare #25 contract CI jobs pass in

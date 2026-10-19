@@ -20,6 +20,14 @@ while pre-`1.0`.
   strict native result validation and signing-operation drain before shutdown.
   Existing Lightning node-identity `sign()` / `verify()` semantics are unchanged.
 
+### Changed
+
+- Follow the maintained native peers' merged `main` sources: Bare
+  `338d94e2ce5a1c2865296edf32f6c061ce0be175` and Node
+  `3ccfdc72c8620a35871bddffd1f44d1dd0a9954e`. Their trees match the qualified
+  BIP-322/VSS-containment feature heads. Published beta.4 artifacts do not contain
+  these unpublished extensions; exact source/artifact admission remains required.
+
 ### Security
 
 - Disable VSS backup, recovery and fence takeover pending upstream fixes for
