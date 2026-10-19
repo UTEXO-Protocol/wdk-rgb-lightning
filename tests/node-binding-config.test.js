@@ -54,7 +54,7 @@ describe('NodeRgbLightningBinding._initRequest', () => {
     expect(withPeers._initRequest.virtual_peer_pubkeys).toEqual(['02abc'])
   })
 
-  it('forwards LSP fields without enabling unavailable VSS', () => {
+  it('forwards LSP fields without inferring a VSS endpoint', () => {
     const binding = new NodeRgbLightningBinding({
       network: 'regtest',
       dataDir: '/d',
@@ -67,8 +67,8 @@ describe('NodeRgbLightningBinding._initRequest', () => {
     })
   })
 
-  it('reports only the local disabled VSS policy', () => {
+  it('reports local unconfigured VSS status', () => {
     const binding = new NodeRgbLightningBinding({ network: 'regtest', dataDir: '/d' })
-    expect(binding.vssStatus()).toMatchObject({ configured: false, supported: false, enabled: false, lastBackupVersion: null })
+    expect(binding.vssStatus()).toMatchObject({ configured: false, supported: true, enabled: false, lastBackupVersion: null })
   })
 })

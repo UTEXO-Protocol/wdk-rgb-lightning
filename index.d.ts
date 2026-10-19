@@ -132,7 +132,7 @@ export interface RgbLightningCapabilities {
   burn: boolean
   /** Advertised only when the installed native peer exposes the BIP-322 extension. */
   bip322: Bip322Capabilities
-  /** VSS backup and recovery are deliberately unavailable in this release. */
+  /** Native VSS feature support; readiness is reported separately by vssStatus(). */
   vss: VssCapabilities
 }
 
@@ -213,27 +213,48 @@ export interface TransferResult {
 
 export type QuoteResult = Omit<TransferResult, 'hash'>
 
-/** VSS is deliberately unavailable; no backup or recovery guarantee. */
+/** Read-only accounts do not advertise mutating backup or restore capabilities. */
 export interface VssCapabilities {
-  supported: false
-  automaticBackup: false
-  manualBackup: false
-  restore: false
+  supported: true
+  automaticBackup: boolean
+  manualBackup: boolean
+  restore: boolean
   remoteErasure: false
-  code: 'ERR_VSS_UNSAFE_UPSTREAM'
-  reason: 'VSS is unavailable until upstream backup security and recovery defects are fixed.'
+  code: null
+  reason: null
 }
 
-/** Local disabled policy only; no server round-trip. */
+/** Local status; no remote health or complete recovery guarantee. */
 export interface VssStatus {
   configured: boolean
   url: string | null
   allowHttp: boolean
-  /** @deprecated Always null. Not a cross-format or monotonic backup checkpoint. */
-  lastBackupVersion: null
-  supported: false
-  enabled: false
-  disabledReason: 'unsafe-upstream-vss'
+  /** Last successful RGB upload in this binding session. Not a global monotonic checkpoint. */
+  lastBackupVersion: number | null
+  supported: true
+  enabled: boolean
+  disabledReason: null
+}
+
+/** Exact reviewed account identity for recovery across an asynchronous host transport. */
+export interface VssRecoveryScope {
+  nodeId: string
+  network: Network
+  dataDir: string
+  vssUrl: string
+}
+
+/** Upstream RGB upload version. Does not include signer or application data. */
+export interface VssBackupResult {
+  version: number
+}
+
+/** Native observation; a version is not a whole-wallet recovery certificate. */
+export interface VssBackupInfo {
+  backup_exists: boolean
+  version: number | null
+  backup_required: boolean
+  last_auto_backup_failed: boolean
 }
 
 export interface BootstrapLspResult {
@@ -403,7 +424,7 @@ export interface RgbLightningBindingConfig {
   virtualPeerPubkeys?: string[]
   /** Strict by default. Permissive mainnet signing is rejected natively. */
   permissiveSignerPolicy?: boolean
-  /** @deprecated Supplying this option throws VssUnsupportedError before native creation. */
+  /** VSS endpoint. HTTPS required unless vssAllowHttp is explicitly true. */
   vssUrl?: string
   vssAllowHttp?: boolean
   vssAllowEmptyRestore?: boolean
@@ -439,11 +460,12 @@ export interface IRgbLightningBinding {
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
   unlock(unlockRequest: ExternalUnlockRequest | LegacyExternalUnlockRequest): void
   bootstrap(): object
-  /** @deprecated Always throws VssUnsupportedError without native dispatch. */
-  clearVssFence(password: string): never
-  /** @deprecated Always throws VssUnsupportedError without native dispatch. */
-  vssBackup(): never
+  /** Explicit takeover; requires the native node to be locked. Never called automatically. */
+  clearVssFence(password: string, expectedScope?: VssRecoveryScope): { ok: true }
+  /** Upload the current RGB backup; requires configured VSS and an unlocked node. */
+  vssBackup(): VssBackupResult
   vssStatus(): VssStatus
+  getVssBackupInfo(): VssBackupInfo
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   getMessageSigningCapabilities?(): { signing: boolean; verification: boolean }
@@ -459,11 +481,12 @@ export class NodeRgbLightningBinding implements IRgbLightningBinding {
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
   unlock(unlockRequest: ExternalUnlockRequest | LegacyExternalUnlockRequest): void
   bootstrap(): object
-  /** @deprecated Always throws VssUnsupportedError without native dispatch. */
-  clearVssFence(password: string): never
-  /** @deprecated Always throws VssUnsupportedError without native dispatch. */
-  vssBackup(): never
+  /** Explicit takeover; requires the native node to be locked. Never called automatically. */
+  clearVssFence(password: string, expectedScope?: VssRecoveryScope): { ok: true }
+  /** Upload the current RGB backup; requires configured VSS and an unlocked node. */
+  vssBackup(): VssBackupResult
   vssStatus(): VssStatus
+  getVssBackupInfo(): VssBackupInfo
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   getMessageSigningCapabilities(): { signing: boolean; verification: boolean }
@@ -483,11 +506,12 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
   attachExternalSigner(seedHex: string, fallbackSeedHex?: string): void
   unlock(unlockRequest: ExternalUnlockRequest | LegacyExternalUnlockRequest): void
   bootstrap(): object
-  /** @deprecated Always throws VssUnsupportedError without native dispatch. */
-  clearVssFence(password: string): never
-  /** @deprecated Always throws VssUnsupportedError without native dispatch. */
-  vssBackup(): never
+  /** Explicit takeover; requires the native node to be locked. Never called automatically. */
+  clearVssFence(password: string, expectedScope?: VssRecoveryScope): { ok: true }
+  /** Upload the current RGB backup; requires configured VSS and an unlocked node. */
+  vssBackup(): VssBackupResult
   vssStatus(): VssStatus
+  getVssBackupInfo(): VssBackupInfo
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   getMessageSigningCapabilities(): { signing: boolean; verification: boolean }
@@ -525,6 +549,8 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
 
   /** Returns the local VSS configuration and backup status without contacting the server. */
   vssStatus(): Promise<VssStatus>
+  /** Read backup state without upload, restore or takeover. Requires unlocked native wallet. */
+  getVssBackupInfo(): Promise<VssBackupInfo>
 
   /** Returns identity and runtime information for the Lightning node. */
   getNodeInfo(): Promise<object>
@@ -658,12 +684,14 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   shutdown(): Promise<{ ok: true }>
 
   // VSS
-  /** @deprecated Always rejects with VssUnsupportedError; no fence is deleted. */
-  clearVssFence(password: string): Promise<never>
-  /** @deprecated Always rejects with VssUnsupportedError; no upload occurs. */
-  vssBackup(): Promise<never>
+  /** Explicit takeover; requires the native node to be locked. Never called automatically. */
+  clearVssFence(password: string, expectedScope?: VssRecoveryScope): Promise<{ ok: true }>
+  /** Upload current RGB state. Does not certify a whole-wallet atomic snapshot. */
+  vssBackup(): Promise<VssBackupResult>
   /** Local-view status; does not hit the server. */
   vssStatus(): Promise<VssStatus>
+  /** Read backup state without upload, restore or takeover. Requires unlocked native wallet. */
+  getVssBackupInfo(): Promise<VssBackupInfo>
 
   // APay / LSP bootstrap
   /** @throws {ApayError} on LSP failure. */

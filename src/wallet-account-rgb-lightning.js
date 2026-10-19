@@ -23,6 +23,7 @@ import { normalizeUnlockRequest, normalizeAutoUnlockRequest, sameUnlockRequest }
 import { exactUnsignedNumber, validatePaymentRequest, validateRefreshResult } from './released-native-contract.js'
 import { validateBurnRequest, validateBurnResponse } from './burn-contract.js'
 import { receiveAddress, joinAddressOperations, stopAddressOperations } from './receive-address.js'
+import { vssCapabilities } from './vss-policy.js'
 import { bip322Capabilities, requireBip322, validateBip322Address, validateBip322Message, validateBip322Signature } from './bip322-contract.js'
 import {
   validateImportRgbContractRequest, validateImportRgbContractResult,
@@ -34,7 +35,8 @@ import WalletAccountReadOnlyRgbLightning, {
 } from './wallet-account-read-only-rgb-lightning.js'
 import {
   UnlockError,
-  VssUnsupportedError,
+  VssError,
+  VssNotConfiguredError,
   ApayError,
   AccountLockedError,
   NotImplementedError,
@@ -69,6 +71,12 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     /** @private */ this._shutdownInFlight = null
     /** @private */ this._closed = false
     /** @private */ this._messageSigningTail = Promise.resolve()
+    /** @private */ this._vssTail = Promise.resolve()
+    /** @private */ this._vssPending = 0
+    /** @private */ this._mutationsInFlight = new Set()
+    /** @private */ this._vssCheckpointPending = null
+    /** @private */ this._vssDirty = false
+    /** @private */ this._lastVssAddress = null
     /** @private @type {WalletAccountReadOnlyRgbLightning | null} */
     this._readOnlyAccount = null
   }
@@ -82,7 +90,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   isDisposed () { return this._closed || Boolean(this._shutdownInFlight) || super.isDisposed() }
 
   /** Package support, not wallet readiness or bridge payout qualification. */
-  getCapabilities () { return { ...super.getCapabilities(), burn: true, bip322: bip322Capabilities(this._binding) } }
+  getCapabilities () { return { ...super.getCapabilities(), burn: true, vss: vssCapabilities(), bip322: bip322Capabilities(this._binding) } }
 
   async getBfaCapabilities () { return { bfa: true, burn: true, consignment: true } }
 
@@ -109,7 +117,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     }
     const operation = Promise.resolve().then(async () => {
       try { await this._binding.unlock(request) } catch (error) { throw wrapError(error, UnlockError) }
-      return { ok: true }
+      return this._afterVssMutation({ ok: true })
     })
     this._unlockInFlight = { request, promise: operation }
     try {
@@ -124,11 +132,11 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     if (this._addressInFlight) return this._addressInFlight
     const operation = Promise.resolve().then(async () => {
       if (this._unlockInFlight) await this._unlockInFlight.promise
-      try { return await super.getAddress() } catch (error) {
+      try { return this._afterVssMutation(await super.getAddress(), true) } catch (error) {
         if (!(error instanceof AccountLockedError) || !this._autoUnlockRequest) throw error
       }
       await this.unlock(this._autoUnlockRequest)
-      return super.getAddress()
+      return this._afterVssMutation(await super.getAddress(), true)
     })
     this._addressInFlight = operation
     try { return await operation } finally {
@@ -143,8 +151,11 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     const operation = Promise.resolve().then(async () => {
       // Unlock has no released cancellation API. Join it before teardown.
       if (this._unlockInFlight) await this._unlockInFlight.promise.catch(() => {})
+      if (this._addressInFlight) await this._addressInFlight.catch(() => {})
       await joinAddressOperations(this._binding)
+      await Promise.all([...this._mutationsInFlight].map(operation => operation.catch(() => {})))
       await this._messageSigningTail
+      await this._vssTail
       await this._binding.shutdown()
       this._closed = true
       return { ok: true }
@@ -155,11 +166,81 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     }
   }
 
-  /** VSS takeover is unavailable, including for custom bindings. */
-  async clearVssFence (password) { throw new VssUnsupportedError() }
+  /** @private Join VSS work with unlock and shutdown; never retry a native request. */
+  _vssOperation (operation, admittedMutation = false) {
+    if (this._closed || (this._shutdownInFlight && !admittedMutation)) return Promise.reject(new AccountLockedError('RGB Lightning account is closed'))
+    const pendingUnlock = this._unlockInFlight?.promise
+    this._vssPending++
+    const pending = this._vssTail.then(async () => {
+      if (pendingUnlock) await pendingUnlock
+      try { return await operation() } catch (error) {
+        if (error instanceof VssNotConfiguredError || error instanceof AccountLockedError) throw error
+        if (/NotInitialized|LockedNode|node (?:is )?locked|call unlock/i.test(String(error?.message ?? error))) {
+          throw new AccountLockedError('Unlock the RGB Lightning account before backing up.', { cause: error })
+        }
+        throw wrapError(error, VssError)
+      }
+    }).finally(() => { this._vssPending-- })
+    this._vssTail = pending.catch(() => {})
+    return pending
+  }
 
-  /** VSS backup is unavailable; this does not flush LDK, app or signer state. */
-  async vssBackup () { throw new VssUnsupportedError() }
+  /** Explicit recovery takeover. Native permits this only while the node is locked. */
+  async clearVssFence (password, expectedScope) {
+    if (typeof password !== 'string') throw new TypeError('clearVssFence requires a string password')
+    return this._vssOperation(() => this._binding.clearVssFence(password, expectedScope))
+  }
+
+  /** Return the successful upstream RGB upload version; errors are never hidden. */
+  async vssBackup () { return this._vssOperation(() => this._binding.vssBackup()) }
+
+  /** @private Retain native ownership through the checkpoint of each admitted mutation. */
+  _nativeMutation (operation) {
+    if (this._closed || this._shutdownInFlight) return Promise.reject(new AccountLockedError('RGB Lightning account is closed'))
+    let result
+    // Dispatch exactly once in this turn; never defer or replay a financial call.
+    try { result = operation() } catch (error) { return Promise.reject(error) }
+    const pending = Promise.resolve(result).then(result => this._afterVssMutation(result))
+    this._mutationsInFlight.add(pending)
+    pending.finally(() => this._mutationsInFlight.delete(pending)).catch(() => {})
+    return pending
+  }
+
+  /**
+   * @private Schedule an opportunistic checkpoint after a successful mutation.
+   * A remote failure must not turn a completed send/burn into a retryable payment.
+   * Status retains the last successful version; manual backup exposes failures.
+   */
+  _afterVssMutation (result, addressRead = false) {
+    try {
+      if (this._binding.vssStatus?.()?.configured !== true) return result
+      // Re-reading an unchanged receive address does not create new backup work.
+      if (addressRead && this._lastVssAddress === result) return result
+      if (addressRead) this._lastVssAddress = result
+      this._vssDirty = true
+      if (this._vssCheckpointPending) return result
+      const checkpoint = this._vssOperation(async () => {
+        // Coalesce mutations already queued; if another mutation completes while
+        // an asynchronous custom binding uploads, cover it in the next pass.
+        while (this._vssDirty) {
+          this._vssDirty = false
+          try {
+            await this._binding.vssBackup()
+            this._binding._vssCheckpointFailed = false
+          } catch (_error) {
+            this._binding._vssCheckpointFailed = true
+            this._vssDirty = true
+            break // A new mutation or explicit manual backup may retry later.
+          }
+        }
+      }, true)
+      this._vssCheckpointPending = checkpoint
+      checkpoint.catch(() => {}).finally(() => {
+        if (this._vssCheckpointPending === checkpoint) this._vssCheckpointPending = null
+      })
+    } catch (_error) { /* A completed mutation must keep its original result. */ }
+    return result
+  }
 
   /**
    * Register this node with an LSP as an async-payments (APay) recipient.
@@ -592,18 +673,18 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   // ==========================================================================
 
   /** @param {Object} request */
-  async issueAssetNia (request) { return this._node.issueAssetNia(request) }
-  async issueAssetUda (request) { return this._node.issueAssetUda(request) }
-  async issueAssetCfa (request) { return this._node.issueAssetCfa(request) }
-  async issueAssetIfa (request) { return this._node.issueAssetIfa(request) }
+  async issueAssetNia (request) { return this._nativeMutation(() => this._node.issueAssetNia(request)) }
+  async issueAssetUda (request) { return this._nativeMutation(() => this._node.issueAssetUda(request)) }
+  async issueAssetCfa (request) { return this._nativeMutation(() => this._node.issueAssetCfa(request)) }
+  async issueAssetIfa (request) { return this._nativeMutation(() => this._node.issueAssetIfa(request)) }
 
   /** @param {Object} request */
   async refreshTransfers (request) {
-    return validateRefreshResult(await this._node.refreshTransfers(request))
+    return this._nativeMutation(async () => validateRefreshResult(await this._node.refreshTransfers(request)))
   }
 
   /** @param {Object} request */
-  async failTransfers (request) { return this._node.failTransfers(request) }
+  async failTransfers (request) { return this._nativeMutation(() => this._node.failTransfers(request)) }
 
   /**
    * Create an RGB invoice. Forwarded verbatim to RLN's `rgbInvoice`
@@ -616,22 +697,22 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * `assignment_amount`, `duration_seconds`.
    * @param {Object} request - JsonRgbInvoiceRequest (see above).
    */
-  async createRgbInvoice (request) { return this._node.rgbInvoice(request) }
+  async createRgbInvoice (request) { return this._nativeMutation(() => this._node.rgbInvoice(request)) }
 
   /** Register validated public metadata only; no asset units or allocations are imported. */
   async importRgbContract (request) {
     const validated = validateImportRgbContractRequest(request)
-    return validateImportRgbContractResult(
+    return this._nativeMutation(async () => validateImportRgbContractResult(
       await this._node.importRgbContract(validated), validated.expected_asset_id
-    )
+    ))
   }
 
   /** Register metadata for an already accepted transfer; does not accept ownership. */
   async importRgbTransferConsignment (request) {
     const validated = validateImportRgbTransferConsignmentRequest(request)
-    return validateImportRgbTransferConsignmentResult(
+    return this._nativeMutation(async () => validateImportRgbTransferConsignmentResult(
       await this._node.importRgbTransferConsignment(validated), validated.expected_asset_id
-    )
+    ))
   }
 
   /**
@@ -658,7 +739,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * invoice and assembles this request for you.
    * @param {Object} request - JsonSendRgbRequest (see above).
    */
-  async sendRgbAsset (request) { return this._node.sendRgb(request) }
+  async sendRgbAsset (request) { return this._nativeMutation(() => this._node.sendRgb(request)) }
 
   /**
    * Burn asset units with RLN's native snake_case request. BFA requires a
@@ -678,21 +759,21 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     }
     // Node/Bare burn is synchronous; RLN holds the wallet mutex through
     // prepare/sign/end. Do not defer dispatch or automatically replay failures.
-    return validateBurnResponse(node.burn(validated))
+    return this._nativeMutation(() => validateBurnResponse(node.burn(validated)))
   }
 
   /** @param {Object} request - JsonInflateRequest */
-  async inflate (request) { return this._node.inflate(request) }
+  async inflate (request) { return this._nativeMutation(() => this._node.inflate(request)) }
 
   /** @param {Object} request */
-  async postAssetMedia (request) { return this._node.postAssetMedia(request) }
+  async postAssetMedia (request) { return this._nativeMutation(() => this._node.postAssetMedia(request)) }
 
   // ==========================================================================
   // Bitcoin operations
   // ==========================================================================
 
   /** Raw RLN send-btc escape hatch for callers that already own the native request shape. */
-  async sendBtc (request) { return this._node.sendBtc(request) }
+  async sendBtc (request) { return this._nativeMutation(() => this._node.sendBtc(request)) }
 
   /**
    * WDK-standard on-chain send. Accepts `{ to, value, feeRate?,
@@ -728,19 +809,21 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   /** Rotate to a new receive address. Read-only accounts expose only the stable current address. */
   async rotateAddress () {
     if (this._closed || this._shutdownInFlight) throw new AccountLockedError('RGB Lightning account is closed')
-    return receiveAddress(this._binding, true, true)
+    return this._nativeMutation(() => receiveAddress(this._binding, true, true))
   }
 
   /** Allocate and persist a new receive address under either address policy. */
   async getNewAddress () {
     if (this._closed || this._shutdownInFlight) throw new AccountLockedError('RGB Lightning account is closed')
-    return receiveAddress(this._binding, true)
+    return this._nativeMutation(() => receiveAddress(this._binding, true))
   }
 
   /** @param {Object} request - JsonCreateUtxosRequest */
   async createUtxos (request) {
-    this._node.createUtxos(request)
-    return { ok: true }
+    return this._nativeMutation(async () => {
+      await this._node.createUtxos(request)
+      return { ok: true }
+    })
   }
 
   // ==========================================================================

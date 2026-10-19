@@ -37,10 +37,9 @@
  * @property {boolean} [permissiveSignerPolicy] - Whether the in-process VLS
  *   signer uses its permissive policy filter. Defaults to `false`; the released
  *   native runtime rejects permissive mode on mainnet.
- * @property {string} [vssUrl] - Deprecated. Any supplied value is rejected with
- *   VssUnsupportedError before native creation. VSS is unavailable in this release.
- * @property {boolean} [vssAllowHttp] - Deprecated; does not enable VSS.
- * @property {boolean} [vssAllowEmptyRestore] - Deprecated; does not enable restore.
+ * @property {string} [vssUrl] - Explicit VSS endpoint; HTTPS required by default.
+ * @property {boolean} [vssAllowHttp] - Explicitly permit HTTP for local testing.
+ * @property {boolean} [vssAllowEmptyRestore] - Permit initialization when no remote backup exists.
  * @property {string} [lspBaseUrl] - Base URL for RLN's internal APay client.
  *   Required by `apayNew()` and `bootstrapLsp()`; omit to disable APay.
  * @property {string} [lspBearerToken] - Bearer token sent to the LSP's
@@ -63,11 +62,12 @@
  *   with unlock.
  * @property {() => object} bootstrap - Return the signer's bootstrap payload
  *   (`node_id`, xpubs, and master fingerprint).
- * @property {(password: string) => never} clearVssFence - Always throws
- *   VssUnsupportedError locally. No fence deletion or remote request occurs.
- * @property {() => never} vssBackup - Always throws VssUnsupportedError locally.
- * @property {() => object} vssStatus - Local disabled policy; no remote health
- *   query, backup version or restore guarantee is reported.
+ * @property {(password: string, expectedScope?: {network: string, dataDir: string, vssUrl: string}) => {ok: true}} clearVssFence - Explicit takeover;
+ *   native requires a locked node. Never called automatically.
+ * @property {() => {version: number}} vssBackup - Upload current RGB state.
+ * @property {() => object} getVssBackupInfo - Read actual backup state without writes.
+ * @property {() => object} vssStatus - Local configuration and last successful RGB
+ *   upload in this session, without a remote health query or recovery guarantee.
  * @property {(hostNodeId: string) => object} apayNew - Register this node
  *   with an LSP as an async-payments (APay) recipient.
  *   Used for offline-receive over Lightning Address: the wallet uploads

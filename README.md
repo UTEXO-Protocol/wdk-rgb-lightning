@@ -174,7 +174,7 @@ and a regtest stack via Docker Compose — lives in
 | `permissiveSignerPolicy` | `false` | Strict policy by default; permissive mode is an explicit non-mainnet option. |
 | `autoUnlockRequest` | absent | Opt into address-triggered activation with a canonical or supported legacy unlock request. |
 | `nodeSeedDerivation` | `auto` | New nodes use WDK's normalized BIP-39 seed directly; existing beta nodes retry the legacy identity only on an exact persisted-identity mismatch. Use `wdk-seed-v2` or `legacy-v1` to disable auto-detection. |
-| `vssUrl` / `vssAllowHttp` / `vssAllowEmptyRestore` | — | VSS is unavailable. A supplied `vssUrl` is rejected; see [below](#vss-cloud-backup). |
+| `vssUrl` / `vssAllowHttp` / `vssAllowEmptyRestore` | — / `false` / `false` | Explicit VSS endpoint, local HTTP opt-in and empty-restore opt-in; see [below](#vss-cloud-backup). |
 | `lspBaseUrl` / `lspBearerToken` | — | LSP wiring for APay and the LSP client; see [below](#lsp-integration). |
 
 ## Account API
@@ -200,7 +200,7 @@ are async and forward to the active binding.
 | WDK-standard | `index`, `path`, `keyPair`, `sign(message)`, `verify(message, signature)`, `transfer(options)`, `quoteTransfer(options)`, `quoteSendTransaction(tx)`, `getTransactionReceipt(hash)`, `toReadOnlyAccount()` |
 | Bitcoin message proofs | `getMessageSigningAddress()`, `signMessageBip322(message, address)`, `verifyMessageBip322(message, address, signature)` |
 | Diagnostics | `sendOnionMessage(request)`, `checkIndexerUrl(url)`, `checkProxyEndpoint(endpoint)` |
-| VSS | Local disabled policy via `vssStatus()`; backup and fence takeover reject |
+| VSS | Local `vssStatus()`, automatic/manual RGB backup, restore and explicit locked-node fence takeover |
 | APay / LSP | `apayNew(hostNodeId)`, `bootstrapLsp({ peerPubkeyAndAddr, hostNodeId? })`, `getLspConfig()`, `createLsp(peer?)` |
 
 Notes:
@@ -325,8 +325,8 @@ RgbLightningError            code: RGB_LIGHTNING_ERROR
 ├── AccountLockedError       code: ACCOUNT_LOCKED
 ├── LightningDisabledError   code: LIGHTNING_DISABLED_ON_MAINNET
 ├── VssError                 code: VSS_ERROR
-│   ├── VssNotConfiguredError code: VSS_NOT_CONFIGURED (legacy)
-│   └── VssUnsupportedError   code: ERR_VSS_UNSAFE_UPSTREAM
+│   ├── VssNotConfiguredError code: VSS_NOT_CONFIGURED
+│   └── VssUnsupportedError   code: ERR_VSS_UNSAFE_UPSTREAM (legacy compatibility)
 ├── ApayError                code: APAY_ERROR (e.g. APAY_PEER_NOT_VISIBLE)
 └── NotImplementedError      code: NOT_IMPLEMENTED
 ```
@@ -526,31 +526,62 @@ cross-host callbacks require the explicit `allowCrossHostCallback: true` opt-in.
 
 ## VSS cloud backup
 
-VSS backup and recovery are unavailable in this candidate. Upstream external-signer
-credentials are derived from public bootstrap data, and interrupted replacement
-of a chunked RGB backup can invalidate the previous snapshot. This package does
-not repair those protocols or offer an unsafe override.
+Configure VSS explicitly when constructing the manager:
 
-Supplying `vssUrl` (including an empty, null or malformed value) throws
-`VssUnsupportedError` with code `ERR_VSS_UNSAFE_UPSTREAM` before signer or node
-creation. Omit the option to use the local wallet. `vssBackup()` and
-`clearVssFence()` always reject locally; they do not upload, delete a fence or
-retry. `vssAllowHttp` and `vssAllowEmptyRestore` cannot enable these operations.
-These restrictions also apply when an account receives a custom binding.
+```js
+const manager = new WalletManagerRgbLightning(mnemonic, {
+  network: 'signet',
+  dataDir,
+  vssUrl: 'https://vss-server.utexo.com/vss',
+  vssAllowHttp: false,
+  vssAllowEmptyRestore: true // New wallet only; keep false when requiring an existing backup.
+})
+const account = await manager.getAccount()
+await account.unlock(unlockRequest)
+const { version } = await account.vssBackup()
+const status = await account.vssStatus()
+```
 
-`getCapabilities().vss` reports all backup/recovery operations unsupported, with
-a stable code and reason. `vssStatus()` is local policy only: `configured: false`,
-`url: null`, `allowHttp: false`, `lastBackupVersion: null`, `supported: false`,
-`enabled: false`, `disabledReason: 'unsafe-upstream-vss'`. It never queries remote
-health or establishes restore readiness. Missing/older native safety policy is
-rejected during native runtime admission.
+No endpoint is inferred. Invalid URLs fail before native creation; HTTP requires
+an explicit `vssAllowHttp: true`. Native initialization restores existing remote
+state before opening the wallet. A missing backup is accepted only when
+`vssAllowEmptyRestore: true`; restore errors are not downgraded to local-only mode.
 
-Historical manual backup versions identified a particular RGB upload, not an
-atomic snapshot of LDK, signer or application state. Single-object and chunked
-uploads use different version counters, so their values are not a global,
-monotonically increasing checkpoint. Existing successful functional experiments
-do not establish backup confidentiality, interruption safety or device-loss
-recovery. The VLS signer database is separate and is not replicated by VSS.
+Native VSS persistence remains active while unlocked. Full accounts also schedule
+serialized RGB checkpoints after on-chain sends, issuance, receive-invoice and
+address creation, RGB refresh/import/burn and output creation. Shutdown joins
+admitted checkpoints. A checkpoint failure does not change a completed financial
+operation into a failed payment: the last successful version stays unchanged.
+Use `vssBackup()` to explicitly await and observe a backup result or error.
+
+`vssStatus()` returns exactly `configured`, `url`, `allowHttp`,
+`lastBackupVersion`, `supported`, `enabled`, and `disabledReason`. Support is
+`true`; enabled follows explicit configuration; the disabled reason is `null`.
+`vssBackup()` acknowledges an upload only after reading the canonical remote RGB
+manifest and verifying that backup exists and no further backup is required. Its
+returned version is that manifest's version, rather than the raw upload object's
+counter. A failed post-upload read is an indeterminate acknowledgement, not proof
+that the upload failed; do not blindly replay it. The status version is the last
+successful RGB manifest observed by this binding session,
+not remote health or a complete-wallet recovery guarantee. It resets on a new
+binding. `getVssBackupInfo()` reads actual native/remote state while unlocked and
+returns `backup_exists`, `version`, `backup_required`, and
+`last_auto_backup_failed`; it also updates the locally observed version. The
+failure flag includes failed WDK mutation checkpoints and clears after a
+successful upload. Merely reading status never uploads or clears a fence. Single-object and chunked uploads use different counters, so do not
+compare versions as a global monotonic sequence.
+
+`clearVssFence(password)` is an explicit recovery takeover and is allowed by
+native only while the node is locked. Never clear a fence automatically or while
+another writer might still be active. Read-only accounts can inspect local
+status but expose no backup, restore or takeover writes. Remote erasure is not
+implemented.
+
+VSS does not replicate the separate VLS signer database, mnemonic or Iris
+application state. Upstream external-signer credentials still derive from public
+bootstrap data; interrupted chunked replacement and stale writer fences retain
+the upstream recovery limitations. Enabling VSS does not change those protocol
+semantics or establish arbitrary crash/device-loss recovery.
 
 ## Async payments (APay)
 
@@ -583,8 +614,9 @@ the wallet's behalf. Against a production LSP this requires
   zeroizable buffers and are erased with `sodium_memzero` on successful
   fallback resolution and successful shutdown. Failed shutdown retains handles
   and required state for explicit retry; errors must not be ignored.
-- **VSS is unavailable** until upstream backup security and recovery defects
-  are fixed; local wallet operation does not constitute a remote backup.
+- **VSS recovery scope:** RGB upload versions are not whole-wallet atomic snapshots.
+  Signer/application state is separate; upstream credential and interrupted-upload
+  limitations remain. See [VSS cloud backup](#vss-cloud-backup).
 - **Plain `http://` is rejected by default** for LSP endpoints; opt
   in with `LspClient({ allowHttp: true })` only for loopback
   or development.
@@ -645,9 +677,10 @@ The pinned native graph retains the following financial and security limitations
   initial wallet create. The binding swallows it internally; if it bubbles
   up you're calling the lower-level binding directly instead of going
   through the WDK account.
-- **`VssUnsupportedError` / `ERR_VSS_UNSAFE_UPSTREAM`** — this candidate blocks
-  VSS. Remove the VSS URL to use local wallet operation. Do not clear a remote
-  fence or assume a previous snapshot is safe to restore.
+- **`VssNotConfiguredError` / `VSS_NOT_CONFIGURED`** — configure an explicit
+  `vssUrl` to use backup or recovery. The legacy `VssUnsupportedError` export remains
+  for compatibility. For local-only operation omit the VSS URL. A writer-fence
+  error requires an explicit recovery decision after stopping other writers.
 - **`ApayError` (`APAY_PEER_NOT_VISIBLE`)** — `apayNew` was attempted before
   the LSP peer reached `listPeers`. Use `bootstrapLsp` or retry once the
   peer is visible.

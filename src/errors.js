@@ -95,7 +95,7 @@ export class VssError extends RgbLightningError {
 export const VSS_UNSUPPORTED_CODE = 'ERR_VSS_UNSAFE_UPSTREAM'
 export const VSS_UNSUPPORTED_REASON = 'VSS is unavailable until upstream backup security and recovery defects are fixed.'
 
-/** Local safety rejection; never includes a caller's endpoint or credentials. */
+/** Legacy disabled-policy error retained for API compatibility; current VSS does not throw it. */
 export class VssUnsupportedError extends VssError {
   constructor () {
     super(VSS_UNSUPPORTED_REASON, { code: VSS_UNSUPPORTED_CODE })
@@ -104,12 +104,10 @@ export class VssUnsupportedError extends VssError {
 }
 
 /**
- * Historical compatibility class for earlier unconfigured VSS errors.
- * This release instead rejects VSS operations with VssUnsupportedError;
- * supplying a URL cannot enable backup or recovery.
+ * VSS backup/takeover was requested without a configured endpoint.
  */
 export class VssNotConfiguredError extends VssError {
-  constructor (message = 'VSS is not configured. This release does not support VSS backup or recovery.', opts = {}) {
+  constructor (message = 'VSS is not configured. Set vssUrl when constructing the wallet manager.', opts = {}) {
     super(message, { code: 'VSS_NOT_CONFIGURED', cause: opts.cause })
     this.name = 'VssNotConfiguredError'
   }

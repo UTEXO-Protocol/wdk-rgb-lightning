@@ -24,8 +24,8 @@
 //   file on disk — while the VLS store preserves channel commitment state
 //   across restarts.
 
-import { assertVssConfigurationSafe, disabledVssStatus } from './vss-policy.js'
-import { VssUnsupportedError } from './errors.js'
+import { assertVssConfigurationSafe, localVssStatus, validateVssBackup, validateVssBackupInfo, assertVssRecoveryScope } from './vss-policy.js'
+import { VssNotConfiguredError, AccountLockedError, VssError } from './errors.js'
 import rln from '@utexo/rgb-lightning-node-bare'
 import { retainSecret, revealSecret, secretMatches, wipeSecret } from './secret-buffer.js'
 import { signerStoragePath } from './signer-storage-path.js'
@@ -94,7 +94,13 @@ export class BareRgbLightningBinding {
     if (Array.isArray(config.virtualPeerPubkeys) && config.virtualPeerPubkeys.length > 0) {
       this._initRequest.virtual_peer_pubkeys = config.virtualPeerPubkeys
     }
-    // VSS is deliberately unavailable; never forward backup options.
+    if (config.vssUrl !== undefined) {
+      this._initRequest.vss_url = config.vssUrl
+      this._initRequest.vss_allow_http = config.vssAllowHttp ?? false
+      this._initRequest.vss_allow_empty_restore = config.vssAllowEmptyRestore ?? false
+    }
+    this._lastBackupVersion = null
+    this._vssCheckpointFailed = false
     // LSP / APay wiring — needed for RLN's internal async-payments client
     // to reach the LSP's /internal/async_order/* endpoints from inside
     // `account.apayNew()` / `account.bootstrapLsp()`. Omit both to leave
@@ -256,14 +262,49 @@ export class BareRgbLightningBinding {
     return this._signer.bootstrap()
   }
 
-  /** VSS takeover is unavailable; no native call or fence deletion occurs. */
-  clearVssFence (password) { throw new VssUnsupportedError() }
+  /** Explicit takeover only. Native rejects takeover while this node is unlocked. */
+  clearVssFence (password, expectedScope) {
+    if (typeof password !== 'string') throw new TypeError('clearVssFence requires a string password')
+    if (!this._config.vssUrl) throw new VssNotConfiguredError()
+    assertVssRecoveryScope(this._config, expectedScope, () => this.bootstrap())
+    this.ensureNode().vssClearFence({ password })
+    return { ok: true }
+  }
 
-  /** VSS backup is unavailable; no upload or local checkpoint is claimed. */
-  vssBackup () { throw new VssUnsupportedError() }
+  /** Upload the current RGB backup. No whole-wallet atomicity is implied. */
+  vssBackup () {
+    if (!this._config.vssUrl) throw new VssNotConfiguredError()
+    const node = this.ensureNode()
+    validateVssBackup(node.vssBackup())
+    // The upload's raw version may use a different object counter after crossing
+    // the chunk threshold. Acknowledgement uses the canonical remote manifest.
+    let info
+    try {
+      info = validateVssBackupInfo(node.vssBackupInfo())
+      if (!info.backup_exists || info.version === null || info.backup_required) throw new Error()
+    } catch (error) {
+      throw new VssError('The RGB upload finished but its remote manifest could not be confirmed.', { cause: error })
+    }
+    this._lastBackupVersion = info.version
+    this._vssCheckpointFailed = false
+    return { version: info.version }
+  }
 
-  /** Local disabled policy only; never contacts a server. */
-  vssStatus () { return disabledVssStatus() }
+  /** Observe actual native/remote RGB backup state. Requires an existing unlocked node. */
+  getVssBackupInfo () {
+    if (!this._config.vssUrl) throw new VssNotConfiguredError()
+    if (this._closed || !this._node) throw new AccountLockedError('Unlock the RGB Lightning account before reading backup information.')
+    const info = validateVssBackupInfo(this._node.vssBackupInfo())
+    this._lastBackupVersion = info.version
+    return {
+      ...info,
+      backup_required: info.backup_required || this._vssCheckpointFailed,
+      last_auto_backup_failed: info.last_auto_backup_failed || this._vssCheckpointFailed
+    }
+  }
+
+  /** Local status only; failed backups never advance the last successful version. */
+  vssStatus () { return localVssStatus(this._config, this._lastBackupVersion) }
 
   /**
    * Register this node with an LSP as an APay recipient so the LSP can accept

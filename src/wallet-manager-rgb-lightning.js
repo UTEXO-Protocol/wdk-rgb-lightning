@@ -241,7 +241,7 @@ export default class WalletManagerRgbLightning extends WalletManager {
   }
 
   dispose () {
-    if (addressOperationPending(this._binding) || Object.values(this._accounts).some(account => account._unlockInFlight || account._shutdownInFlight || account._addressInFlight)) {
+    if (addressOperationPending(this._binding) || Object.values(this._accounts).some(account => account._unlockInFlight || account._shutdownInFlight || account._addressInFlight || account._vssPending > 0 || account._mutationsInFlight?.size > 0)) {
       throw new Error('Await account activation and shutdown before synchronous manager disposal')
     }
     this._disposed = true

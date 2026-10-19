@@ -9,7 +9,7 @@ const compatible: Pick<RgbProvider, WebRgbMethod | 'enabled'> = provider
 const caps: RgbLightningCapabilities = wallet.getCapabilities()
 const code: 'LIGHTNING_DISABLED_ON_MAINNET' = new LightningDisabledError().code
 const vssCode: 'ERR_VSS_UNSAFE_UPSTREAM' = new VssUnsupportedError().code
-const vssSupported: false = caps.vss.supported
+const vssSupported: true = caps.vss.supported
 void [compatible, caps, code, vssCode, vssSupported, new WebRgbError('NOT_ENABLED', 'Disconnected')]
 // @ts-expect-error Burn is deliberately not exposed.
 provider.burnAsset({})

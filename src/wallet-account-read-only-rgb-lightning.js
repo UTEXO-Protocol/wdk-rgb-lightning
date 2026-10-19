@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 'use strict'
 
-import { vssCapabilities, disabledVssStatus } from './vss-policy.js'
+import { vssCapabilities, localVssStatus } from './vss-policy.js'
 import { exactUnsignedNumber, validateUnspents } from './released-native-contract.js'
 import { receiveAddress } from './receive-address.js'
 import { consignmentLookup, consignmentBytes } from './consignment-export.js'
@@ -12,7 +12,7 @@ import { bip322Capabilities, requireBip322, validateBip322Address, validateBip32
 
 import { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 
-import { AccountLockedError } from './errors.js'
+import { AccountLockedError, VssError, VssNotConfiguredError, wrapError } from './errors.js'
 import { assertLightningEnabled } from './lightning-policy.js'
 
 /** @typedef {import('@tetherto/wdk-wallet').Transaction} Transaction */
@@ -100,7 +100,8 @@ export function createReadOnlyRgbLightningAdapter (binding) {
     getNetwork: () => network,
     isDisposed: () => binding._closed === true,
     bootstrap: () => binding.bootstrap(),
-    vssStatus: () => disabledVssStatus(),
+    vssStatus: () => binding.vssStatus(),
+    getVssBackupInfo: () => binding.getVssBackupInfo(),
     nodeInfo: () => callNode('nodeInfo'),
     networkInfo: () => callNode('networkInfo'),
     address: () => receiveAddress(binding),
@@ -183,7 +184,7 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
       bfaAssetListing: true,
       bfaValidation: true,
       burn: false,
-      vss: vssCapabilities(),
+      vss: vssCapabilities(true),
       bip322: bip322Capabilities(this._reader, true)
     }
   }
@@ -204,8 +205,17 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
    */
   async getBootstrap () { return this._reader.bootstrap() }
 
-  /** Local disabled policy only; no remote health or restore guarantee. */
-  async vssStatus () { return disabledVssStatus() }
+  /** Local status only; no remote health or restore guarantee. */
+  async vssStatus () { return this._reader.vssStatus?.() ?? localVssStatus() }
+
+  /** Read actual backup state without invoking an upload, restore or takeover. */
+  async getVssBackupInfo () {
+    try { return await this._reader.getVssBackupInfo() } catch (error) {
+      if (error instanceof AccountLockedError || error instanceof VssNotConfiguredError) throw error
+      if (isLockedError(error)) throw new AccountLockedError('Unlock the RGB Lightning account before reading backup information.', { cause: error })
+      throw wrapError(error, VssError)
+    }
+  }
 
   /**
    * Returns identity and runtime information for the Lightning node.

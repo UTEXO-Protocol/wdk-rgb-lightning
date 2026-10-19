@@ -28,17 +28,19 @@ while pre-`1.0`.
   BIP-322/VSS-containment feature heads. Published beta.4 artifacts do not contain
   these unpublished extensions; exact source/artifact admission remains required.
 
-### Security
+### VSS
 
-- Disable VSS backup, recovery and fence takeover pending upstream fixes for
-  public-derived external-signer credentials and unsafe chunked snapshot
-  replacement. Supplied VSS URLs fail before native creation with
-  `VssUnsupportedError` / `ERR_VSS_UNSAFE_UPSTREAM`; no unsafe override, scheduler
-  or automatic fence deletion is introduced.
-- Require the exact compiled `vss-safety-policy-v1` capability and disabled-policy
-  metadata. Advertise unavailable backup/recovery capabilities and local disabled
-  status, without treating old checkpoint evidence or mixed upload counters as
-  proof of remote health or complete recovery.
+- Enable explicit HTTPS VSS configuration, initial restore, automatic/manual RGB
+  backup and user-requested locked-node fence takeover. Invalid configuration
+  fails before native creation and never silently falls back to local-only.
+- Require native `vss-backup-v1`, `vss-backup-info-v1` and exact supported-policy
+  metadata. Expose read-only `getVssBackupInfo()` with real backup/dirty/error state.
+  Report local configuration and observed RGB upload versions, without inferring remote
+  health, cross-format monotonicity or whole-wallet recovery.
+- Serialize manual/checkpoint work with shutdown. Read-only accounts retain query
+  access only; completed sends/burns keep their result if a remote checkpoint fails.
+  Upstream credential, chunk replacement and separate signer-state limitations
+  remain documented; no automatic fence deletion or remote erasure is added.
 
 ## [0.2.0-beta.4] — 2026-10-16
 

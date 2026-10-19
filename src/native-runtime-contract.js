@@ -8,9 +8,9 @@ export const REQUIRED_NATIVE_RUNTIME = Object.freeze({
   rln_version: '0.17.0-beta.3',
   rln_commit: 'ecc69f20308231400561f6f060fea88acfa40cc4',
   lightning_commit: '79b9eb5166546c62692d3a672986f385c7fe047d',
-  adapter_sha256: 'd8b5be9809b12acd48fa5958014b4655ff94598c99800a2fafb9e3e81809aebf'
+  adapter_sha256: '0daf704ef7fdbe807c3f6a9bf86900c7ed2637dbd1e7ebe9a8499c7677b51331'
 })
-const CAPABILITIES = ['canonical-unlock-v1', 'persistent-native-signer', 'refresh-transfers-v1', 'apay-address', 'decoded-invoice-cltv', 'tagged-rgb-assignment', 'pending-blinded-v1', 'rgb-contract-import-v1', 'rgb-transfer-metadata-import-v1', 'consignment-export-v1', 'mainnet-lightning-rejection-v1', 'external-signer-eth-rpc-v1', 'external-signer-burn-v1', 'native-signer-shutdown-v1', 'owned-session-cleanup-v1', 'vss-safety-policy-v1']
+const CAPABILITIES = ['canonical-unlock-v1', 'persistent-native-signer', 'refresh-transfers-v1', 'apay-address', 'decoded-invoice-cltv', 'tagged-rgb-assignment', 'pending-blinded-v1', 'rgb-contract-import-v1', 'rgb-transfer-metadata-import-v1', 'consignment-export-v1', 'mainnet-lightning-rejection-v1', 'external-signer-eth-rpc-v1', 'external-signer-burn-v1', 'native-signer-shutdown-v1', 'owned-session-cleanup-v1', 'vss-backup-v1', 'vss-backup-info-v1']
 
 export function assertNativeRuntime (native) {
   const info = native.getRuntimeInfo?.()

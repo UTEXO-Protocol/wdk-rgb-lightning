@@ -179,15 +179,15 @@ describe('lifecycle', () => {
     expect(shutdown).toHaveBeenCalledTimes(1)
   })
 
-  it('vssBackup rejects before invoking a custom binding', async () => {
+  it('vssBackup wraps custom binding failures as typed errors', async () => {
     const account = makeAccount({
       vssStatus: () => ({ configured: true }),
       vssBackup: () => { throw new Error('vss unavailable') }
     })
     const err = await account.vssBackup().catch((e) => e)
-    expect(err.name).toBe('VssUnsupportedError')
-    expect(err.code).toBe('ERR_VSS_UNSAFE_UPSTREAM')
-    expect(err.message).not.toBe('vss unavailable')
+    expect(err.name).toBe('VssError')
+    expect(err.code).toBe('VSS_ERROR')
+    expect(err.message).toBe('vss unavailable')
   })
 })
 

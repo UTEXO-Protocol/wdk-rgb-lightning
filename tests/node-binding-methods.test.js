@@ -488,12 +488,12 @@ describe('bootstrap', () => {
   })
 })
 
-describe('VSS safety containment', () => {
+describe('VSS configuration admission', () => {
   it('blocks both mutations before obtaining a native node', () => {
     const binding = makeBinding()
     const ensure = jest.spyOn(binding, 'ensureNode')
-    expect(() => binding.clearVssFence('private-password')).toThrow(expect.objectContaining({ code: 'ERR_VSS_UNSAFE_UPSTREAM' }))
-    expect(() => binding.vssBackup()).toThrow(expect.objectContaining({ code: 'ERR_VSS_UNSAFE_UPSTREAM' }))
+    expect(() => binding.clearVssFence('private-password')).toThrow(expect.objectContaining({ code: 'VSS_NOT_CONFIGURED' }))
+    expect(() => binding.vssBackup()).toThrow(expect.objectContaining({ code: 'VSS_NOT_CONFIGURED' }))
     expect(ensure).not.toHaveBeenCalled()
   })
 })

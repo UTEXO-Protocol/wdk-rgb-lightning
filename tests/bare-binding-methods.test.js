@@ -300,7 +300,7 @@ describe('BareRgbLightningBinding', () => {
     expect(fallbackSigner.destroy).toHaveBeenCalledTimes(failureMethod === 'shutdown' ? 1 : 3)
   })
 
-  it('forwards supported methods while blocking VSS before native dispatch', () => {
+  it('forwards supported methods while requiring explicit VSS configuration', () => {
     const binding = makeBinding()
     const node = fakeNode()
     binding._node = node
@@ -308,11 +308,11 @@ describe('BareRgbLightningBinding', () => {
     expect(binding.bootstrap()).toEqual({ node_id: '03beef' })
     expect(binding.apayNew('02host')).toEqual({ order_id: 'order-1' })
     expect(node.apayNew).toHaveBeenCalledWith('02host')
-    expect(() => binding.clearVssFence('private-password')).toThrow(expect.objectContaining({ code: 'ERR_VSS_UNSAFE_UPSTREAM' }))
-    expect(() => binding.vssBackup()).toThrow(expect.objectContaining({ code: 'ERR_VSS_UNSAFE_UPSTREAM' }))
+    expect(() => binding.clearVssFence('private-password')).toThrow(expect.objectContaining({ code: 'VSS_NOT_CONFIGURED' }))
+    expect(() => binding.vssBackup()).toThrow(expect.objectContaining({ code: 'VSS_NOT_CONFIGURED' }))
     expect(node.vssClearFence).not.toHaveBeenCalled()
     expect(node.vssBackup).not.toHaveBeenCalled()
-    expect(binding.vssStatus()).toMatchObject({ configured: false, supported: false, enabled: false, lastBackupVersion: null })
+    expect(binding.vssStatus()).toMatchObject({ configured: false, supported: true, enabled: false, lastBackupVersion: null })
   })
 
   it('retains live handles and permits shutdown retry after node failure', () => {
