@@ -601,7 +601,10 @@ The timestamp records acknowledged native upload completion, never the time a
 health read noticed an existing backup. The WDK validates the receipt's exact
 fields, chain, endpoint and wallet identity. A receipt is not current remote health
 or proof that later wallet changes are backed up. Read-only accounts can query this
-metadata but cannot change the automatic snapshot preference.
+metadata but cannot change the automatic snapshot preference. Completion timestamps
+are positive integers in the JavaScript Date range and remain valid if the device
+clock later moves backward or forward. A future-dated receipt should be displayed
+without a date; it must not disable policy controls or invalidate remote health.
 
 `vssStatus()` returns exactly `configured`, `url`, `allowHttp`,
 `lastBackupVersion`, `supported`, `enabled`, and `disabledReason`. Support is

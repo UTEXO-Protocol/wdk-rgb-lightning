@@ -1,20 +1,21 @@
 # VSS automatic backup qualification — 2026-10-19
 
-This source-pin follow-up preserves the runtime implementation qualified at WDK
-`b7ec58e50540ac6d7a1a48461027a47591812376`. It selects the complete native source
-commits, including generated platform runtime contracts and qualification records.
+Automatic snapshot policy was introduced at WDK
+`b7ec58e50540ac6d7a1a48461027a47591812376`. This follow-up admits the native
+clock-correction repair and complete qualified source commits, including generated
+platform runtime contracts and qualification records.
 
 | Native peer | Complete source commit |
 | --- | --- |
-| Bare | `62fde5d753f9454599633044d75304981b63ad29` |
-| Node | `816931ef3d1167559aac2aa77e4f645a9400d542` |
+| Bare | `78831157b86aea63ef50bbe69f6eeb8c4c0df6fd` |
+| Node | `a1fb8291d946685e2e668156ac520f0581302b96` |
 
-The shared adapter remains `dd26955a9a8fdb466a83043dd72f2ace3c0fdededf6bdd1e437e8ffd82840556`.
+The shared adapter is `6d46717b80ffba8ed8af2de023a536af242aadcacbbb799fb9bb89f8933e4ca5`.
 The Bare wrapper remains `5dca0ca23c28cb8e9171646db0f1ef9f1d76744a764653a960076426126fea6d`
 and its build recipe remains `9b8620de9ef63c9f4750a0b5766aac9ffaf9f005077f9a0a5d2a2824584e4bf5`.
 The Node wrapper is `6e071236fea1cbb19afaeb205f794d68b830a635a0658246d8970e7063712d27`.
 The qualified Node Darwin ARM64 Release addon is
-`f8cda669f1882d69e40c656a7ed2a40abe03407b1826b562f7cff2a2fd25efb1`.
+`f7a1aed05d20459e82c1750411b3bfc5c4e37dbbd61161da3ae417ef0fcae45d`.
 
 WDK checks cover default-on policy, saved-off startup, admitted-work draining,
 catch-up, manual backup while off, indeterminate policy outcomes, strict receipt
@@ -44,3 +45,19 @@ receipts at WDK `558fdaec64420619aca505aa0c152677df5e3970` and Node
 qualification, retain their original identities. The formatting follow-up has its
 own source-gate, package and packed-consumer evidence; prior receipts are not
 rewritten or treated as tests of the new compiled Node artifact.
+
+## Clock-correction follow-up
+
+A valid native completion receipt must remain readable when the device clock later
+moves backward or forward. Native validation now uses a positive JavaScript Date
+range bound and exact wallet/network/endpoint scope, independently of the present
+wall clock. Newly recorded timestamps use the same bound. The actual completion
+time is preserved; it is not replaced by the time of a metadata read.
+
+WDK's strict receipt decoder already used that clock-independent bound. New tests
+exercise Bare/Node binding and full/read-only account reads, saved On/Off policies,
+post-rollback send checkpoint behavior and timestamp endpoints. Future-dated
+receipts stay valid; presentation can omit their date without disabling controls or
+invalidating the separate remote observation. Existing source/archive receipts
+remain frozen at their original identities; the rebuilt native graph requires its
+own source, artifact and packed-consumer qualification.

@@ -73,16 +73,57 @@ describe.each([BareRgbLightningBinding, NodeRgbLightningBinding])('automatic VSS
     binding._node.vssBackupMetadata.mockReturnValue(metadata(true, { ...receipt, version: '8' }))
     expect(binding.getVssBackupMetadata()).toEqual(metadata(true, receipt))
   })
+
+  it.each([false, true])('preserves a confirmed receipt and saved policy %p when the device clock moves backward or forward', async enabled => {
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(receipt.completed_at_ms + 1000)
+    const binding = new Binding(config)
+    binding._signer = { bootstrap: () => ({ node_id: nodeId }), shutdown: jest.fn(), destroy: jest.fn() }
+    binding._node = {
+      vssBackupMetadata: jest.fn(() => metadata(enabled, receipt)),
+      sendBtc: jest.fn(() => ({ txid: 'once' })),
+      vssBackup: jest.fn(() => ({ version: receipt.version })),
+      vssBackupInfo: jest.fn(() => ({ backup_exists: true, version: receipt.version, backup_required: false, last_auto_backup_failed: false })),
+      shutdown: jest.fn()
+    }
+    const native = binding._node
+    const account = new WalletAccount({ binding })
+    const readOnly = await account.toReadOnlyAccount()
+    try {
+      for (const now of [receipt.completed_at_ms + 1000, receipt.completed_at_ms - 86400000, receipt.completed_at_ms + 86400000]) {
+        clock.mockReturnValue(now)
+        expect(binding.getVssBackupMetadata()).toEqual(metadata(enabled, receipt))
+        expect(await account.getVssBackupMetadata()).toEqual(metadata(enabled, receipt))
+        expect(await readOnly.getVssBackupMetadata()).toEqual(metadata(enabled, receipt))
+        expect(account._vssAutomaticBackupEnabled).toBe(enabled)
+      }
+      clock.mockReturnValue(receipt.completed_at_ms - 86400000)
+      await expect(account.sendBtc({ amount: 1 })).resolves.toEqual({ txid: 'once' })
+      await flush()
+      expect(native.vssBackup).toHaveBeenCalledTimes(enabled ? 1 : 0)
+    } finally {
+      clock.mockRestore()
+      await account.shutdown()
+    }
+  })
 })
 
 describe('strict VSS completion metadata', () => {
   const validate = value => validateVssBackupMetadata(value, config, { node_id: nodeId })
+  it.each([1, receipt.completed_at_ms, 8640000000000000])('accepts the valid timestamp %p independently of the current clock', completedAt => {
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(0)
+    try {
+      const value = metadata(true, { ...receipt, completed_at_ms: completedAt })
+      expect(validate(value)).toEqual(value)
+    } finally {
+      clock.mockRestore()
+    }
+  })
   it.each([null, {}, [], { ...metadata(), extra: 1 }, { ...metadata(), schema_version: 2 }, { ...metadata(), automatic_backup_enabled: 'true' }, { ...metadata(), last_backup: undefined }])('rejects malformed envelopes %p', value => {
     expect(() => validate(value)).toThrow('invalid backup')
   })
   it.each([
     { version: 0 }, { version: '08' }, { version: '9007199254740992' }, { version: 1.1 },
-    { completed_at_ms: null }, { completed_at_ms: -1 }, { completed_at_ms: 1.5 }, { completed_at_ms: Infinity },
+    { completed_at_ms: null }, { completed_at_ms: 0 }, { completed_at_ms: -1 }, { completed_at_ms: 1.5 }, { completed_at_ms: Infinity },
     { completed_at_ms: 8640000000000001 }, { network: 'regtest' }, { vss_url: 'https://different.invalid/vss' },
     { node_id: '03' + '22'.repeat(32) }, { extra: 'leak' }
   ])('rejects malformed or differently scoped completion receipts %p', patch => {
