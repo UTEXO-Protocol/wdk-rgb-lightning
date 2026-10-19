@@ -33,10 +33,14 @@ while pre-`1.0`.
 - Enable explicit HTTPS VSS configuration, initial restore, automatic/manual RGB
   backup and user-requested locked-node fence takeover. Invalid configuration
   fails before native creation and never silently falls back to local-only.
-- Require native `vss-backup-v1`, `vss-backup-info-v1` and exact supported-policy
+- Require native `vss-backup-v1`, `vss-backup-info-v1`, `vss-restore-v1` and exact supported-policy
   metadata. Expose read-only `getVssBackupInfo()` with real backup/dirty/error state.
   Report local configuration and observed RGB upload versions, without inferring remote
   health, cross-format monotonicity or whole-wallet recovery.
+- Add pre-unlock `prepareVssRestore()` and read-only `getVssRestoreInfo()`.
+  Actual downloaded state is validated against wallet identity and admitted through
+  authenticated local provenance after ordinary native consistency checks. A
+  missing cloud snapshot remains missing; later empty uploads are not restore proof.
 - Serialize manual/checkpoint work with shutdown. Read-only accounts retain query
   access only; completed sends/burns keep their result if a remote checkpoint fails.
   Upstream credential, chunk replacement and separate signer-state limitations

@@ -15,18 +15,35 @@ evidence listed here, not by a general CI success.
 ## Current VSS working candidate
 
 The maintained Bare/Node adapter for this change is
-`0daf704ef7fdbe807c3f6a9bf86900c7ed2637dbd1e7ebe9a8499c7677b51331`.
-WDK now requires `vss-backup-v1`, `vss-backup-info-v1` and enabled policy metadata;
+`693bed6010a651fa221e70758033ce41b9ce2d76789aeaf44c4c0b4c14dcfe3e`.
+WDK now requires `vss-backup-v1`, `vss-backup-info-v1`, `vss-restore-v1` and enabled policy metadata;
 older containment or published beta.4 binaries cannot satisfy this contract.
 Current source/native artifact identities must be recorded after rebuilding; the
 previous merged admission below does not qualify these new working changes.
+
+`native-peer-sources.json` admits the unmerged source candidates Bare
+`4bfcf252b38ec83cb13362c6bc035d178e3048fb` and Node
+`c608419d178c54e4436d73340fb5d44b3a11e42b`. Staged restoration downloads a real
+archive before native unlock, validates archive paths and wallet identity, and
+promotes it without overwriting existing data. A destination-bound local HMAC
+receipt permits interrupted preparation to resume. Post-unlock evidence requires
+the SDK consistency check to have completed. Remote existence after a fresh
+upload is not restoration evidence. This establishes recovered RGB state and
+known scripts; it does not establish a full seed/address scan, VLS signer-state
+recovery or application-journal recovery.
+
+The maintained extractor bounds and validates downloaded archives. The pinned
+public SDK download API can allocate from remote manifest sizes before returning
+those bytes, and its encryption option does not enforce encryption on inbound
+archives. No HTTP-body allocation bound or inbound ciphertext guarantee is
+claimed. These are recorded qualification limits, not a blanket VSS refusal.
 
 ## Earlier merged native admission (before VSS re-enablement)
 
 Bare [#26](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/pull/26)
 and Node [#25](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/pull/25)
-merged on 19 October 2026. `native-peer-sources.json` now follows `main` at these
-exact commits:
+merged on 19 October 2026. At that stage, the source manifest admitted `main` at
+these exact commits:
 
 | Peer | Merged-main commit |
 | --- | --- |

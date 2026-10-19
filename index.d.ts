@@ -236,6 +236,24 @@ export interface VssStatus {
   disabledReason: null
 }
 
+/** Native proof of a real, pre-unlock RGB cloud snapshot download. */
+export type VssRestoreReceipt = Readonly<{
+  restored: true
+  status: 'restored'
+  network: Network
+  node_id: string
+  master_fingerprint: string
+  version: number
+}> | Readonly<{
+  restored: false
+  status: 'not_found'
+  network: Network
+  node_id: string
+  master_fingerprint: string
+  version: null
+}>
+export type VssRestoreInfo = (Extract<VssRestoreReceipt, { restored: true }> & Readonly<{ unlocked: boolean }>) | null
+
 /** Exact reviewed account identity for recovery across an asynchronous host transport. */
 export interface VssRecoveryScope {
   nodeId: string
@@ -244,7 +262,7 @@ export interface VssRecoveryScope {
   vssUrl: string
 }
 
-/** Upstream RGB upload version. Does not include signer or application data. */
+/** Canonical remote RGB manifest version confirmed after upload. Excludes signer/application data. */
 export interface VssBackupResult {
   version: number
 }
@@ -466,6 +484,8 @@ export interface IRgbLightningBinding {
   vssBackup(): VssBackupResult
   vssStatus(): VssStatus
   getVssBackupInfo(): VssBackupInfo
+  prepareVssRestore(expectedScope?: VssRecoveryScope): VssRestoreReceipt
+  getVssRestoreInfo(): VssRestoreInfo
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   getMessageSigningCapabilities?(): { signing: boolean; verification: boolean }
@@ -487,6 +507,8 @@ export class NodeRgbLightningBinding implements IRgbLightningBinding {
   vssBackup(): VssBackupResult
   vssStatus(): VssStatus
   getVssBackupInfo(): VssBackupInfo
+  prepareVssRestore(expectedScope?: VssRecoveryScope): VssRestoreReceipt
+  getVssRestoreInfo(): VssRestoreInfo
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   getMessageSigningCapabilities(): { signing: boolean; verification: boolean }
@@ -512,6 +534,8 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
   vssBackup(): VssBackupResult
   vssStatus(): VssStatus
   getVssBackupInfo(): VssBackupInfo
+  prepareVssRestore(expectedScope?: VssRecoveryScope): VssRestoreReceipt
+  getVssRestoreInfo(): VssRestoreInfo
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   getMessageSigningCapabilities(): { signing: boolean; verification: boolean }
@@ -551,6 +575,7 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
   vssStatus(): Promise<VssStatus>
   /** Read backup state without upload, restore or takeover. Requires unlocked native wallet. */
   getVssBackupInfo(): Promise<VssBackupInfo>
+  getVssRestoreInfo(): Promise<VssRestoreInfo>
 
   /** Returns identity and runtime information for the Lightning node. */
   getNodeInfo(): Promise<object>
@@ -686,12 +711,15 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   // VSS
   /** Explicit takeover; requires the native node to be locked. Never called automatically. */
   clearVssFence(password: string, expectedScope?: VssRecoveryScope): Promise<{ ok: true }>
+  /** Actual cloud restore preparation; call before first address/unlock. */
+  prepareVssRestore(expectedScope?: VssRecoveryScope): Promise<VssRestoreReceipt>
   /** Upload current RGB state. Does not certify a whole-wallet atomic snapshot. */
   vssBackup(): Promise<VssBackupResult>
   /** Local-view status; does not hit the server. */
   vssStatus(): Promise<VssStatus>
   /** Read backup state without upload, restore or takeover. Requires unlocked native wallet. */
   getVssBackupInfo(): Promise<VssBackupInfo>
+  getVssRestoreInfo(): Promise<VssRestoreInfo>
 
   // APay / LSP bootstrap
   /** @throws {ApayError} on LSP failure. */

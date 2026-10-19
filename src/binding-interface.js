@@ -62,9 +62,11 @@
  *   with unlock.
  * @property {() => object} bootstrap - Return the signer's bootstrap payload
  *   (`node_id`, xpubs, and master fingerprint).
- * @property {(password: string, expectedScope?: {network: string, dataDir: string, vssUrl: string}) => {ok: true}} clearVssFence - Explicit takeover;
+ * @property {(password: string, expectedScope?: {network: string, dataDir: string, vssUrl: string, nodeId: string}) => {ok: true}} clearVssFence - Explicit takeover;
  *   native requires a locked node. Never called automatically.
  * @property {() => {version: number}} vssBackup - Upload current RGB state.
+ * @property {(expectedScope?: object) => object} prepareVssRestore - Download and validate an existing RGB snapshot before first unlock.
+ * @property {() => object|null} getVssRestoreInfo - Actual per-handle/durable restore receipt and native unlocked state.
  * @property {() => object} getVssBackupInfo - Read actual backup state without writes.
  * @property {() => object} vssStatus - Local configuration and last successful RGB
  *   upload in this session, without a remote health query or recovery guarantee.

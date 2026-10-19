@@ -24,7 +24,7 @@
 //   file on disk — while the VLS store preserves channel commitment state
 //   across restarts.
 
-import { assertVssConfigurationSafe, localVssStatus, validateVssBackup, validateVssBackupInfo, assertVssRecoveryScope } from './vss-policy.js'
+import { assertVssConfigurationSafe, localVssStatus, validateVssBackup, validateVssBackupInfo, assertVssRecoveryScope, validateVssRestoreReceipt } from './vss-policy.js'
 import { VssNotConfiguredError, AccountLockedError, VssError } from './errors.js'
 import rln from '@utexo/rgb-lightning-node-bare'
 import { retainSecret, revealSecret, secretMatches, wipeSecret } from './secret-buffer.js'
@@ -185,22 +185,7 @@ export class BareRgbLightningBinding {
    */
   unlock (unlockRequest) {
     unlockRequest = normalizeUnlockRequest(unlockRequest)
-    let node = this.ensureNode()
-    if (!this._signer) {
-      throw new Error('attachExternalSigner(seedHex) must be called before unlock()')
-    }
-    if (!this._sdkInitDone) {
-      try {
-        node.initWithNativeExternalSigner(this._signer)
-      } catch (e) {
-        const msg = String(e && e.message ? e.message : e)
-        // Rln(Conflict) on init is the "already-initialised on disk"
-        // signal — expected on every relaunch after the first wallet
-        // create. Anything else is a real failure.
-        if (!msg.startsWith('Rln(Conflict):')) throw e
-      }
-      this._sdkInitDone = true
-    }
+    let node = this._initializeExternalNode()
     try {
       node.unlockWithNativeExternalSigner(this._signer, unlockRequest)
       wipeSecret(this._fallbackSeedHex)
@@ -260,6 +245,41 @@ export class BareRgbLightningBinding {
       throw new Error('attachExternalSigner(seedHex) must be called before bootstrap()')
     }
     return this._signer.bootstrap()
+  }
+
+  /** @private Initialize key-source identity without unlocking or creating an RGB wallet. */
+  _initializeExternalNode () {
+    const node = this.ensureNode()
+    if (!this._signer) {
+      throw new Error('attachExternalSigner(seedHex) must be called before unlock()')
+    }
+    if (!this._sdkInitDone) {
+      try {
+        node.initWithNativeExternalSigner(this._signer)
+      } catch (e) {
+        const msg = String(e && e.message ? e.message : e)
+        // Rln(Conflict) on init is the "already-initialised on disk"
+        // signal — expected on every relaunch after the first wallet
+        // create. Anything else is a real failure.
+        if (!msg.startsWith('Rln(Conflict):')) throw e
+      }
+      this._sdkInitDone = true
+    }
+    return node
+  }
+
+  /** Download and promote an existing VSS snapshot before native wallet creation. */
+  prepareVssRestore (expectedScope) {
+    if (!this._config.vssUrl) throw new VssNotConfiguredError()
+    assertVssRecoveryScope(this._config, expectedScope, () => this.bootstrap())
+    const node = this._initializeExternalNode()
+    return validateVssRestoreReceipt(node.prepareVssRestore(), this._config, this.bootstrap())
+  }
+
+  /** Read actual per-handle restore provenance; never infers it from cloud existence. */
+  getVssRestoreInfo () {
+    if (this._closed || !this._node) return null
+    return validateVssRestoreReceipt(this._node.vssRestoreInfo(), this._config, this.bootstrap(), true)
   }
 
   /** Explicit takeover only. Native rejects takeover while this node is unlocked. */

@@ -542,10 +542,22 @@ const { version } = await account.vssBackup()
 const status = await account.vssStatus()
 ```
 
+For an intentional seed/cloud restore, call `account.prepareVssRestore()` **before**
+requesting an address or unlocking. A `{ restored: true, ... }` receipt means the
+native binding downloaded and validated an existing RGB snapshot before local
+wallet creation. `{ restored: false, status: 'not_found', ... }` means no snapshot
+was available; do not label a newly created empty wallet as restored. Continue
+through normal unlock and inspect `getVssRestoreInfo()` for the identity-bound
+receipt with `unlocked: true`. The maintained native preparation validates bounded
+archive paths and wallet identity, and retains authenticated local provenance for
+an interrupted recovery. This recovers cloud state; it does not perform a full
+seed/address gap scan or recover separate signer/application data.
+
 No endpoint is inferred. Invalid URLs fail before native creation; HTTP requires
-an explicit `vssAllowHttp: true`. Native initialization restores existing remote
-state before opening the wallet. A missing backup is accepted only when
-`vssAllowEmptyRestore: true`; restore errors are not downgraded to local-only mode.
+an explicit `vssAllowHttp: true`. Normal native initialization attempts existing
+remote state before opening the wallet. Its empty-store behavior is not restore
+evidence: use preparation above to require an existing snapshot. Other restore
+errors are not downgraded to local-only mode.
 
 Native VSS persistence remains active while unlocked. Full accounts also schedule
 serialized RGB checkpoints after on-chain sends, issuance, receive-invoice and
@@ -567,9 +579,12 @@ not remote health or a complete-wallet recovery guarantee. It resets on a new
 binding. `getVssBackupInfo()` reads actual native/remote state while unlocked and
 returns `backup_exists`, `version`, `backup_required`, and
 `last_auto_backup_failed`; it also updates the locally observed version. The
-failure flag includes failed WDK mutation checkpoints and clears after a
-successful upload. Merely reading status never uploads or clears a fence. Single-object and chunked uploads use different counters, so do not
-compare versions as a global monotonic sequence.
+failure flag includes failed WDK mutation checkpoints. A successful checkpoint
+clears the wrapper's flag; a historical native automatic-upload failure can remain
+recorded until a later native automatic upload succeeds. That historical flag
+does not invalidate a successful manual receipt. Merely reading status never
+uploads or clears a fence. Raw single-object and chunked upload counters differ;
+WDK receipts use the canonical manifest version instead.
 
 `clearVssFence(password)` is an explicit recovery takeover and is allowed by
 native only while the node is locked. Never clear a fence automatically or while

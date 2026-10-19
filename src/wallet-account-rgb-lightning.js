@@ -191,6 +191,12 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     return this._vssOperation(() => this._binding.clearVssFence(password, expectedScope))
   }
 
+  /** Prepare an actual cloud restore before the first address/unlock request. */
+  async prepareVssRestore (expectedScope) {
+    if (this._unlockInFlight) throw new AccountLockedError('Prepare VSS restore before unlocking the RGB Lightning account.')
+    return this._vssOperation(() => this._binding.prepareVssRestore(expectedScope))
+  }
+
   /** Return the successful upstream RGB upload version; errors are never hidden. */
   async vssBackup () { return this._vssOperation(() => this._binding.vssBackup()) }
 

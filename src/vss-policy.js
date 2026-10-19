@@ -79,3 +79,22 @@ export function assertVssRecoveryScope (config, expected, bootstrap) {
     throw error
   }
 }
+
+/** A receipt exists only after the native public restore operation downloaded state. */
+export function validateVssRestoreReceipt (value, config, bootstrap, info = false) {
+  if (info && value === null) return null
+  const fields = ['restored', 'status', 'network', 'node_id', 'master_fingerprint', 'version', ...(info ? ['unlocked'] : [])]
+  const restored = value?.restored === true
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      Object.keys(value).length !== fields.length || fields.some(key => !Object.hasOwn(value, key)) ||
+      typeof value.restored !== 'boolean' || value.status !== (restored ? 'restored' : 'not_found') ||
+      value.network !== config.network || value.node_id !== bootstrap.node_id ||
+      value.master_fingerprint !== bootstrap.master_fingerprint ||
+      typeof value.master_fingerprint !== 'string' || !/^[a-f0-9]{8}$/i.test(value.master_fingerprint) ||
+      typeof value.node_id !== 'string' || !/^(02|03)[a-f0-9]{64}$/i.test(value.node_id) ||
+      (restored ? !Number.isSafeInteger(value.version) || value.version <= 0 : value.version !== null) ||
+      (info && (!restored || typeof value.unlocked !== 'boolean'))) {
+    throw new Error('VSS returned invalid restore provenance')
+  }
+  return value
+}
