@@ -12,8 +12,8 @@ until the pending acceptance checks below have real evidence.
 | Focused RLN | `cd3be114a6d0e41af8ce3f29719d210e105234dc` |
 | UTEXO-Protocol/rgb-lib-bfa | `962730a211f0f7569d7ad8ae777052f433d87655` |
 | LDK | `510189d5700a6d1406229ce7523e181c3838715e` |
-| Bare candidate | `388e6ca05402ca95834de439e196afc08adf4f0a` |
-| Node candidate | `0000868bc7376e1738ba298d1352136c5f960790` |
+| Bare candidate | `68da393868b64bde50973a81be1f7a962f91e9d5` |
+| Node candidate | `b17a0dc63c40dfa6152144d6eb51c2dff5bf02f0` |
 
 The shared C-FFI lock SHA-256 is
 `460728009d9c1db3abf9a2f2ad4d76f777589b55eff96ff7be1f3c4d301dab30`.
@@ -95,9 +95,19 @@ worker teardown, official and independent BIP-322 proofs, and encrypted local
 VSS backup/policy/receipt/restore tests. The local VSS fixture uses format-only
 authentication; this is not hosted cloud authorization qualification.
 
+Funded isolated-regtest WDK source consumers on those Debug natives pass
+Node-to-Bare 50,000 sats, Bare-to-Node 20,000 sats, confirmed backup checkpoints,
+reopen, and explicit crash-writer recovery after verifying the old process group
+is gone. A fresh-directory Node restore preserves settled balances, history and
+canonical signing identity; its subsequent 10,000-sat payment to Bare confirms.
+This restores the RGB wallet alongside an independently provisioned signer store
+from the same disposable fixture seed. It does not prove full signer-store or
+Lightning recovery. The checksum-bound host receipt is retained as
+`DARWIN-DEBUG-HOST-QUALIFICATION.json` in the isolated qualification workspace.
+
 Still required: new target artifacts and actual packed consumers; funded
 blind/witness receive and send; local bridge mint, burn, proof and exactly-one
-payout; persistence and failure recovery; funded recovery qualification;
+payout; BFA persistence and failure recovery;
 and a user-coordinated iOS 27 rebuild and runtime test. No hosted dev bridge
 has been operated and no migration package has been published.
 
@@ -108,6 +118,19 @@ private proxy operation keys, so local AEAD/CAS/restore passes do not establish
 credential secrecy or production cloud confidentiality. Private signer-derived
 VSS material requires separate external-signer API support; this migration
 preserves existing functional behavior without claiming that prerequisite.
-Generic new-library gaps in custom channel funding locktime, deferred sweep
-consumption and IFA linking are guarded explicitly; no global Lightning
-disablement or mnemonic fallback was added. Iris remains on-chain only.
+The new library lacks explicit final-zero-locktime channel funding construction,
+deferred channel-sweep consumption and old IFA linking. This candidate cannot
+open ordinary locally funded BTC or RGB Lightning channels: colored open
+preflight/funding requests `Some(0)`, and vanilla funding calls a dedicated
+guarded builder. Colored virtual funding is also blocked. These are real
+funding failures, not just unsupported user-selected locktimes. Incoming
+peer-funded channels, existing-channel behavior and uncolored synthetic virtual
+channels are separate, unqualified paths. No global Lightning disablement or
+mnemonic fallback was added. Iris remains on-chain only.
+
+Restoring funding requires a library-owned API that constructs final-zero-locktime
+transactions before persisting txid-bound reservations/consignments, with matching
+dry-run, end and abort semantics. Dropping the guard or rewriting the returned
+PSBT can invalidate that persisted identity. Ordinary on-chain BTC and complete
+RGB invoice sends use separate supported builders; their acceptance is recorded
+independently.

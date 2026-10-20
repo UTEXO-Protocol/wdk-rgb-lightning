@@ -368,7 +368,9 @@ wallet-connected LSP methods and standalone account-taking LSP helpers use the
 same policy before HTTP side effects. Read-only accounts follow it too.
 
 Signet, testnet and regtest retain their Lightning APIs; availability is not a
-claim that their recorded release gates are resolved. BTC/RGB on-chain methods,
+claim that their recorded release gates are resolved. This unpublished migration
+candidate cannot open ordinary locally funded BTC/RGB channels; see the exact
+[migration limits](./MIGRATION-QUALIFICATION.md). BTC/RGB on-chain methods,
 identity queries, message signing/verification and standalone LSP discovery
 remain available. `getTransactionReceipt` does not query Lightning history on
 mainnet, so an unknown on-chain hash returns `null`.

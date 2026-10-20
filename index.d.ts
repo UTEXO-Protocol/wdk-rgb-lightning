@@ -463,8 +463,10 @@ export interface RgbLightningBindingConfig {
   /** Defaults to false. This rgb-lib-bfa candidate rejects true. getAddress caches the current session address; getNewAddress allocates and persists a fresh script. */
   reuseAddresses?: boolean
   /**
-   * Explicitly opt into virtual channels. Default is false; standard channels
-   * remain supported. Configure trusted peer identities separately.
+   * Explicitly opt into virtual channels. Default is false. This migration
+   * candidate cannot construct locally funded standard or colored virtual
+   * channels; other channel paths remain unqualified. See MIGRATION-QUALIFICATION.md.
+   * Configure trusted peer identities separately.
    */
   enableVirtualChannelsV0?: boolean
   /**
