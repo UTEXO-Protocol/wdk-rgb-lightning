@@ -5,7 +5,7 @@ Automatic snapshot policy was introduced at WDK
 clock-correction repair and complete qualified source commits, including generated
 platform runtime contracts and qualification records.
 
-| Native peer | Complete source commit |
+| Native peer | Qualified feature source commit (before merge) |
 | --- | --- |
 | Bare | `78831157b86aea63ef50bbe69f6eeb8c4c0df6fd` |
 | Node | `a1fb8291d946685e2e668156ac520f0581302b96` |
@@ -28,6 +28,29 @@ Exact final package identities and the packed Node consumer result are retained
 separately in `release-evidence/2026-10-19/vss-automatic-backup` in the shared
 workspace. Earlier receipts retain their original source and archive identities.
 Nothing in this pin refresh authorizes a merge or publication.
+
+## Merged-main source admission — 20 October 2026
+
+Bare #27 and Node #26 are merged. WDK now admits `main` with immutable commit
+checks for Bare `c5425a3185677bcddfd5a46e278783eed431e2ab` and Node
+`5ffe8f22b9b242a5be4b21765395b206136f5a06`.
+
+Their complete trees equal the qualified feature heads in the table above:
+Bare `81c78fd45c7d7530457b9442caedf86f49322c29` and Node
+`6833c954772fa596da8b37563546b5c2cd1e8ec9`. The native source graph, compiled
+input identities and payload bytes are unchanged; no native rebuild is claimed.
+Fresh isolated merged-main checkouts are used for WDK's source-admission check.
+It passes with **33 suites / 1,267 tests**, lint, types, WebRGB compatibility,
+three fault-harness ownership cases and a zero-vulnerability production npm
+audit. Local Jest uses `--watchman=false` because the host Watchman socket is
+unavailable; test selection and assertions are unchanged. Release package checks
+use the existing required npm 12.0.1 toolchain.
+The pin refresh and package verification do not repeat or expand the earlier
+funded, restore, mobile or platform runtime scopes.
+
+Existing npm beta.4 peers are older immutable builds and still fail current
+registry admission. Native versioning/publication and final WDK release gates
+remain separate work; no merge or publication is part of this update.
 
 ## Node formatting follow-up
 

@@ -23,10 +23,13 @@ while pre-`1.0`.
 ### Changed
 
 - Follow the maintained native peers' merged `main` sources: Bare
-  `338d94e2ce5a1c2865296edf32f6c061ce0be175` and Node
-  `3ccfdc72c8620a35871bddffd1f44d1dd0a9954e`. Their trees match the qualified
-  BIP-322/VSS-containment feature heads. Published beta.4 artifacts do not contain
-  these unpublished extensions; exact source/artifact admission remains required.
+  `c5425a3185677bcddfd5a46e278783eed431e2ab` (Bare #27) and Node
+  `5ffe8f22b9b242a5be4b21765395b206136f5a06` (Node #26). Their complete trees
+  match the qualified BIP-322 and enabled-VSS feature heads, including automatic
+  backup policy and clock-independent upload receipts. The source-pin update
+  changes no runtime code or native payload bytes. Published beta.4 artifacts do
+  not contain these extensions; a new native release and exact source/artifact
+  admission remain required before WDK publication.
 
 ### VSS
 

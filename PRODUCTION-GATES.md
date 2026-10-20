@@ -12,18 +12,44 @@ Current working branch: `feat/bip322-message-signing`. This register separates e
 verification from decisions about release scope. An item is closed only by the
 evidence listed here, not by a general CI success.
 
-## Current VSS working candidate
+## Current merged VSS candidate — 20 October 2026
 
 The maintained Bare/Node adapter for this change is
-`693bed6010a651fa221e70758033ce41b9ce2d76789aeaf44c4c0b4c14dcfe3e`.
-WDK now requires `vss-backup-v1`, `vss-backup-info-v1`, `vss-restore-v1` and enabled policy metadata;
-older containment or published beta.4 binaries cannot satisfy this contract.
-Current source/native artifact identities must be recorded after rebuilding; the
-previous merged admission below does not qualify these new working changes.
+`6d46717b80ffba8ed8af2de023a536af242aadcacbbb799fb9bb89f8933e4ca5`.
+WDK requires the enabled VSS backup/restore, automatic-policy and upload-receipt
+capabilities in `src/native-runtime-contract.js`; older containment or published
+beta.4 binaries cannot satisfy this contract.
 
-`native-peer-sources.json` admits the unmerged source candidates Bare
-`4bfcf252b38ec83cb13362c6bc035d178e3048fb` and Node
-`c608419d178c54e4436d73340fb5d44b3a11e42b`. Staged restoration downloads a real
+Bare [#27](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/pull/27) and
+Node [#26](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/pull/26)
+are merged. `native-peer-sources.json` admits `main` at these exact commits:
+
+| Peer | Merged-main commit | Previously qualified feature head | Complete Git tree |
+| --- | --- | --- | --- |
+| Bare | `c5425a3185677bcddfd5a46e278783eed431e2ab` | `78831157b86aea63ef50bbe69f6eeb8c4c0df6fd` | `81c78fd45c7d7530457b9442caedf86f49322c29` |
+| Node | `5ffe8f22b9b242a5be4b21765395b206136f5a06` | `a1fb8291d946685e2e668156ac520f0581302b96` | `6833c954772fa596da8b37563546b5c2cd1e8ec9` |
+
+Each merged tree exactly matches its qualified feature head. RLN, rgb-lib, LDK,
+adapter, wrapper, lock and build-recipe inputs are unchanged. No native rebuild
+is required for this source-admission update. Existing compiled binaries and
+host/mobile receipts retain their original source, artifact and test scopes;
+they are not relabeled as new merge-commit builds or new financial acceptance.
+
+The source manifest still uses the existing `0.2.0-beta.4` candidate versions.
+Published immutable beta.4 peers contain the older graph, so registry admission
+must continue to reject them. New native versions/publication and final registry
+qualification are separate prerequisites for a WDK release. This pin refresh
+does not authorize a merge, tag or publication.
+
+This source-only refresh passes the verifier against fresh isolated merged-main
+checkouts, all **33 Jest suites / 1,267 tests**, lint, declarations, optional
+WebRGB compatibility and all three fault-harness ownership tests. The production
+npm dependency audit reports zero vulnerabilities. Exact final package and CI
+identities are recorded on [PR #48](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/pull/48).
+Financial, backup-service and mobile runtime scopes are not repeated by this
+source/documentation update.
+
+Staged restoration downloads a real
 archive before native unlock, validates archive paths and wallet identity, and
 promotes it without overwriting existing data. A destination-bound local HMAC
 receipt permits interrupted preparation to resume. Post-unlock evidence requires

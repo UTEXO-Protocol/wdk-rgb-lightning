@@ -4,7 +4,23 @@ Releases are built from a reviewed commit on `main`, staged through npm trusted
 publishing, approved by a maintainer with 2FA, and finalized as an immutable
 GitHub release.
 
-## 0.2.0-beta.4 source and publication gates
+## Current unpublished BIP-322/VSS candidate — 20 October 2026
+
+Bare #27 and Node #26 are merged. The source manifest admits their exact `main`
+commits: Bare `c5425a3185677bcddfd5a46e278783eed431e2ab` and Node
+`5ffe8f22b9b242a5be4b21765395b206136f5a06`. Their complete source trees equal
+the qualified feature heads; native inputs and previously admitted binary bytes
+are unchanged. Existing compilation and runtime receipts keep their original
+identities.
+
+The candidate package versions remain `0.2.0-beta.4` for source integration.
+Published beta.4 peers predate these capabilities and must not be republished or
+accepted as this candidate. Before a new WDK release, review new native versions,
+publish/admit their complete graph, update the exact WDK peer versions and source
+pins, then run registry and packed-consumer qualification. A merged-main source
+check is separate from registry release admission; no gate is bypassed here.
+
+## Historical 0.2.0-beta.4 source and publication gates
 
 Bare lifecycle #22, distributions #24/#25 and Node #24 are merged.
 The final Bare wrapper/Android package source is
