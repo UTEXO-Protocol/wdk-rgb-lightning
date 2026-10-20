@@ -12,13 +12,13 @@ until the pending acceptance checks below have real evidence.
 | Focused RLN | `c29d1b2dfe43ba95c25ced8984f09e42c789d6af` |
 | UTEXO-Protocol/rgb-lib-bfa | `962730a211f0f7569d7ad8ae777052f433d87655` |
 | LDK | `510189d5700a6d1406229ce7523e181c3838715e` |
-| Bare candidate | `72d07995abf5b916ece7fe05374d506e4a320cec` |
-| Node candidate | `82c628300329fdd48ca4f84af0215b032b946cf1` |
+| Bare candidate | `71ebe14ca702e9c269f4643a362eb3e3303db47c` |
+| Node candidate | `f73d9c23c7b71b4f4e8e74d6f0610c4992c664ee` |
 
 The shared C-FFI lock SHA-256 is
 `460728009d9c1db3abf9a2f2ad4d76f777589b55eff96ff7be1f3c4d301dab30`.
 The maintained adapter SHA-256 is
-`cf92a4618b765e7889001c9e630e6e64861ef9bdd295d57551461d3bc3281d4c`.
+`26834a8aca4676380abb41c432f7ebbc33153a58b669213cf1f32472d38db275`.
 `native-peer-sources.json` and `src/native-runtime-contract.js` enforce these
 identities. RLN's base version string remains `0.17.0-beta.3`; the exact
 commit identifies this focused migration. It is not an official new RLN tag.
@@ -49,6 +49,10 @@ The V1 bridge destination helpers bind the destination chain, endpoint ID and
 recipient to the burn commitment. They do not qualify a route or perform an
 EVM payout. Applications must persist consent and burn intent before native
 burning, retain returned proofs, and avoid reburning an ambiguous operation.
+Iris can replay a durably completed burn result; a cold pending burn still blocks
+new burns because no authoritative intent-to-native-operation correlation is
+persisted before the native call. The isolated one-shot qualification journal
+does not establish production cold-pending recovery.
 
 Build the native peers from the exact commits above with their normal source
 and artifact gates. Assemble all seven Bare targets and all three payload
@@ -70,16 +74,15 @@ spendable balance or hosted-bridge acceptance.
 
 ## Qualification status
 
-The latest focused repair maps wrong-ID/network contract validation failures to
-the existing invalid-contract category and resolves the UniFFI input path at
+The focused `c29d1b2d` repair maps wrong-ID/network contract validation failures
+to the existing invalid-contract category and resolves the UniFFI input path at
 build-script runtime. Focused/maintained/focused shared-cache switches each pass
 the four targeted tests and generate the correct checkout's scaffolding without
-touching inputs or cleaning the cache. The recorded Darwin Debug/BTC evidence
-below used the prior `cd3be114` focused implementation. Those original binaries
-and receipts are retained; rebuilt `c29d1b2d` native acceptance is pending until
-its separately recorded rerun completes.
+touching inputs or cleaning the cache. Earlier `cd3be114` Debug/BTC evidence and
+later `c29d1b2d` / `cf92a461` Debug financial evidence are retained separately.
+Neither qualifies the current `26834a8a` adapter or its newly pinned peers.
 
-WDK now passes 38 suites / 1,373 tests, types, lint, the optional WebRGB
+WDK now passes 39 suites / 1,429 tests, types, lint, the optional WebRGB
 contract, exact native-source checks and package allowlist verification. Its
 packed Bare canary requires all three candidate payload archives alongside the
 wrapper and retains exact install-script grants and runtime admission. The old
@@ -114,16 +117,52 @@ from the same disposable fixture seed. It does not prove full signer-store or
 Lightning recovery. The checksum-bound host receipt is retained as
 `DARWIN-DEBUG-HOST-QUALIFICATION.json` in the isolated qualification workspace.
 
-Still required: new target artifacts and actual packed consumers; funded
-blind/witness receive and send; local bridge mint, burn, proof and exactly-one
-payout; BFA persistence and failure recovery;
-and a user-coordinated iOS 27 rebuild and runtime test. No hosted dev bridge
-has been operated and no migration package has been published.
+Actual isolated `c29d1b2d` / `cf92a461` Darwin Debug source consumers then pass
+public-CON import and negative identity/network/corruption controls, a genuine
+100-BUSDT local bridge mint, and four ordinary non-donation proxy-1.0 transfers:
+2 BUSDT and 1 BUSDT to witness invoices, and 0.5 BUSDT and 0.25 BUSDT to blind
+invoices. Each ordinary send has independently verified public ACK signatures
+bound to its native exported consignment and mined Bitcoin transaction. The
+initial bridge mint does not use that ordinary-send ACK flow. Fresh-directory
+Node and Bare restores preserve exact synchronized balances, outputs,
+allocations, history and signing identity. A blinded invoice created before its
+Node snapshot remains usable after restore; both restored wallets subsequently
+spend BTC and BFA and reopen. The partial-run receipt is
+`qualification-consumers/funded-Vr0bvY/qualification.json`, SHA-256
+`5c5cda9e54d87c139d2470c3eccc822e7b323fcaf7d02c94c17960e6856fd186`.
+This run stopped before burning: stable funded polling advanced VSS 78 to 80
+while all public financial state remained equal at the same Bitcoin tip.
+
+A separate funded stepwise reproduction proves duplicate automatic-backup
+ownership: unchanged direct native refresh adds one upload, WDK refresh adds
+two, and full BTC/history/output sync adds none. All fourteen public frames keep
+the same acknowledged full-content digest and allowed BDK metadata; no digest
+coverage was relaxed. Its receipt is
+`qualification-consumers/funded-ZzQEJp/qualification.json`, SHA-256
+`3551f180585cdc11dc7e4ebd4f9cc1e606199118d51fb70aa1bc75bcbabc5011`.
+The maintained adapter now uses its complete acknowledged-content check for
+refresh while retaining fresh, pending, failed and private-state changes. WDK's
+serialized automatic fallback skips an extra upload only with validated clean
+native status and a current identity/network/endpoint-bound completion receipt.
+Missing or uncertain evidence retains fallback; manual Backup Now is explicit.
+The repair passes 113 compiled Rust lib tests with `uniffi,vls,vss,test-utils`
+and all 1,429 WDK tests. Its native source receipt SHA-256 is
+`7e42bee7f1b95fb7ba8b92e8aad23b109c96b76fff70e041647cc1c2ff0b8824`.
+New binaries and actual post-fix financial/stable-poll acceptance remain pending.
+
+Still required: new target artifacts and actual packed consumers; repeat the
+funded BTC/BFA, restore and stable-poll scopes on the exact current peers; local
+native V1 burn, saved proof, independent bridge redemption, exactly-one EVM
+payout and replay rejection; and a user-coordinated iOS 27 rebuild and runtime
+test. Neither the partial financial run nor its standalone journals qualify
+Iris cold-pending burn recovery, hosted cloud VSS secrecy, mobile Release or
+public-network operation. No hosted dev bridge has been operated and no
+migration package has been published.
 
 RLN's upstream submodule ancestry check also waits for companion LDK #59:
 the exact migration commit is intentionally not yet reachable from LDK `dev`.
-This is separate from the private-source CI permission failure. Neither check
-is weakened, and no dependency PR has been merged during qualification.
+This requirement is separate from wrapper target builds and artifact admission.
+No check is weakened, and no dependency PR has been merged during qualification.
 
 The existing external-signer VSS security limitation remains: its authentication
 and encryption material is derived from public wallet bootstrap data. A party
