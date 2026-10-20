@@ -80,6 +80,7 @@ const requiredRootFiles = [
   'README.md',
   'bare.js',
   'index-bare.js',
+  'webrgb-bare.js',
   'index-node.js',
   'index.d.ts',
   'index.js',

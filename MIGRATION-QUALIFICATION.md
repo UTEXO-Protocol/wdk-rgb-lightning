@@ -187,3 +187,12 @@ dry-run, end and abort semantics. Dropping the guard or rewriting the returned
 PSBT can invalidate that persisted identity. Ordinary on-chain BTC and complete
 RGB invoice sends use separate supported builders; their acceptance is recorded
 independently.
+
+The packed Bare consumer exposed a distribution-specific failure in the new
+WebRGB burn helpers: importing the WebRGB subpath selected the hash library's
+`node:crypto` import without the main entry's Bare builtin mappings. The subpath
+now has its own Bare entry with the same mappings. The normal packed consumer
+also checks an independent bridge burn-commitment vector through that public
+subpath. This changes JS packaging only; the reviewed native graph and binaries
+remain unchanged. Source tests alone do not qualify this path: the actual packed
+consumer and installed mobile build remain separate acceptance checks.

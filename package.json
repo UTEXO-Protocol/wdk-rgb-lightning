@@ -87,6 +87,7 @@
   "exports": {
     "./webrgb": {
       "types": "./webrgb.d.ts",
+      "bare": "./webrgb-bare.js",
       "default": "./src/webrgb.js"
     },
     "./lsp-info": {
@@ -110,7 +111,8 @@
   "standard": {
     "ignore": [
       "bare.js",
-      "index-bare.js"
+      "index-bare.js",
+      "webrgb-bare.js"
     ]
   }
 }

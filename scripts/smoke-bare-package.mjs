@@ -17,6 +17,7 @@ if (process.platform !== 'darwin' || process.arch !== 'arm64') {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
+const burnVector = JSON.parse(readFileSync(path.join(root, 'tests/fixtures/burn-destination-vectors.json'), 'utf8')).vectors[0]
 const nativePackage = '@utexo/rgb-lightning-node-bare'
 const nativeVersion = minimumVersion(pkg.peerDependencies[nativePackage], nativePackage)
 const inputs = packedBareInputs({ version: nativeVersion })
@@ -87,7 +88,7 @@ try {
 
   const program = `
     import WalletManager, { BareRgbLightningBinding, parseLspInfo, LightningDisabledError } from '${pkg.name}'
-    import { WebRgbProvider } from '${pkg.name}/webrgb'
+    import { WebRgbProvider, burnDestinationHash } from '${pkg.name}/webrgb'
     import { smokeWalletPolicy } from ${JSON.stringify(path.join(root, 'scripts/smoke-wallet-policy.mjs'))}
     import { assertNativeRuntime } from ${JSON.stringify(path.join(root, 'src/native-runtime-contract.js'))}
     import native from '${nativePackage}'
@@ -103,6 +104,10 @@ try {
     // compiled capabilities and VSS policy. Packed binding admission still runs.
     assertNativeRuntime(native)
     BareRgbLightningBinding.healthcheck()
+    const { name, hash, encoded, ...burnDestination } = ${JSON.stringify(burnVector)}
+    if ('0x' + burnDestinationHash(burnDestination) !== hash) {
+      throw new Error('Packed Bare burn commitment differs from independent bridge vector ' + name)
+    }
     // Public deterministic fixture seed. Never fund this wallet.
     const manager = new WalletManager(new Uint8Array(64).fill(1), {
       network: 'regtest', dataDir: ${JSON.stringify(path.join(temporaryRoot, 'wallet'))}
