@@ -252,6 +252,71 @@ describe('WebRGB native mappings', () => {
     expect((await provider.listTransfers(ID))[0].amount).toBeUndefined()
   })
 
+  test.each(['Send', 'Burn'])('uses the requested %s amount instead of remaining wallet change', async kind => {
+    const transfer = { ...TRANSFER, kind, requested_assignment: 'Fungible(1000000)', assignments: ['Fungible(99000000)'] }
+    const { provider } = fixture({ sessionApproved: true }, { listTransfers: async () => [transfer] })
+    expect((await provider.listTransfers(ID))[0].amount).toBe(1000000)
+    expect((await provider.getTransferStatus(transfer.idx, ID)).transfer.amount).toBe(1000000)
+  })
+
+  test.each([[], ['Fungible(0)']].map(value => [value]))('preserves the outgoing amount with no remaining change %j', async assignments => {
+    const { provider } = fixture({ sessionApproved: true }, {
+      listTransfers: async () => [{
+        ...TRANSFER, kind: 'Send', requested_assignment: 'Fungible(1000000)', assignments
+      }]
+    })
+    expect((await provider.listTransfers(ID))[0].amount).toBe(1000000)
+  })
+
+  test('keeps per-recipient amounts separate when multiple sends share the same change allocation', async () => {
+    const { provider } = fixture({ sessionApproved: true }, {
+      listTransfers: async () => [
+        { ...TRANSFER, kind: 'Send', idx: 3, requested_assignment: 'Fungible(1000000)', assignments: ['Fungible(97000000)'] },
+        { ...TRANSFER, kind: 'Send', idx: 4, requested_assignment: 'Fungible(2000000)', assignments: ['Fungible(97000000)'] }
+      ]
+    })
+    expect((await provider.listTransfers(ID)).map(row => row.amount)).toEqual([1000000, 2000000])
+  })
+
+  test.each([undefined, null, {}, 'Any', 'Fungible(-1)', 'Fungible(01)', 'Fungible(1)extra', 'Fungible(18446744073709551616)'])('rejects missing or malformed outgoing requested assignment %j', async requested => {
+    for (const kind of ['Send', 'Burn']) {
+      const { provider } = fixture({ sessionApproved: true }, {
+        listTransfers: async () => [{
+          ...TRANSFER, kind, requested_assignment: requested, assignments: ['Fungible(1000000)']
+        }]
+      })
+      await expect(provider.listTransfers(ID)).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+    }
+  })
+
+  test('validates unexposed change without rounding it or substituting it for the safe requested amount', async () => {
+    const transfer = { ...TRANSFER, kind: 'Send', requested_assignment: 'Fungible(1000000)', assignments: ['Fungible(18446744073709551615)'] }
+    const { provider, wallet } = fixture({ sessionApproved: true }, { listTransfers: jest.fn(async () => [transfer]) })
+    expect((await provider.listTransfers(ID))[0].amount).toBe(1000000)
+    wallet.listTransfers.mockResolvedValue([{ ...transfer, requested_assignment: 'Fungible(9007199254740992)' }])
+    await expect(provider.listTransfers(ID)).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+    wallet.listTransfers.mockResolvedValue([{ ...transfer, assignments: ['Fungible(-1)'] }])
+    await expect(provider.listTransfers(ID)).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+  })
+
+  test('incoming amounts use actual received assignments rather than the invoice request', async () => {
+    const { provider } = fixture({ sessionApproved: true }, {
+      listTransfers: async () => [{
+        ...TRANSFER, requested_assignment: 'Fungible(100000000)', assignments: ['Fungible(1000000)']
+      }]
+    })
+    expect((await provider.listTransfers(ID))[0].amount).toBe(1000000)
+  })
+
+  test('non-fungible outgoing rights do not invent a fungible amount', async () => {
+    const { provider } = fixture({ sessionApproved: true }, {
+      listTransfers: async () => [{
+        ...TRANSFER, kind: 'Send', requested_assignment: 'MintRight', assignments: ['MintRight']
+      }]
+    })
+    expect((await provider.listTransfers(ID))[0].amount).toBeUndefined()
+  })
+
   test.each([3, '3', TXID, 'utxob:recipient'])('refreshes and resolves status by %s', async id => {
     const { provider, wallet } = fixture({ sessionApproved: true })
     const result = await provider.getTransferStatus(id, ID)

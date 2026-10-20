@@ -75,19 +75,33 @@ function nativeNetwork (value) {
   return network
 }
 
-function transferAmount (assignments) {
-  if (!Array.isArray(assignments)) throw new WebRgbError('INTERNAL_ERROR', 'Invalid native assignments')
-  let sum
-  for (const assignment of assignments) {
-    const match = typeof assignment === 'string' && /^Fungible\((\d+)\)$/.exec(assignment)
-    if (match) {
-      sum = (sum ?? 0) + nativeInteger(match[1], 'transfer amount')
-      nativeInteger(sum, 'transfer amount')
-    } else if (typeof assignment !== 'string' || !/^(Any|NonFungible|ReplaceRight|InflationRight\(\d+\))$/.test(assignment)) {
-      throw new WebRgbError('INTERNAL_ERROR', 'Invalid native assignment')
-    }
+function assignmentAmount (assignment) {
+  const match = typeof assignment === 'string' && /^(Fungible|InflationRight)\((0|[1-9]\d{0,19})\)$/.exec(assignment)
+  if (match) {
+    const value = BigInt(match[2])
+    if (value > (1n << 64n) - 1n) throw new WebRgbError('INTERNAL_ERROR', 'Invalid native assignment')
+    return match[1] === 'Fungible' ? value : undefined
   }
-  return sum
+  if (typeof assignment !== 'string' || !/^(Any|NonFungible|ReplaceRight|MintRight)$/.test(assignment)) {
+    throw new WebRgbError('INTERNAL_ERROR', 'Invalid native assignment')
+  }
+}
+
+function transferAmount (transfer) {
+  if (!Array.isArray(transfer.assignments)) throw new WebRgbError('INTERNAL_ERROR', 'Invalid native assignments')
+  const amounts = transfer.assignments.map(assignmentAmount)
+  let amount
+  if (transfer.kind === 'Send' || transfer.kind === 'Burn') {
+    // rgb-lib-bfa assignments describe the sender's remaining change, not the
+    // amount delivered to this recipient or burned by this operation.
+    amount = assignmentAmount(transfer.requested_assignment)
+    if (transfer.requested_assignment === 'Any' || (transfer.kind === 'Burn' && amount === undefined)) {
+      throw new WebRgbError('INTERNAL_ERROR', 'Invalid native requested assignment')
+    }
+  } else {
+    amount = amounts.reduce((sum, value) => value === undefined ? sum : (sum ?? 0n) + value, undefined)
+  }
+  return amount === undefined ? undefined : nativeInteger(amount.toString(), 'transfer amount')
 }
 
 /** One native-wallet session per dApp. No browser injection or transport. */
@@ -302,7 +316,7 @@ export class WebRgbProvider {
           transferId: nativeInteger(transfer?.idx, 'transfer ID'),
           status: nativeText(transfer.status, 'transfer status'),
           kind: nativeText(transfer.kind, 'transfer kind'),
-          amount: transferAmount(transfer.assignments),
+          amount: transferAmount(transfer),
           recipientId: optionalText(transfer.recipient_id, 'recipient ID'),
           txid: optionalText(transfer.txid, 'transaction ID')
         })
