@@ -97,8 +97,10 @@ superseded; the published native beta.4 packages remain unchanged.
   sources and require observed artifact admission. Bare's packed canary keeps
   asynchronous checks alive and requires a completion marker within a bounded
   timeout, preventing an early successful exit from being reported as a pass.
-  Curated GitHub release
-  notes come from this complete changelog entry.
+  Curated GitHub release notes come from this complete changelog entry.
+- Admit exact merged-main beta.5 Bare and Node sources after their release PRs
+  merge. Complete Git trees equal the qualified release heads; native build
+  inputs and existing binary/qualification identities remain unchanged.
 
 ### Known limitations
 

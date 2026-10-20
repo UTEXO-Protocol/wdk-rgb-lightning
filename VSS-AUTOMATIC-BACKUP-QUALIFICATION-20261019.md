@@ -93,8 +93,10 @@ release tooling/documentation while retaining the qualified native build inputs
 and binary bytes. The new iOS payload has its own reviewed archive identity;
 the historical beta.4 archive and provenance remain unchanged.
 
-The exact proposed source heads are recorded in `native-peer-sources.json`.
-After native release PRs merge, refresh those pins to their resulting main
-commits before WDK merge. Registry qualification must then admit published
-beta.5 packages; the older beta.4 packages are not a fallback. Fresh package/CI
-receipts on PR #48 are separate from the funded and recovery evidence above.
+Bare #28 and Node #27 are merged. `native-peer-sources.json` now admits their
+exact main commits, `54110d5db7f0f67c18c02d2dd188ad2763e95003` and
+`8b78387df4c33140a52c19c6de6fcc8d4aa7595c`; their complete trees equal the
+qualified beta.5 release heads. Registry qualification must separately admit
+published beta.5 packages; older beta.4 packages are not a fallback. Fresh
+package/CI receipts on PR #48 are separate from the funded and recovery evidence
+above. This pin refresh does not relabel previous binaries as merge-commit builds.

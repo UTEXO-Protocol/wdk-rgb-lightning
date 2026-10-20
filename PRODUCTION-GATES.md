@@ -19,19 +19,22 @@ WDK, Bare, Node and all three required Bare data companions target
 finalized; its existing Git tag remains historical. Published native beta.4
 packages are unchanged and cannot provide these extensions.
 
-The release PRs are [Bare #28](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/pull/28)
-and [Node #27](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/pull/27).
-The source manifest admits their exact proposed beta.5 heads:
+The release PRs [Bare #28](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/pull/28)
+and [Node #27](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/pull/27)
+merged on 20 October 2026. The source manifest now admits `main` at their exact
+merge commits:
 
-| Peer | Beta.5 release head |
-| --- | --- |
-| Bare | `022f52c62b774f2ca8bd590c04f45e92356fbfae` |
-| Node | `fb5b2befd8ddfddec41f8cd2179b0a3324ca2c6f` |
+| Peer | Merged-main commit | Qualified release head | Complete Git tree |
+| --- | --- | --- | --- |
+| Bare | `54110d5db7f0f67c18c02d2dd188ad2763e95003` | `022f52c62b774f2ca8bd590c04f45e92356fbfae` | `8eec8a3e6819363e30d7920a8909e1f78728ec1c` |
+| Node | `8b78387df4c33140a52c19c6de6fcc8d4aa7595c` | `fb5b2befd8ddfddec41f8cd2179b0a3324ca2c6f` | `8a535bdf114c069e28feb95b583fc0e9ae787dd7` |
 
-Those PRs must merge first, then WDK's pins must be refreshed to their resulting
-main commits. The unchanged merged-main gate intentionally rejects unmerged or
-stale source identities. Registry admission separately requires the complete
-published beta.5 graph, exact package-source metadata and native provenance.
+Each complete merged tree equals its qualified release head. This admission
+refresh changes source pins and release evidence only; existing native binary
+bytes, runtime/build inputs and compilation identities are unchanged. The
+merged-main gate remains enforced. Registry admission separately requires the
+complete published beta.5 graph, exact package-source metadata and native
+provenance; a source merge does not establish publication.
 
 The version preparation preserves the qualified native inputs and compiled
 binary bytes. Bare adds an exact beta.5 iOS archive identity alongside the

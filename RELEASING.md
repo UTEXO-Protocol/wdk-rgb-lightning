@@ -13,7 +13,10 @@ immutable older code and cannot satisfy the BIP-322/enabled-VSS contract.
 
 The native release PRs are [Bare #28](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/pull/28)
 and [Node #27](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/pull/27).
-They retain the qualified RLN/rgb-lib/LDK, adapter,
+Both are merged, and WDK now pins Bare main
+`54110d5db7f0f67c18c02d2dd188ad2763e95003` and Node main
+`8b78387df4c33140a52c19c6de6fcc8d4aa7595c`. Each complete merged tree equals
+its qualified beta.5 release head. They retain the qualified RLN/rgb-lib/LDK, adapter,
 wrapper and build-recipe inputs and previously admitted binary bytes. They change
 package identities and release documentation; compilation provenance retains
 its original labels. Bare's new iOS archive is admitted separately from the
@@ -24,9 +27,9 @@ Release order:
 
 1. Cancel the obsolete WDK beta.4 npm stage. Do not approve/finalize it. Retain
    its existing tag and historical source/artifact identity.
-2. Review and merge the Bare and Node beta.5 release PRs. Refresh WDK's
-   `native-peer-sources.json` to the resulting exact main commits; require its
-   normal merged-main source check to pass before merging WDK.
+2. Bare and Node beta.5 release PRs are merged and WDK's source pins are
+   refreshed. Require its normal merged-main source check to pass before
+   merging WDK. Any further native main change requires explicit pin review.
 3. Publish and independently verify the three Bare beta.5 data packages, then
    the Bare wrapper; publish/admit Node beta.5 as well. Use the reviewed native
    publication procedure and preserve exact package-source, artifact and builder
