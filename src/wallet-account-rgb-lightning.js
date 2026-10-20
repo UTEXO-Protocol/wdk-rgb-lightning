@@ -24,7 +24,10 @@ import { exactUnsignedNumber, validatePaymentRequest, validateRefreshResult } fr
 import { validateBurnRequest, validateBurnResponse } from './burn-contract.js'
 import { validateRgbInvoiceSend } from './rgb-invoice-send.js'
 import { receiveAddress, joinAddressOperations, stopAddressOperations } from './receive-address.js'
-import { vssCapabilities, validateVssAutomaticBackupResult } from './vss-policy.js'
+import {
+  vssCapabilities, validateVssAutomaticBackupResult,
+  validateVssBackupInfo, validateVssBackupMetadata
+} from './vss-policy.js'
 import { bip322Capabilities, requireBip322, validateBip322Address, validateBip322Message, validateBip322Signature } from './bip322-contract.js'
 import {
   validateImportRgbContractRequest, validateImportRgbContractResult,
@@ -326,6 +329,25 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     return pending
   }
 
+  /** @private Only a current, identity-bound native acknowledgement can replace an automatic upload. */
+  async _hasAcknowledgedNativeVssCheckpoint () {
+    try {
+      if (this._binding._vssCheckpointFailed ||
+          typeof this._binding.getVssBackupInfo !== 'function' ||
+          typeof this._binding.getVssBackupMetadata !== 'function' ||
+          typeof this._binding.bootstrap !== 'function') return false
+      const info = validateVssBackupInfo(await this._binding.getVssBackupInfo())
+      if (!info.backup_exists || info.backup_required || info.last_auto_backup_failed) return false
+      const metadata = validateVssBackupMetadata(
+        await this._binding.getVssBackupMetadata(), this._binding._config, await this._binding.bootstrap())
+      return metadata.last_backup !== null &&
+        metadata.last_backup.version === info.version
+    } catch (_error) {
+      // Missing or uncertain native evidence retains the existing checkpoint fallback.
+      return false
+    }
+  }
+
   /**
    * @private Schedule an opportunistic checkpoint after a successful mutation.
    * A remote failure must not turn a completed send/burn into a retryable payment.
@@ -352,7 +374,9 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
         while (this._vssDirty) {
           this._vssDirty = false
           try {
-            await this._binding.vssBackup()
+            // Native mutation admission already owns blocking snapshots. Reconcile its
+            // real acknowledgement inside this queue before requesting another upload.
+            if (!await this._hasAcknowledgedNativeVssCheckpoint()) await this._binding.vssBackup()
             this._binding._vssCheckpointFailed = false
           } catch (_error) {
             this._binding._vssCheckpointFailed = true
