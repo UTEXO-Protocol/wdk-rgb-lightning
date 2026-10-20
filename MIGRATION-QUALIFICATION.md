@@ -9,16 +9,16 @@ until the pending acceptance checks below have real evidence.
 
 | Component | Commit |
 | --- | --- |
-| Focused RLN | `cd3be114a6d0e41af8ce3f29719d210e105234dc` |
+| Focused RLN | `c29d1b2dfe43ba95c25ced8984f09e42c789d6af` |
 | UTEXO-Protocol/rgb-lib-bfa | `962730a211f0f7569d7ad8ae777052f433d87655` |
 | LDK | `510189d5700a6d1406229ce7523e181c3838715e` |
-| Bare candidate | `68da393868b64bde50973a81be1f7a962f91e9d5` |
-| Node candidate | `b17a0dc63c40dfa6152144d6eb51c2dff5bf02f0` |
+| Bare candidate | `72d07995abf5b916ece7fe05374d506e4a320cec` |
+| Node candidate | `82c628300329fdd48ca4f84af0215b032b946cf1` |
 
 The shared C-FFI lock SHA-256 is
 `460728009d9c1db3abf9a2f2ad4d76f777589b55eff96ff7be1f3c4d301dab30`.
 The maintained adapter SHA-256 is
-`3662f1e7d97f5bb540b1e6cb0bce98a2e0b243868417e481bcd0c27e15819702`.
+`cf92a4618b765e7889001c9e630e6e64861ef9bdd295d57551461d3bc3281d4c`.
 `native-peer-sources.json` and `src/native-runtime-contract.js` enforce these
 identities. RLN's base version string remains `0.17.0-beta.3`; the exact
 commit identifies this focused migration. It is not an official new RLN tag.
@@ -70,6 +70,15 @@ spendable balance or hosted-bridge acceptance.
 
 ## Qualification status
 
+The latest focused repair maps wrong-ID/network contract validation failures to
+the existing invalid-contract category and resolves the UniFFI input path at
+build-script runtime. Focused/maintained/focused shared-cache switches each pass
+the four targeted tests and generate the correct checkout's scaffolding without
+touching inputs or cleaning the cache. The recorded Darwin Debug/BTC evidence
+below used the prior `cd3be114` focused implementation. Those original binaries
+and receipts are retained; rebuilt `c29d1b2d` native acceptance is pending until
+its separately recorded rerun completes.
+
 WDK now passes 38 suites / 1,373 tests, types, lint, the optional WebRGB
 contract, exact native-source checks and package allowlist verification. Its
 packed Bare canary requires all three candidate payload archives alongside the
@@ -110,6 +119,11 @@ blind/witness receive and send; local bridge mint, burn, proof and exactly-one
 payout; BFA persistence and failure recovery;
 and a user-coordinated iOS 27 rebuild and runtime test. No hosted dev bridge
 has been operated and no migration package has been published.
+
+RLN's upstream submodule ancestry check also waits for companion LDK #59:
+the exact migration commit is intentionally not yet reachable from LDK `dev`.
+This is separate from the private-source CI permission failure. Neither check
+is weakened, and no dependency PR has been merged during qualification.
 
 The existing external-signer VSS security limitation remains: its authentication
 and encryption material is derived from public wallet bootstrap data. A party
