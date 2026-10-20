@@ -16,24 +16,45 @@ const fixturePatch = 'A synthetic overlay fixture, never a native build input.\n
 const fixtureRuntime = {
   abi_version: 1,
   rln_version: '0.17.0-beta.3',
-  rln_commit: 'ecc69f20308231400561f6f060fea88acfa40cc4',
-  lightning_commit: '79b9eb5166546c62692d3a672986f385c7fe047d',
+  rln_commit: 'a'.repeat(40),
+  lightning_commit: 'b'.repeat(40),
+  rgb_lib_commit: 'c'.repeat(40),
   adapter_sha256: createHash('sha256').update(fixturePatch).digest('hex')
 }
 
 function packageFixture () {
-  return { peerDependencies: { [bare]: '0.2.0-beta.5', [node]: '0.2.0-beta.5' } }
+  return { peerDependencies: { [bare]: '0.2.0-bfa.0', [node]: '0.2.0-bfa.0' } }
+}
+
+// Synthetic policy inputs, independent of the coordinator's still-unfrozen
+// real peer commits and lock. These do not attest to an archive or registry.
+function sourceFixture () {
+  return {
+    schemaVersion: 1,
+    sharedCffiLockSha256: 'd'.repeat(64),
+    peers: {
+      [bare]: { repository: 'https://github.com/UTEXO-Protocol/rgb-lightning-node-bare.git', ref: 'main', commit: '1'.repeat(40), version: '0.2.0-bfa.0' },
+      [node]: { repository: 'https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs.git', ref: 'main', commit: '2'.repeat(40), version: '0.2.0-bfa.0' }
+    }
+  }
 }
 
 describe('native peer source manifest configuration', () => {
   it('requires both known native repositories with frozen commits and exact peer versions', () => {
-    const sources = readNativePeerSources()
+    const sources = sourceFixture()
     expect(validateNativePeerSources(sources, packageFixture())).toBe(sources)
     for (const name of [bare, node]) expect(['main', sources.peers[name].commit]).toContain(sources.peers[name].ref)
   })
 
-  it('admits an immutable feature commit without falsely labelling it as main', () => {
+  it('reads the real source manifest without substituting synthetic commit identities', () => {
     const sources = readNativePeerSources()
+    expect(sources.schemaVersion).toBe(1)
+    expect(Object.keys(sources.peers).sort()).toEqual([bare, node].sort())
+    for (const peer of Object.values(sources.peers)) expect(peer.commit).toMatch(/^[a-f0-9]{40}$/)
+  })
+
+  it('admits an immutable feature commit without falsely labelling it as main', () => {
+    const sources = sourceFixture()
     for (const name of [bare, node]) sources.peers[name].ref = sources.peers[name].commit
     expect(validateNativePeerSources(sources, packageFixture())).toBe(sources)
     sources.peers[bare].ref = '0'.repeat(40)
@@ -49,9 +70,9 @@ describe('native peer source manifest configuration', () => {
     ['untrusted repository', sources => { sources.peers[bare].repository = 'https://example.com/bare.git' }],
     ['old branch', sources => { sources.peers[bare].ref = 'release/rln-0.15.0-beta.3' }],
     ['floating commit', sources => { sources.peers[bare].commit = 'main' }],
-    ['version range', sources => { sources.peers[node].version = '^0.2.0-beta.5' }]
+    ['version range', sources => { sources.peers[node].version = '^0.2.0-bfa.0' }]
   ])('rejects %s', (_, mutate) => {
-    const sources = readNativePeerSources()
+    const sources = sourceFixture()
     mutate(sources)
     expect(() => validateNativePeerSources(sources, packageFixture())).toThrow(/Invalid native peer source/)
   })
@@ -59,7 +80,7 @@ describe('native peer source manifest configuration', () => {
   it('rejects package/source version drift before inspecting a checkout', () => {
     const packageJson = packageFixture()
     packageJson.peerDependencies[node] = '0.2.0-beta.3'
-    expect(() => validateNativePeerSources(readNativePeerSources(), packageJson))
+    expect(() => validateNativePeerSources(sourceFixture(), packageJson))
       .toThrow('must declare one exact version matching its source manifest')
   })
 })
@@ -80,7 +101,7 @@ describe('read-only native source checkout admission', () => {
 
   beforeEach(() => {
     root = mkdtempSync(path.join(tmpdir(), 'wdk-peer-source-test-'))
-    const sources = readNativePeerSources()
+    const sources = sourceFixture()
     options = { packageJson: packageFixture(), sources, expectedRuntime: fixtureRuntime }
     for (const [packageName, option] of [[bare, 'bareDir'], [node, 'nodeDir']]) {
       const directory = path.join(root, option)
@@ -95,6 +116,8 @@ describe('read-only native source checkout admission', () => {
           commit: fixtureRuntime.rln_commit,
           rlnVersion: fixtureRuntime.rln_version,
           lightningCommit: fixtureRuntime.lightning_commit,
+          rgbLibRepository: 'https://github.com/UTEXO-Protocol/rgb-lib-bfa.git',
+          rgbLibCommit: fixtureRuntime.rgb_lib_commit,
           patch,
           patchSha256: fixtureRuntime.adapter_sha256,
           cffiLockSha256: sources.sharedCffiLockSha256
@@ -154,6 +177,26 @@ describe('read-only native source checkout admission', () => {
     writeFileSync(packagePath, JSON.stringify(metadata))
     options.sources.peers[node].commit = commit(options.nodeDir)
     expect(() => verifyNativePeerSources(options)).toThrow(`Native release manifest mismatch for ${node}`)
+  })
+
+  it.each([
+    ['rgbLibRepository', 'https://github.com/UTEXO-Protocol/rgb-lib.git'],
+    ['rgbLibRepository', undefined], ['rgbLibCommit', '0'.repeat(40)], ['rgbLibCommit', undefined]
+  ])('rejects a committed wrong or missing RGB library %s even at the pinned native peer commit', (field, value) => {
+    const packagePath = path.join(options.nodeDir, 'package.json')
+    const metadata = JSON.parse(readFileSync(packagePath, 'utf8'))
+    if (value === undefined) delete metadata.utexoNativeOverlay[field]
+    else metadata.utexoNativeOverlay[field] = value
+    writeFileSync(packagePath, JSON.stringify(metadata))
+    options.sources.peers[node].commit = commit(options.nodeDir)
+    expect(() => verifyNativePeerSources(options)).toThrow(`Native release manifest mismatch for ${node}`)
+  })
+
+  it('requires a pinned RGB library identity in the expected runtime', () => {
+    const runtime = { ...fixtureRuntime }
+    delete runtime.rgb_lib_commit
+    expect(() => verifyNativePeerSources({ ...options, expectedRuntime: runtime }))
+      .toThrow(`Native release manifest mismatch for ${bare}`)
   })
 
   it('requires the repository root rather than accepting an unrelated parent repository', () => {
