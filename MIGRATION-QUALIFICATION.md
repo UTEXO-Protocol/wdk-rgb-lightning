@@ -70,12 +70,25 @@ spendable balance or hosted-bridge acceptance.
 
 ## Qualification status
 
+WDK now passes 38 suites / 1,373 tests, types, lint, the optional WebRGB
+contract, exact native-source checks and package allowlist verification. Its
+packed Bare canary requires all three candidate payload archives alongside the
+wrapper and retains exact install-script grants and runtime admission. The old
+beta.5 regtest/mobile harnesses refuse to operate this new graph before effects;
+they remain historical evidence.
+
 Source checks have passed for the validated contract/snapshot APIs, focused
 VSS fault cases, retained signer lifecycle and BIP-322, C-FFI boundaries,
 strict source preparation, and Bare/Node JavaScript boundaries. WDK and Iris
 source tests cover invoice precision, V1 commitments, consent, journals and
 candidate admission. Source tests do not establish runtime acceptance of a
 newly installed binary.
+
+Actual WDK source consumers on Node and Bare 1.33 pass construct/unlock,
+on-chain reads, stable cached/fresh address allocation, BIP-322 and signer
+shutdown/reopen. They decode a real new-proxy witness invoice, retaining
+required encryption, recipient key and nullable legacy proxy ID. These tests
+use explicit isolated Debug native resolution; they are not packed acceptance.
 
 Actual Darwin Debug Bare and Node consumers also pass signer shutdown/reopen,
 worker teardown, official and independent BIP-322 proofs, and encrypted local
