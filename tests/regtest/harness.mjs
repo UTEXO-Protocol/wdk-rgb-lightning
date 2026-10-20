@@ -5,6 +5,7 @@ import path from 'node:path'
 import net from 'node:net'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { assertHistoricalQualification } from './historical-scope.mjs'
 
 export const here = path.dirname(fileURLToPath(import.meta.url))
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
@@ -22,6 +23,7 @@ export async function until (label, fn, timeout = 90000) {
 }
 
 export async function rpc (method, params = [], wallet = '') {
+  assertHistoricalQualification()
   const response = await fetch(endpoints.rpc + (wallet ? `/wallet/${wallet}` : ''), {
     method: 'POST',
     headers: { Authorization: `Basic ${Buffer.from('wdk:regtest-only').toString('base64')}`, 'Content-Type': 'application/json' },
@@ -80,6 +82,7 @@ export async function prepareChain () {
 }
 
 export async function daemon (endpoint, body, method = 'POST') {
+  assertHistoricalQualification()
   const response = await fetch(`http://127.0.0.1:29301/${endpoint}`, {
     method,
     headers: { 'Content-Type': 'application/json' },
@@ -120,6 +123,7 @@ export async function prepareIssuer () {
 
 export class WalletProcess {
   constructor (root, name, runtime = 'node') {
+    assertHistoricalQualification()
     this.directory = path.join(root, name)
     fs.mkdirSync(this.directory, { recursive: true, mode: 0o700 })
     this.runtime = runtime
@@ -129,6 +133,7 @@ export class WalletProcess {
   }
 
   spawn () {
+    assertHistoricalQualification()
     const log = fs.openSync(path.join(this.directory, 'runtime.log'), 'a', 0o600)
     const command = this.runtime === 'node' ? process.execPath : process.env.BARE_BIN
     if (!command) throw new Error('BARE_BIN must point to a Bare >=1.33.0 executable')

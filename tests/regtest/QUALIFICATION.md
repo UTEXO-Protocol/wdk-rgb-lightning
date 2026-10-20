@@ -5,6 +5,11 @@ qualification and remaining failures are recorded in
 [PRODUCTION-GATES.md](../../PRODUCTION-GATES.md#october-14-qualification).
 Later source upgrades do not replace the graph recorded below.
 
+This report and the later beta.5 fixture are historical for the rgb-lib-bfa
+migration. Their binaries, legacy proxy and funded results are not candidate
+acceptance evidence. The migration's exact graph and outstanding checks are in
+[MIGRATION-QUALIFICATION.md](../../MIGRATION-QUALIFICATION.md).
+
 Candidate: all three packages `0.2.0-beta.1`, targeting RLN
 `af03c7f1a65135a429f05a5820600338215954dc` / `v0.13.0-beta.3`.
 See [stack and commands](./README.md). This is a fresh-wallet, VSS-disabled,

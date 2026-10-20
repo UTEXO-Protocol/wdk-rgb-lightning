@@ -4,6 +4,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { mine, prepareChain, rpc, sleep, until } from '../regtest/harness.mjs'
+import { assertHistoricalQualification } from '../regtest/historical-scope.mjs'
+
+assertHistoricalQualification()
 
 const platform = process.argv.includes('--android') ? 'android' : 'ios'
 const device = process.env.QUALIFICATION_DEVICE
