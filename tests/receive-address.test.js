@@ -4,9 +4,11 @@ import { BareRgbLightningBinding } from '../src/bare-binding.js'
 import WalletAccount from '../src/wallet-account-rgb-lightning.js'
 import { addressOperationPending } from '../src/receive-address.js'
 
-describe('released receive address policies', () => {
+describe('rgb-lib-bfa receive address policy', () => {
   it.each([NodeRgbLightningBinding, BareRgbLightningBinding])('forwards native non-reuse and rejects ambiguous config', Binding => {
     expect(new Binding({ dataDir: '/unused', network: 'regtest', reuseAddresses: false })._initRequest.reuse_addresses).toBe(false)
+    expect(new Binding({ dataDir: '/unused', network: 'regtest' })._initRequest.reuse_addresses).toBe(false)
+    expect(() => new Binding({ dataDir: '/unused', network: 'regtest', reuseAddresses: true })).toThrow('not supported by rgb-lib-bfa')
     for (const reuseAddresses of [null, 0, 'false']) {
       expect(() => new Binding({ dataDir: '/unused', network: 'regtest', reuseAddresses })).toThrow('boolean')
     }
@@ -27,24 +29,26 @@ describe('released receive address policies', () => {
     expect(readOnly.getNewAddress).toBeUndefined()
   })
 
-  it('reveals every rotated address natively before returning it', async () => {
+  it('persists fresh non-reuse addresses and rejects legacy rotation without touching native state', async () => {
     const calls = []
     let index = 0
     const node = {
       rotateAddress: () => { calls.push('rotate'); return { address: `address-${++index}` } },
       address: () => { calls.push('reveal'); return { address: `address-${index}` } }
     }
+    node.address = () => { calls.push('reveal'); return { address: `address-${++index}` } }
     const account = new WalletAccount({ binding: { ensureNode: () => node } })
-    expect(await Promise.all([account.rotateAddress(), account.getNewAddress()])).toEqual(['address-1', 'address-2'])
-    expect(calls).toEqual(['rotate', 'reveal', 'rotate', 'reveal'])
+    await expect(account.rotateAddress()).rejects.toThrow('getNewAddress')
+    expect(await Promise.all([account.getNewAddress(), account.getNewAddress()])).toEqual(['address-1', 'address-2'])
+    expect(calls).toEqual(['reveal', 'reveal'])
   })
 
-  it('fails closed on reveal errors or identity mismatch without poisoning subsequent calls', async () => {
-    const node = { rotateAddress: () => 'next', address: jest.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValueOnce('different').mockResolvedValue('next') }
+  it('does not cache invalid or unpersisted addresses and allows subsequent allocation', async () => {
+    const node = { address: jest.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValueOnce({ address: '' }).mockResolvedValue('next') }
     const account = new WalletAccount({ binding: { ensureNode: () => node } })
-    await expect(account.rotateAddress()).rejects.toThrow('disk full')
-    await expect(account.rotateAddress()).rejects.toThrow('differs')
-    await expect(account.rotateAddress()).resolves.toBe('next')
+    await expect(account.getNewAddress()).rejects.toThrow('disk full')
+    await expect(account.getAddress()).rejects.toThrow('invalid receive address')
+    await expect(account.getAddress()).resolves.toBe('next')
   })
 
   it('joins in-flight address persistence before shutdown and rejects new allocations during shutdown', async () => {

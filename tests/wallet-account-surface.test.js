@@ -749,17 +749,16 @@ describe('BTC ops', () => {
     expect(node.sendBtc).not.toHaveBeenCalled()
   })
 
-  it('rotateAddress requires a compatible binding method and a concrete address response', async () => {
-    const missing = makeAccount({ node: makeNode({ rotateAddress: undefined }) })
-    await expect(missing.rotateAddress()).rejects.toThrow('does not expose rotateAddress()')
-
-    const invalid = makeAccount({ node: makeNode({ rotateAddress: () => ({}) }) })
-    await expect(invalid.rotateAddress()).rejects.toThrow('invalid rotated address')
+  it('legacy rotateAddress rejects without using a native rotation method', async () => {
+    const rotateAddress = jest.fn()
+    const account = makeAccount({ node: makeNode({ rotateAddress }) })
+    await expect(account.rotateAddress()).rejects.toThrow('use getNewAddress()')
+    expect(rotateAddress).not.toHaveBeenCalled()
   })
 
-  it('rotateAddress accepts the native string response form', async () => {
-    const account = makeAccount({ node: makeNode({ rotateAddress: () => 'tb1qstringrotated', address: () => 'tb1qstringrotated' }) })
-    await expect(account.rotateAddress()).resolves.toBe('tb1qstringrotated')
+  it('getNewAddress accepts the native string response form', async () => {
+    const account = makeAccount({ node: makeNode({ address: () => 'tb1qstringfresh' }) })
+    await expect(account.getNewAddress()).resolves.toBe('tb1qstringfresh')
   })
 
   it('getTransactions forwards to node.listTransactions with coerced skipSync', async () => {

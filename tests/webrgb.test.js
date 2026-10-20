@@ -170,6 +170,12 @@ describe('WebRGB native mappings', () => {
     expect(wallet.createRgbInvoice).toHaveBeenCalledWith({ assignment_kind: 'Any', duration_seconds: 86400, min_confirmations: 6, witness: false })
   })
 
+  test('accepts explicit thirty-minute RGB receive lifetime with a proxy ACK margin', async () => {
+    const { provider, wallet } = fixture({ sessionApproved: true })
+    await provider.blindReceive({ durationSeconds: 1800 })
+    expect(wallet.createRgbInvoice).toHaveBeenCalledWith(expect.objectContaining({ duration_seconds: 1800, witness: false }))
+  })
+
   test('caller mutation and request origin cannot change approved invoice parameters', async () => {
     const prompt = deferred()
     const confirm = jest.fn(() => prompt.promise)
@@ -199,7 +205,7 @@ describe('WebRGB native mappings', () => {
   })
 
   test.each([{ amount: 0 }, { amount: -1 }, { amount: 1.2 }, { amount: '12' }, { amount: Number.MAX_SAFE_INTEGER + 1 },
-    { assetId: '' }, { assetId: 'rgb:' }, { assetId: 'rgb:bad id' }, { durationSeconds: 0 }, { durationSeconds: 2592001 },
+    { assetId: '' }, { assetId: 'rgb:' }, { assetId: 'rgb:bad id' }, { durationSeconds: 0 }, { durationSeconds: 600 }, { durationSeconds: 1799 }, { durationSeconds: 2592001 },
     { minConfirmations: 256 }, { minConfirmations: null }, null, []].map(value => [value]))('rejects invalid receive %j before approval', async args => {
     const { provider, wallet, confirm } = fixture({ sessionApproved: true })
     await expect(provider.blindReceive(args)).rejects.toMatchObject({ code: 'INVALID_PARAMS' })
@@ -265,6 +271,22 @@ describe('WebRGB native mappings', () => {
       expect((await provider.decodeRgbInvoice('rgb:invoice')).amount).toBeNull()
     }
     wallet.decodeRgbInvoice.mockResolvedValue({ ...raw, assignment: { type: 'Fungible', value: '18446744073709551615' } })
+    await expect(provider.decodeRgbInvoice('rgb:invoice')).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+  })
+
+  test.each(['mainnet', 'testnet', 'testnet4', 'signet', 'regtest'])('normalizes native enum casing without changing invoice network: %s', async network => {
+    const { provider, wallet } = fixture({ sessionApproved: true })
+    const raw = await wallet.decodeRgbInvoice()
+    for (const native of [network, network[0].toUpperCase() + network.slice(1)]) {
+      wallet.decodeRgbInvoice.mockResolvedValue({ ...raw, network: native })
+      expect((await provider.decodeRgbInvoice('rgb:invoice')).network).toBe(network)
+    }
+  })
+
+  test.each([null, undefined, 0, '', 'Signet ', 'unknown', 'utexo', 'bitcoin'])('rejects unknown native invoice networks: %j', async network => {
+    const { provider, wallet } = fixture({ sessionApproved: true })
+    const raw = await wallet.decodeRgbInvoice()
+    wallet.decodeRgbInvoice.mockResolvedValue({ ...raw, network })
     await expect(provider.decodeRgbInvoice('rgb:invoice')).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
   })
 

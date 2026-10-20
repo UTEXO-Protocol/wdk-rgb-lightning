@@ -2,6 +2,11 @@
 
 [![Built with WDK](./assets/built-with-wdk.png)](https://github.com/tetherto/wdk)
 
+This branch is the unpublished `0.2.0-bfa.0` migration candidate. It requires
+the matching candidate native archives; released beta.5 binaries are rejected.
+See [migration qualification](./MIGRATION-QUALIFICATION.md) for the exact
+source graph, integration procedure and pending acceptance checks.
+
 WDK module for RGB-over-Lightning, built on
 [`rgb-lightning-node`][rgb-lightning-node] (RLN). It runs a full LDK +
 `rgb-lib` Lightning node behind WDK's wallet-manager/account contract and
@@ -78,6 +83,9 @@ module-load differs.
 ## Installation
 
 Install this module with the native binding for your runtime:
+
+The registry commands below install the released beta.5 baseline. For this
+branch, use the reviewed candidate archives described in the migration guide.
 
 ```sh
 # Node.js
@@ -225,11 +233,11 @@ Notes:
 - **`getAddress()` never returns a fabricated spend address.** Before unlock
   it rejects with `AccountLockedError` unless `autoUnlockRequest` is configured; UI loaders can call
   `getAddressState()` for `{ status: 'locked', address: null }`. The WDK
-  bindings default to `reuseAddresses: true`. `rotateAddress()` advances and
-  reveals the next address before returning it. Fresh wallets can explicitly
-  set `reuseAddresses: false`; WDK caches the current receive address within the
-  account session so repeated `getAddress()` calls remain stable. Use
-  `getNewAddress()` to allocate a new receive address under either policy.
+  candidate uses `reuseAddresses: false`; the new library rejects `true`.
+  WDK caches the current receive address within the account session so
+  repeated `getAddress()` calls remain stable. Use `getNewAddress()` to
+  allocate and persist a fresh receive address. `rotateAddress()` belongs to
+  the old reuse policy and rejects with guidance to use `getNewAddress()`.
   Allocation calls are serialized across full and read-only accounts, and
   shutdown waits for in-flight allocation. The current native lifecycle repair
   drains the node before explicit signer revocation and supports the qualified

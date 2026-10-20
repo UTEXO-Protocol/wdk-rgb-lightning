@@ -348,6 +348,8 @@ export interface DecodedRgbInvoice {
   network: string
   expiration_timestamp: number | null
   transport_endpoints: string[]
+  /** Legacy field; protocol-1.0 invoices may return null. */
+  proxy_recipient_id?: string | null
   public_key?: string | null
   encryption?: 'Required' | 'Optional' | 'Unsupported'
 }
@@ -458,7 +460,7 @@ export interface RgbLightningBindingConfig {
   daemonListeningPort?: number
   ldkPeerListeningPort?: number
   maxMediaUploadSizeMb?: number
-  /** Defaults to true. False allocates fresh scripts natively; getAddress caches the current session address. Use getNewAddress for an explicit allocation. */
+  /** Defaults to false. This rgb-lib-bfa candidate rejects true. getAddress caches the current session address; getNewAddress allocates and persists a fresh script. */
   reuseAddresses?: boolean
   /**
    * Explicitly opt into virtual channels. Default is false; standard channels

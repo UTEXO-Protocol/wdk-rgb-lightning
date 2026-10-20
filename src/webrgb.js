@@ -65,6 +65,16 @@ function optionalText (value, name) {
   return value == null ? undefined : nativeText(value, name)
 }
 
+function nativeNetwork (value) {
+  // UniFFI emits Rust enum names (for example Signet), while WebRGB uses
+  // canonical lowercase names. Never substitute the wallet's own network.
+  const network = nativeText(value, 'network').toLowerCase()
+  if (!['mainnet', 'testnet', 'testnet4', 'signet', 'regtest'].includes(network)) {
+    throw new WebRgbError('INTERNAL_ERROR', 'Invalid native network')
+  }
+  return network
+}
+
 function transferAmount (assignments) {
   if (!Array.isArray(assignments)) throw new WebRgbError('INTERNAL_ERROR', 'Invalid native assignments')
   let sum
@@ -224,7 +234,9 @@ export class WebRgbProvider {
     const params = {
       assetId: assetId(raw.assetId),
       amount: raw.amount === undefined ? undefined : integer(raw.amount, 'amount'),
-      durationSeconds: integer(raw.durationSeconds === undefined ? 86400 : raw.durationSeconds, 'durationSeconds', 1, 2592000),
+      // Proxy 1.0 send/ACK needs at least fifteen minutes remaining. Use a
+      // thirty-minute receive floor so an invoice is usable after approval.
+      durationSeconds: integer(raw.durationSeconds === undefined ? 86400 : raw.durationSeconds, 'durationSeconds', 1800, 2592000),
       minConfirmations: Math.max(this.#floor, integer(raw.minConfirmations === undefined ? this.#floor : raw.minConfirmations, 'minConfirmations', 0, 255))
     }
     await this.#confirmRequest('blindReceive', { ...params })
@@ -344,7 +356,7 @@ export class WebRgbProvider {
       amount,
       recipientId: nativeText(raw.recipient_id, 'recipient ID'),
       expirationTimestamp: raw.expiration_timestamp == null ? undefined : nativeInteger(raw.expiration_timestamp, 'expiration timestamp'),
-      network: nativeText(raw.network, 'network'),
+      network: nativeNetwork(raw.network),
       transportEndpoints: [...raw.transport_endpoints]
     }
   }

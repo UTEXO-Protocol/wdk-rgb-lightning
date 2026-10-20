@@ -67,6 +67,7 @@ const outputDir = requestedOutputDir
 mkdirSync(outputDir, { recursive: true })
 
 const requiredRootFiles = [
+  'MIGRATION-QUALIFICATION.md',
   'BFA-QUALIFICATION.md',
   'WEBRGB.md',
   'webrgb.d.ts',
