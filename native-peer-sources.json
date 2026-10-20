@@ -10,8 +10,8 @@
     },
     "@utexo/rgb-lightning-node-nodejs": {
       "repository": "https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs.git",
-      "ref": "3339951bf8e8cdc2de00b9499c78e6bd744c93cc",
-      "commit": "3339951bf8e8cdc2de00b9499c78e6bd744c93cc",
+      "ref": "ce1032cc0ece3171e1e6cc17870733c2751a6045",
+      "commit": "ce1032cc0ece3171e1e6cc17870733c2751a6045",
       "version": "0.2.0-bfa.0"
     }
   }
