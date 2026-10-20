@@ -87,6 +87,10 @@ superseded; the published native beta.4 packages remain unchanged.
 
 ### Distribution and release tooling
 
+- Keep the qualified Bare 1.33 runtime bridge graph: `bare-node-runtime@1.5.0`,
+  `bare-worker@4.4.0` and `bare-module@6.4.0`. Explicit runtime dependencies
+  prevent fresh installs from selecting the newer worker/module graph that
+  requires Bare 1.35. Native peer versions and compiled artifacts are unchanged.
 - Version Bare and all three required iOS/Android data companions together at
   beta.5. Validate every payload and all seven Bare targets before use; retain
   all five qualified Node targets. Native build inputs, binary hashes and
