@@ -179,13 +179,14 @@ describe('lifecycle', () => {
     expect(shutdown).toHaveBeenCalledTimes(1)
   })
 
-  it('vssBackup wraps binding failures in a typed VssError', async () => {
+  it('vssBackup wraps custom binding failures as typed errors', async () => {
     const account = makeAccount({
       vssStatus: () => ({ configured: true }),
       vssBackup: () => { throw new Error('vss unavailable') }
     })
     const err = await account.vssBackup().catch((e) => e)
     expect(err.name).toBe('VssError')
+    expect(err.code).toBe('VSS_ERROR')
     expect(err.message).toBe('vss unavailable')
   })
 })

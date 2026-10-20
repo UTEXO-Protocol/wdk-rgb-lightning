@@ -54,35 +54,21 @@ describe('NodeRgbLightningBinding._initRequest', () => {
     expect(withPeers._initRequest.virtual_peer_pubkeys).toEqual(['02abc'])
   })
 
-  it('forwards VSS and LSP fields only when opted in', () => {
+  it('forwards LSP fields without inferring a VSS endpoint', () => {
     const binding = new NodeRgbLightningBinding({
       network: 'regtest',
       dataDir: '/d',
-      vssUrl: 'https://vss.example',
-      vssAllowHttp: true,
-      vssAllowEmptyRestore: true,
       lspBaseUrl: 'https://lsp.example',
       lspBearerToken: 'tok'
     })
     expect(binding._initRequest).toMatchObject({
-      vss_url: 'https://vss.example',
-      vss_allow_http: true,
-      vss_allow_empty_restore: true,
       lsp_base_url: 'https://lsp.example',
       lsp_bearer_token: 'tok'
     })
   })
 
-  it('vssStatus reflects the constructed config without a server round-trip', () => {
-    const off = new NodeRgbLightningBinding({ network: 'regtest', dataDir: '/d' })
-    expect(off.vssStatus()).toEqual({ configured: false, url: null, allowHttp: false, lastBackupVersion: null })
-
-    const on = new NodeRgbLightningBinding({ network: 'regtest', dataDir: '/d', vssUrl: 'https://vss.example', vssAllowHttp: true })
-    expect(on.vssStatus()).toEqual({
-      configured: true,
-      url: 'https://vss.example',
-      allowHttp: true,
-      lastBackupVersion: null
-    })
+  it('reports local unconfigured VSS status', () => {
+    const binding = new NodeRgbLightningBinding({ network: 'regtest', dataDir: '/d' })
+    expect(binding.vssStatus()).toMatchObject({ configured: false, supported: true, enabled: false, lastBackupVersion: null })
   })
 })

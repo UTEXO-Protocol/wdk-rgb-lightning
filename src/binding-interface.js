@@ -37,16 +37,10 @@
  * @property {boolean} [permissiveSignerPolicy] - Whether the in-process VLS
  *   signer uses its permissive policy filter. Defaults to `false`; the released
  *   native runtime rejects permissive mode on mainnet.
- * @property {string} [vssUrl] - VSS cloud-backup service URL. Omit to disable
- *   VSS. Only HTTPS and loopback HTTP URLs are accepted unless `vssAllowHttp`
- *   is enabled. Backup encryption is derived from the wallet seed, which is
- *   required for recovery.
- * @property {boolean} [vssAllowHttp] - Permit non-loopback VSS URLs to use
- *   plain HTTP. Defaults to `false` to avoid transmitting channel state in
- *   plaintext accidentally.
- * @property {boolean} [vssAllowEmptyRestore] - Continue with empty local state
- *   when VSS restore fails on a fresh device. Defaults to `false`; enable only
- *   when intentionally bootstrapping a new node without restored state.
+ * @property {string} [vssUrl] - Explicit VSS endpoint; HTTPS required by default.
+ * @property {boolean} [vssAllowHttp] - Explicitly permit HTTP for local testing.
+ * @property {boolean} [vssAllowEmptyRestore] - Permit initialization when no remote backup exists.
+ * @property {boolean} [vssAutomaticBackupEnabled] - Initial automatic snapshot default; persisted native wallet policy wins.
  * @property {string} [lspBaseUrl] - Base URL for RLN's internal APay client.
  *   Required by `apayNew()` and `bootstrapLsp()`; omit to disable APay.
  * @property {string} [lspBearerToken] - Bearer token sent to the LSP's
@@ -69,22 +63,16 @@
  *   with unlock.
  * @property {() => object} bootstrap - Return the signer's bootstrap payload
  *   (`node_id`, xpubs, and master fingerprint).
- * @property {(password: string) => void} clearVssFence - Forcibly take over a
- *   stale VSS ownership fence after the previous node died holding it. Requires
- *   the wallet password and configured VSS. Only call this after confirming the
- *   previous owner is gone; two live owners can corrupt channel state.
- * @property {() => {version: number}} vssBackup - Force an immediate VSS
- *   backup flush. Returns `{ version }` where
- *   version is the snapshot index just persisted. Useful for app-
- *   controlled checkpoints (e.g. "save state before app suspend") rather than
- *   relying on the implicit on-write flush. Requires configured VSS and a
- *   successful server flush.
- * @property {() => { configured: boolean, url: string|null, allowHttp: boolean, lastBackupVersion: number|null }} vssStatus - Return
- *   local-view VSS status without a server round-trip: whether VSS was
- *   configured at construction, the URL + allow-http flag, and the
- *   version from the most recent `vssBackup()` this session. RLN's
- *   C-FFI exposes no read-only server-side backup-info query, so for
- *   a live server version call `vssBackup()`.
+ * @property {(password: string, expectedScope?: {network: string, dataDir: string, vssUrl: string, nodeId: string}) => {ok: true}} clearVssFence - Explicit takeover;
+ *   native requires a locked node. Never called automatically.
+ * @property {() => {version: number}} vssBackup - Upload current RGB state.
+ * @property {(expectedScope?: object) => object} prepareVssRestore - Download and validate an existing RGB snapshot before first unlock.
+ * @property {() => object|null} getVssRestoreInfo - Actual per-handle/durable restore receipt and native unlocked state.
+ * @property {() => object} getVssBackupMetadata - Durable native completion receipt and automatic snapshot policy.
+ * @property {(enabled: boolean) => {automatic_backup_enabled: boolean}} setVssAutomaticBackupEnabled - Confirmed automatic snapshot preference.
+ * @property {() => object} getVssBackupInfo - Read actual backup state without writes.
+ * @property {() => object} vssStatus - Local configuration and last successful RGB
+ *   upload in this session, without a remote health query or recovery guarantee.
  * @property {(hostNodeId: string) => object} apayNew - Register this node
  *   with an LSP as an async-payments (APay) recipient.
  *   Used for offline-receive over Lightning Address: the wallet uploads
@@ -100,6 +88,14 @@
  *   unchanged.
  * @property {() => void} shutdown - Idempotently release the node handle and
  *   destroy the signer.
+ * @property {() => { signing: boolean, verification: boolean }} [getMessageSigningCapabilities] -
+ *   Detect the native BIP-322 simple extension without constructing a handle.
+ * @property {() => string} [getMessageSigningAddress] - Read the fixed owned
+ *   first vanilla BIP86 address without allocating or rotating a script.
+ * @property {(message: string, address: string) => string} [signMessageBip322] -
+ *   Sign an exact UTF-8 message for the explicitly supplied owned address.
+ * @property {(message: string, address: string, signature: string) => boolean} [verifyMessageBip322] -
+ *   Public-key verification of a BIP-322 simple proof on the configured network.
  */
 
 export {}

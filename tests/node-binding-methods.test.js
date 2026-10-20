@@ -488,68 +488,13 @@ describe('bootstrap', () => {
   })
 })
 
-describe('clearVssFence', () => {
-  it('ensures the node then calls vssClearFence with the password', () => {
-    const b = makeBinding()
-    const node = fakeNode()
-    b._node = node
-    b.clearVssFence('pw')
-    expect(node.vssClearFence).toHaveBeenCalledWith({ password: 'pw' })
-  })
-
-  it('lazily creates the node when none exists before clearing the fence', () => {
-    const b = makeBinding()
-    const node = fakeNode()
-    const ensureSpy = jest.spyOn(b, 'ensureNode').mockReturnValue(node)
-    b.clearVssFence('pw')
-    expect(ensureSpy).toHaveBeenCalledTimes(1)
-    expect(node.vssClearFence).toHaveBeenCalledWith({ password: 'pw' })
-  })
-})
-
-describe('vssBackup', () => {
-  it('returns the node result and records a numeric version', () => {
-    const b = makeBinding()
-    const node = fakeNode()
-    b._node = node
-    const r = b.vssBackup()
-    expect(r).toEqual({ version: 7 })
-    expect(b._lastVssVersion).toBe(7)
-  })
-
-  it('does not record _lastVssVersion when version is not numeric', () => {
-    const b = makeBinding()
-    const node = fakeNode()
-    node.vssBackup.mockReturnValue({ version: 'nope' })
-    b._node = node
-    b.vssBackup()
-    expect(b._lastVssVersion).toBeNull()
-  })
-
-  it('returns a primitive native result without treating it as a snapshot', () => {
-    const b = makeBinding()
-    const node = fakeNode()
-    node.vssBackup.mockReturnValue('unexpected')
-    b._node = node
-    expect(b.vssBackup()).toBe('unexpected')
-    expect(b._lastVssVersion).toBeNull()
-  })
-
-  it('returns null and leaves _lastVssVersion untouched when the node returns null', () => {
-    const b = makeBinding()
-    const node = fakeNode()
-    node.vssBackup.mockReturnValue(null)
-    b._node = node
-    expect(b.vssBackup()).toBeNull()
-    expect(b._lastVssVersion).toBeNull()
-  })
-
-  it('lazily obtains the node through ensureNode()', () => {
-    const b = makeBinding()
-    const node = fakeNode()
-    const ensureSpy = jest.spyOn(b, 'ensureNode').mockReturnValue(node)
-    expect(b.vssBackup()).toEqual({ version: 7 })
-    expect(ensureSpy).toHaveBeenCalledTimes(1)
+describe('VSS configuration admission', () => {
+  it('blocks both mutations before obtaining a native node', () => {
+    const binding = makeBinding()
+    const ensure = jest.spyOn(binding, 'ensureNode')
+    expect(() => binding.clearVssFence('private-password')).toThrow(expect.objectContaining({ code: 'VSS_NOT_CONFIGURED' }))
+    expect(() => binding.vssBackup()).toThrow(expect.objectContaining({ code: 'VSS_NOT_CONFIGURED' }))
+    expect(ensure).not.toHaveBeenCalled()
   })
 })
 

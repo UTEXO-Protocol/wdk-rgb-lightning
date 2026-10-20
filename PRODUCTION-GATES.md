@@ -1,10 +1,136 @@
-# Release qualification: 0.2.0-beta.4
+# Release qualification: 0.2.0-beta.5
 
-Working branch: `release/rln-0.15.0-beta.3`. This register separates engineering
+**19 October 2026 functional VSS re-enablement:** explicit VSS initialization,
+automatic/manual RGB backup, restore and user-requested locked-node fence takeover
+are enabled. Current work retains the upstream protocol; public-derived external
+signer credentials, interrupted chunk replacement, separate signer state and stale
+writer fences remain qualification limitations. Functional upload/restore evidence
+must not be relabeled as whole-wallet or arbitrary crash recovery. Dated observations
+below retain their original source and artifact identity.
+
+Current working branch: `feat/bip322-message-signing`. This register separates engineering
 verification from decisions about release scope. An item is closed only by the
 evidence listed here, not by a general CI success.
 
-## Merged-main source and package admission
+## Beta.5 release preparation — 20 October 2026
+
+WDK, Bare, Node and all three required Bare data companions target
+**0.2.0-beta.5**. The earlier WDK beta.4 npm stage is superseded, not approved or
+finalized; its existing Git tag remains historical. Published native beta.4
+packages are unchanged and cannot provide these extensions.
+
+The release PRs [Bare #28](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/pull/28)
+and [Node #27](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/pull/27)
+merged on 20 October 2026. The source manifest now admits `main` at their exact
+merge commits:
+
+| Peer | Merged-main commit | Qualified release head | Complete Git tree |
+| --- | --- | --- | --- |
+| Bare | `54110d5db7f0f67c18c02d2dd188ad2763e95003` | `022f52c62b774f2ca8bd590c04f45e92356fbfae` | `8eec8a3e6819363e30d7920a8909e1f78728ec1c` |
+| Node | `8b78387df4c33140a52c19c6de6fcc8d4aa7595c` | `fb5b2befd8ddfddec41f8cd2179b0a3324ca2c6f` | `8a535bdf114c069e28feb95b583fc0e9ae787dd7` |
+
+Each complete merged tree equals its qualified release head. This admission
+refresh changes source pins and release evidence only; existing native binary
+bytes, runtime/build inputs and compilation identities are unchanged. The
+merged-main gate remains enforced. Registry admission separately requires the
+complete published beta.5 graph, exact package-source metadata and native
+provenance; a source merge does not establish publication.
+
+The version preparation preserves the qualified native inputs and compiled
+binary bytes. Bare adds an exact beta.5 iOS archive identity alongside the
+unchanged frozen beta.4 identity; no native runtime behavior or old archive
+allowance is relaxed. New source/package, local consumer and CI receipts are
+recorded on PR #48. Earlier financial, platform and recovery scopes retain their
+original identities and are not relabeled as new acceptance.
+
+## Qualified VSS main-source baseline before beta.5 versioning
+
+
+The maintained Bare/Node adapter for this change is
+`6d46717b80ffba8ed8af2de023a536af242aadcacbbb799fb9bb89f8933e4ca5`.
+WDK requires the enabled VSS backup/restore, automatic-policy and upload-receipt
+capabilities in `src/native-runtime-contract.js`; older containment or published
+beta.4 binaries cannot satisfy this contract.
+
+Bare [#27](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/pull/27) and
+Node [#26](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/pull/26)
+are merged. The preceding source-admission refresh admitted `main` at these exact commits:
+
+| Peer | Merged-main commit | Previously qualified feature head | Complete Git tree |
+| --- | --- | --- | --- |
+| Bare | `c5425a3185677bcddfd5a46e278783eed431e2ab` | `78831157b86aea63ef50bbe69f6eeb8c4c0df6fd` | `81c78fd45c7d7530457b9442caedf86f49322c29` |
+| Node | `5ffe8f22b9b242a5be4b21765395b206136f5a06` | `a1fb8291d946685e2e668156ac520f0581302b96` | `6833c954772fa596da8b37563546b5c2cd1e8ec9` |
+
+Each merged tree exactly matches its qualified feature head. RLN, rgb-lib, LDK,
+adapter, wrapper, lock and build-recipe inputs are unchanged. No native rebuild
+is required for this source-admission update. Existing compiled binaries and
+host/mobile receipts retain their original source, artifact and test scopes;
+they are not relabeled as new merge-commit builds or new financial acceptance.
+
+That source-admission refresh used beta.4 candidate versions for feature
+integration. The beta.5 release preparation above supersedes that package
+metadata. Published beta.4 peers contain the older graph and remain invalid for
+this runtime. Native publication and final registry qualification are separate
+prerequisites; no source update authorizes a merge, tag or publication.
+
+That source-only admission refresh passed the verifier against fresh isolated merged-main
+checkouts, all **33 Jest suites / 1,267 tests**, lint, declarations, optional
+WebRGB compatibility and all three fault-harness ownership tests. The production
+npm dependency audit reports zero vulnerabilities. Exact final package and CI
+identities are recorded on [PR #48](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/pull/48).
+Financial, backup-service and mobile runtime scopes are not repeated by this
+source/documentation update.
+
+Staged restoration downloads a real
+archive before native unlock, validates archive paths and wallet identity, and
+promotes it without overwriting existing data. A destination-bound local HMAC
+receipt permits interrupted preparation to resume. Post-unlock evidence requires
+the SDK consistency check to have completed. Remote existence after a fresh
+upload is not restoration evidence. This establishes recovered RGB state and
+known scripts; it does not establish a full seed/address scan, VLS signer-state
+recovery or application-journal recovery.
+
+The maintained extractor bounds and validates downloaded archives. The pinned
+public SDK download API can allocate from remote manifest sizes before returning
+those bytes, and its encryption option does not enforce encryption on inbound
+archives. No HTTP-body allocation bound or inbound ciphertext guarantee is
+claimed. These are recorded qualification limits, not a blanket VSS refusal.
+
+## Earlier merged native admission (before VSS re-enablement)
+
+Bare [#26](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/pull/26)
+and Node [#25](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/pull/25)
+merged on 19 October 2026. At that stage, the source manifest admitted `main` at
+these exact commits:
+
+| Peer | Merged-main commit |
+| --- | --- |
+| Bare | `338d94e2ce5a1c2865296edf32f6c061ce0be175` |
+| Node | `3ccfdc72c8620a35871bddffd1f44d1dd0a9954e` |
+
+Their source trees are identical to the previously qualified feature heads
+`c1994daf1d14a4dfd37846f9f91915f357aa7b4b` and
+`b54ad25cdd80b244c84f9b309c07c0f37315efc1`, respectively. The adapter remains
+`d8b5be9809b12acd48fa5958014b4655ff94598c99800a2fafb9e3e81809aebf`.
+RLN, rgb-lib and LDK source pins, runtime code and native payload bytes are not
+changed by this WDK source-admission update. Prior native execution receipts keep
+their original feature-head compilation identities; a merge does not relabel a
+binary as rebuilt from the merge commit.
+
+The unpublished candidate adds BIP-322 proofs and VSS integration. Published
+`0.2.0-beta.4` artifacts do not contain those extensions. The existing package
+version is retained for source integration only; registry release admission must
+continue to reject the older published native graph. No publication or production
+approval is implied. Current checks and their exact candidate identity are
+recorded on [PR #48](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/pull/48).
+
+This source update passes the exact merged-main source verifier against clean
+native checkouts, all **31 Jest suites / 1,128 tests**, lint, declaration checks,
+WebRGB compatibility and all three fault-harness ownership tests. Only the source
+manifest, this current qualification note and the Unreleased changelog change;
+previous packed-consumer and mobile receipts retain their original WDK identities.
+
+## Historical beta.4 source and package admission
 
 Bare lifecycle #22, distributions #24/#25 and Node #24 are merged into `main`.
 Both Bare #25 contract CI jobs pass in
@@ -571,7 +697,7 @@ and final artifact approval remain open.
 | S02 | Keep the #192 native source or adopt newer merged upstream work? | The October 14 exact pin adopts v0.17.0-beta.3 with rgb-lib beta.50-bfa and rust-lightning `79b9eb5`. The dependency graph changed, not only a capability flag. Native builds, security review and funded/recovery/device qualification remain separate from WDK API tests. |
 | S03 | Include burn in this release? | Generic WDK `burnAsset` and native capability gating are implemented. Full accounts report support; read-only accounts do not. Exact-source Bare-host funded burn/proof passes as scoped above; Node-funded, mobile, payout and uncertain-outcome recovery remain gates. Durable bridge operation recovery, sessions, approval and transport are Iris/application responsibilities and are not added to WDK. |
 | S04 | Which asset schemas and deployments are supported? | Mainnet IFA is rejected by the current upstream library. Local six-decimal IFA/NIA fixtures are not production USDT. Mainnet BFA needs an approved bridge/token/contract identity and Ethereum RPC configuration, plus P06 closure. |
-| S05 | Is VSS part of this release? | Deferred by request. No device-loss or VSS recovery claim. The source contains VSS APIs but that does not qualify the service or recovery policy. |
+| S05 | Is VSS part of this release? | Explicit VSS backup/restore and locked-node takeover are enabled. Upstream protocol limitations and signer/application-state exclusions remain; no arbitrary crash/device-loss claim. Historical functional passes remain dated evidence. |
 | S06 | Retain the breaking 0.2 API boundary? | Thirteen legacy custom on-chain operations and related unreleased semantics remain explicit unsupported capabilities. No broad behavior fork is added. WDK base-contract upgrades are a separate change from this native release. |
 
 RLN #180 also merged to `dev`, but it authenticates the separate TCP signer

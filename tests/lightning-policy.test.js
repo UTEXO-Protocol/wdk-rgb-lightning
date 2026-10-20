@@ -1,3 +1,4 @@
+import { vssCapabilities } from '../src/vss-policy.js'
 import { jest } from '@jest/globals'
 import WalletAccount from '../src/wallet-account-rgb-lightning.js'
 import { LightningDisabledError } from '../index-node.js'
@@ -115,7 +116,16 @@ describe('mainnet Lightning policy', () => {
       consignmentExport: true,
       bfaAssetListing: true,
       bfaValidation: true,
-      burn: true
+      burn: true,
+      vss: vssCapabilities(),
+      bip322: {
+        signing: false,
+        verification: false,
+        protocol: 'bip322-simple',
+        specVersion: '2.0.0',
+        addressTypes: ['p2tr'],
+        verificationAddressTypes: ['p2tr', 'p2wpkh']
+      }
     })
     await expect(account.getBfaCapabilities()).resolves.toEqual({ bfa: true, burn: true, consignment: true })
     const readOnly = await account.toReadOnlyAccount()

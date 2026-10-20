@@ -28,6 +28,7 @@ export {
   UnlockError,
   VssError,
   VssNotConfiguredError,
+  VssUnsupportedError,
   ApayError,
   NotImplementedError
 } from './src/errors.js'

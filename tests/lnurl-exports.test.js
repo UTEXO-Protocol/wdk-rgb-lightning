@@ -10,6 +10,10 @@ describe.each([
   ['Node', nodeEntry],
   ['Bare', bareEntry]
 ])('%s entry LNURL exports', (runtime, entry) => {
+  it('exports the stable VSS safety error through the public runtime entry', () => {
+    expect(new entry.VssUnsupportedError()).toBeInstanceOf(entry.VssError)
+    expect(new entry.VssUnsupportedError().code).toBe('ERR_VSS_UNSAFE_UPSTREAM')
+  })
   it('exposes UMA normalization consistently', () => {
     expect(entry.default.Binding).toBe(entry[`${runtime}RgbLightningBinding`])
     expect(entry.UMA_PREFIX).toBe('$')

@@ -4,13 +4,15 @@
 // you may not use this file except in compliance with the License.
 'use strict'
 
+import { vssCapabilities, localVssStatus } from './vss-policy.js'
 import { exactUnsignedNumber, validateUnspents } from './released-native-contract.js'
 import { receiveAddress } from './receive-address.js'
 import { consignmentLookup, consignmentBytes } from './consignment-export.js'
+import { bip322Capabilities, requireBip322, validateBip322Address, validateBip322Message, validateBip322Signature } from './bip322-contract.js'
 
 import { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 
-import { AccountLockedError } from './errors.js'
+import { AccountLockedError, VssError, VssNotConfiguredError, wrapError } from './errors.js'
 import { assertLightningEnabled } from './lightning-policy.js'
 
 /** @typedef {import('@tetherto/wdk-wallet').Transaction} Transaction */
@@ -99,6 +101,9 @@ export function createReadOnlyRgbLightningAdapter (binding) {
     isDisposed: () => binding._closed === true,
     bootstrap: () => binding.bootstrap(),
     vssStatus: () => binding.vssStatus(),
+    getVssBackupInfo: () => binding.getVssBackupInfo(),
+    getVssBackupMetadata: () => binding.getVssBackupMetadata(),
+    getVssRestoreInfo: () => binding.getVssRestoreInfo(),
     nodeInfo: () => callNode('nodeInfo'),
     networkInfo: () => callNode('networkInfo'),
     address: () => receiveAddress(binding),
@@ -123,6 +128,9 @@ export function createReadOnlyRgbLightningAdapter (binding) {
     listUnspents: (skipSync) => callNode('listUnspents', skipSync),
     estimateFee: (blocks) => callNode('estimateFee', blocks),
     verifyMessage: (message, signature) => callNode('verifyMessage', message, signature),
+    // Verification is public-key only and never creates or unlocks RLN.
+    getMessageSigningCapabilities: () => bip322Capabilities(binding, true),
+    verifyMessageBip322: (message, address, signature) => binding.verifyMessageBip322(message, address, signature),
     checkIndexerUrl: (indexerUrl) => callNode('checkIndexerUrl', indexerUrl),
     checkProxyEndpoint: (proxyEndpoint) => callNode('checkProxyEndpoint', proxyEndpoint)
   })
@@ -177,7 +185,9 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
       consignmentExport: true,
       bfaAssetListing: true,
       bfaValidation: true,
-      burn: false
+      burn: false,
+      vss: vssCapabilities(true),
+      bip322: bip322Capabilities(this._reader, true)
     }
   }
 
@@ -197,19 +207,34 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
    */
   async getBootstrap () { return this._reader.bootstrap() }
 
-  /**
-   * Returns the local VSS configuration and backup status.
-   *
-   * This query does not contact the VSS server.
-   *
-   * @returns {Promise<{
-   *   configured: boolean,
-   *   url: string | null,
-   *   allowHttp: boolean,
-   *   lastBackupVersion: number | null
-   * }>} The local VSS status.
-   */
-  async vssStatus () { return this._reader.vssStatus() }
+  /** Local status only; no remote health or restore guarantee. */
+  async vssStatus () { return this._reader.vssStatus?.() ?? localVssStatus() }
+
+  /** Read actual backup state without invoking an upload, restore or takeover. */
+  async getVssBackupInfo () {
+    try { return await this._reader.getVssBackupInfo() } catch (error) {
+      if (error instanceof AccountLockedError || error instanceof VssNotConfiguredError) throw error
+      if (isLockedError(error)) throw new AccountLockedError('Unlock the RGB Lightning account before reading backup information.', { cause: error })
+      throw wrapError(error, VssError)
+    }
+  }
+
+  /** Native successful completion time and confirmed snapshot policy; never uploads. */
+  async getVssBackupMetadata () {
+    try { return await this._reader.getVssBackupMetadata() } catch (error) {
+      if (error instanceof AccountLockedError || error instanceof VssNotConfiguredError) throw error
+      if (isLockedError(error)) throw new AccountLockedError('Unlock the RGB Lightning account before reading backup metadata.', { cause: error })
+      throw wrapError(error, VssError)
+    }
+  }
+
+  /** Actual restore provenance; null means no successful preparation on this native handle. */
+  async getVssRestoreInfo () {
+    try { return await this._reader.getVssRestoreInfo() } catch (error) {
+      if (error instanceof AccountLockedError || error instanceof VssNotConfiguredError) throw error
+      throw wrapError(error, VssError)
+    }
+  }
 
   /**
    * Returns identity and runtime information for the Lightning node.
@@ -540,6 +565,21 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
       throw error
     }
     return typeof result === 'boolean' ? result : result?.valid === true
+  }
+
+  /**
+   * Verify a public BIP-322 simple proof for an explicit Bitcoin address.
+   * Accepts the v2 smp prefix and historical prefixless simple proofs. This
+   * never invokes the legacy Lightning node-identity verifier.
+   */
+  async verifyMessageBip322 (message, address, signature) {
+    validateBip322Message(message)
+    validateBip322Address(address, this.getNetwork())
+    validateBip322Signature(signature)
+    requireBip322(this._reader, 'verification')
+    const result = await this._reader.verifyMessageBip322(message, address, signature)
+    if (typeof result !== 'boolean') throw new Error('BIP-322 verifier returned an invalid result')
+    return result
   }
 
   /**

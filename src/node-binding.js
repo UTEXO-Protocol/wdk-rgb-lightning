@@ -10,12 +10,15 @@
 // lockstep with `bare-binding.js` so the WDK layer is identical across
 // runtimes — see binding-interface.js for the contract.
 
+import { assertVssConfigurationSafe, localVssStatus, validateVssBackup, validateVssBackupInfo, assertVssRecoveryScope, validateVssRestoreReceipt, validateVssAutomaticBackupResult, validateVssBackupMetadata } from './vss-policy.js'
+import { VssNotConfiguredError, AccountLockedError, VssError } from './errors.js'
 import rln from '@utexo/rgb-lightning-node-nodejs'
 import { retainSecret, revealSecret, secretMatches, wipeSecret } from './secret-buffer.js'
 import { signerStoragePath } from './signer-storage-path.js'
 import { normalizeUnlockRequest } from './node-unlock-request.js'
 import { assertNativeRuntime } from './native-runtime-contract.js'
 import { addressReuse } from './receive-address.js'
+import { nativeSupportsBip322, requireBip322, validateBip322Message, validateBip322Address, validateBip322Signature } from './bip322-contract.js'
 
 const {
   SdkNode,
@@ -52,6 +55,7 @@ export class NodeRgbLightningBinding {
    *   configuration.
    */
   constructor (config) {
+    assertVssConfigurationSafe(config)
     assertNativeRuntime(rln)
     this._config = { ...config }
     this._closed = false
@@ -70,11 +74,14 @@ export class NodeRgbLightningBinding {
     if (Array.isArray(config.virtualPeerPubkeys) && config.virtualPeerPubkeys.length > 0) {
       this._initRequest.virtual_peer_pubkeys = config.virtualPeerPubkeys
     }
-    // VSS fields are only forwarded when the host opts in. Omitting them
-    // lets the RLN-side `#[serde(default)]` keep VSS fully disabled.
-    if (config.vssUrl) this._initRequest.vss_url = config.vssUrl
-    if (config.vssAllowHttp) this._initRequest.vss_allow_http = true
-    if (config.vssAllowEmptyRestore) this._initRequest.vss_allow_empty_restore = true
+    if (config.vssUrl !== undefined) {
+      this._initRequest.vss_url = config.vssUrl
+      this._initRequest.vss_allow_http = config.vssAllowHttp ?? false
+      this._initRequest.vss_allow_empty_restore = config.vssAllowEmptyRestore ?? false
+      if (config.vssAutomaticBackupEnabled !== undefined) this._initRequest.vss_automatic_backup_enabled = config.vssAutomaticBackupEnabled
+    }
+    this._lastBackupVersion = null
+    this._vssCheckpointFailed = false
     // LSP / APay wiring — see BareRgbLightningBinding for the contract.
     if (config.lspBaseUrl) this._initRequest.lsp_base_url = config.lspBaseUrl
     if (config.lspBearerToken) this._initRequest.lsp_bearer_token = config.lspBearerToken
@@ -90,8 +97,6 @@ export class NodeRgbLightningBinding {
     this._fallbackSeedHex = undefined
     /** @type {boolean} */
     this._sdkInitDone = false
-    /** @type {number | null} Snapshot version returned by the most recent vssBackup(). */
-    this._lastVssVersion = null
   }
 
   /**
@@ -158,19 +163,7 @@ export class NodeRgbLightningBinding {
    */
   unlock (unlockRequest) {
     unlockRequest = normalizeUnlockRequest(unlockRequest)
-    let node = this.ensureNode()
-    if (!this._signer) {
-      throw new Error('attachExternalSigner(seedHex) must be called before unlock()')
-    }
-    if (!this._sdkInitDone) {
-      try {
-        node.initWithNativeExternalSigner(this._signer)
-      } catch (e) {
-        const msg = String(e && e.message ? e.message : e)
-        if (!msg.startsWith('Rln(Conflict):')) throw e
-      }
-      this._sdkInitDone = true
-    }
+    let node = this._initializeExternalNode()
     try {
       node.unlockWithNativeExternalSigner(this._signer, unlockRequest)
       wipeSecret(this._fallbackSeedHex)
@@ -232,57 +225,96 @@ export class NodeRgbLightningBinding {
     return this._signer.bootstrap()
   }
 
-  /**
-   * Take over a stale VSS ownership fence after a previous node died
-   * holding it. Authenticates with the wallet password.
-   *
-   * @param {string} password - Wallet password used to authenticate the VSS
-   *   fence takeover.
-   * @throws {Error} - If VSS is not configured or the native takeover fails.
-   */
-  clearVssFence (password) {
+  /** @private Initialize key-source identity without unlocking or creating an RGB wallet. */
+  _initializeExternalNode () {
     const node = this.ensureNode()
-    node.vssClearFence({ password })
+    if (!this._signer) {
+      throw new Error('attachExternalSigner(seedHex) must be called before unlock()')
+    }
+    if (!this._sdkInitDone) {
+      try {
+        node.initWithNativeExternalSigner(this._signer)
+      } catch (e) {
+        const msg = String(e && e.message ? e.message : e)
+        if (!msg.startsWith('Rln(Conflict):')) throw e
+      }
+      this._sdkInitDone = true
+    }
+    return node
   }
 
-  /**
-   * Force an immediate VSS backup flush. Returns the snapshot index just
-   * persisted, allowing app-controlled checkpoints instead of relying only on
-   * implicit on-write flushes.
-   *
-   * @returns {{version: number}} - Persisted VSS snapshot version.
-   * @throws {Error} - If VSS is not configured or the backup flush fails.
-   */
+  /** Download and promote an existing VSS snapshot before native wallet creation. */
+  prepareVssRestore (expectedScope) {
+    if (!this._config.vssUrl) throw new VssNotConfiguredError()
+    assertVssRecoveryScope(this._config, expectedScope, () => this.bootstrap())
+    const node = this._initializeExternalNode()
+    return validateVssRestoreReceipt(node.prepareVssRestore(), this._config, this.bootstrap())
+  }
+
+  /** Read actual per-handle restore provenance; never infers it from cloud existence. */
+  getVssRestoreInfo () {
+    if (this._closed || !this._node) return null
+    return validateVssRestoreReceipt(this._node.vssRestoreInfo(), this._config, this.bootstrap(), true)
+  }
+
+  /** Explicit takeover only. Native rejects takeover while this node is unlocked. */
+  clearVssFence (password, expectedScope) {
+    if (typeof password !== 'string') throw new TypeError('clearVssFence requires a string password')
+    if (!this._config.vssUrl) throw new VssNotConfiguredError()
+    assertVssRecoveryScope(this._config, expectedScope, () => this.bootstrap())
+    this.ensureNode().vssClearFence({ password })
+    return { ok: true }
+  }
+
+  /** Upload the current RGB backup. No whole-wallet atomicity is implied. */
   vssBackup () {
+    if (!this._config.vssUrl) throw new VssNotConfiguredError()
     const node = this.ensureNode()
-    const r = node.vssBackup()
-    if (r && typeof r === 'object' && 'version' in r && typeof r.version === 'number') {
-      this._lastVssVersion = r.version
+    validateVssBackup(node.vssBackup())
+    // The upload's raw version may use a different object counter after crossing
+    // the chunk threshold. Acknowledgement uses the canonical remote manifest.
+    let info
+    try {
+      info = validateVssBackupInfo(node.vssBackupInfo())
+      if (!info.backup_exists || info.version === null || info.backup_required) throw new Error()
+    } catch (error) {
+      throw new VssError('The RGB upload finished but its remote manifest could not be confirmed.', { cause: error })
     }
-    return r
+    this._lastBackupVersion = info.version
+    this._vssCheckpointFailed = false
+    return { version: info.version }
   }
 
-  /**
-   * Local-view VSS status. RLN's C-FFI exposes no read-only
-   * server-side backup-info query (unlike rgb-lib's `vssBackupInfo`),
-   * so this reports what the host can know without a round-trip:
-   * whether VSS was configured at construction, the configured URL +
-   * allow-http flag, and the snapshot version from the most recent
-   * `vssBackup()` call this session (`null` if none yet). For a live
-   * server version, call `vssBackup()` (it flushes and returns the
-   * fresh `{ version }`).
-   *
-   * @returns {{ configured: boolean, url: string|null, allowHttp: boolean, lastBackupVersion: number|null }} - Local
-   *   VSS configuration and last observed backup version.
-   */
-  vssStatus () {
+  /** Observe actual native/remote RGB backup state. Requires an existing unlocked node. */
+  getVssBackupInfo () {
+    if (!this._config.vssUrl) throw new VssNotConfiguredError()
+    if (this._closed || !this._node) throw new AccountLockedError('Unlock the RGB Lightning account before reading backup information.')
+    const info = validateVssBackupInfo(this._node.vssBackupInfo())
+    this._lastBackupVersion = info.version
     return {
-      configured: !!this._config.vssUrl,
-      url: this._config.vssUrl ?? null,
-      allowHttp: !!this._config.vssAllowHttp,
-      lastBackupVersion: this._lastVssVersion
+      ...info,
+      backup_required: info.backup_required || this._vssCheckpointFailed,
+      last_auto_backup_failed: info.last_auto_backup_failed || this._vssCheckpointFailed
     }
   }
+
+  /** Read durable local upload receipts without manufacturing a timestamp from a health read. */
+  getVssBackupMetadata () {
+    if (!this._config.vssUrl) throw new VssNotConfiguredError()
+    if (this._closed || !this._node) throw new AccountLockedError('Unlock the RGB Lightning account before reading backup metadata.')
+    return validateVssBackupMetadata(this._node.vssBackupMetadata(), this._config, this.bootstrap())
+  }
+
+  /** Native changes only snapshot scheduling; the VSS client remains available for manual backup/restore. */
+  setVssAutomaticBackupEnabled (enabled) {
+    if (typeof enabled !== 'boolean') throw new TypeError('Automatic VSS backup requires a boolean')
+    if (!this._config.vssUrl) throw new VssNotConfiguredError()
+    if (this._closed || !this._node) throw new AccountLockedError('Unlock the RGB Lightning account before changing automatic backup.')
+    return validateVssAutomaticBackupResult(this._node.setVssAutomaticBackupEnabled(enabled), enabled)
+  }
+
+  /** Local status only; failed backups never advance the last successful version. */
+  vssStatus () { return localVssStatus(this._config, this._lastBackupVersion) }
 
   /**
    * Register this node with an LSP as an APay recipient so the LSP can accept
@@ -317,6 +349,35 @@ export class NodeRgbLightningBinding {
       )
     }
     return node.apayNewWithAddress(hostNodeId, username, domain)
+  }
+
+  /** Native feature support, without constructing an RLN node or signer. */
+  getMessageSigningCapabilities () {
+    const supported = nativeSupportsBip322(rln)
+    return { signing: supported, verification: supported }
+  }
+
+  /** Fixed first vanilla BIP86 receive address; no allocation or rotation. */
+  getMessageSigningAddress () {
+    requireBip322(this, 'signing')
+    return validateBip322Address(this.ensureNode().getMessageSigningAddress(), this._config.network)
+  }
+
+  signMessageBip322 (message, address) {
+    validateBip322Message(message)
+    validateBip322Address(address, this._config.network)
+    requireBip322(this, 'signing')
+    return validateBip322Signature(this.ensureNode().signMessageBip322(message, address), true)
+  }
+
+  verifyMessageBip322 (message, address, signature) {
+    validateBip322Message(message)
+    validateBip322Address(address, this._config.network)
+    validateBip322Signature(signature)
+    requireBip322(this, 'verification')
+    const result = rln.verifyMessageBip322(message, address, signature, this._config.network)
+    if (typeof result !== 'boolean') throw new Error('BIP-322 verifier returned an invalid result')
+    return result
   }
 
   /**

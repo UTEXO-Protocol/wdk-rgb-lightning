@@ -113,6 +113,39 @@ describe('WalletManagerRgbLightning', () => {
     expect(binding.shutdown).toHaveBeenCalledTimes(1)
   })
 
+  it('rejects synchronous disposal while a VSS upload owns the native handle', async () => {
+    const manager = new TestManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
+    const account = await manager.getAccount()
+    const binding = FakeBinding.instances[0]
+    let release
+    binding.vssBackup = jest.fn(() => new Promise(resolve => { release = resolve }))
+    const backup = account.vssBackup()
+    await Promise.resolve()
+    expect(() => manager.dispose()).toThrow('Await account activation and shutdown')
+    expect(binding.shutdown).not.toHaveBeenCalled()
+    release({ version: 7 })
+    await backup
+    await account.shutdown()
+    expect(() => manager.dispose()).not.toThrow()
+  })
+
+  it('rejects synchronous disposal from the moment a policy transition is admitted', async () => {
+    const manager = new TestManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
+    const account = await manager.getAccount()
+    const binding = FakeBinding.instances[0]
+    let release
+    binding.setVssAutomaticBackupEnabled = jest.fn(() => new Promise(resolve => { release = resolve }))
+    const policy = account.setVssAutomaticBackupEnabled(false)
+    expect(account._vssPending).toBe(0) // The transition has not reached the upload queue yet.
+    expect(() => manager.dispose()).toThrow('Await account activation and shutdown')
+    expect(binding.shutdown).not.toHaveBeenCalled()
+    for (let tick = 0; tick < 10; tick++) await Promise.resolve()
+    release({ automatic_backup_enabled: false })
+    await policy
+    await account.shutdown()
+    expect(() => manager.dispose()).not.toThrow()
+  })
+
   it('dispose is a no-op before an account has created a binding', () => {
     const manager = new TestManager(MNEMONIC, { network: 'regtest', dataDir: '/wallet' })
     expect(() => manager.dispose()).not.toThrow()

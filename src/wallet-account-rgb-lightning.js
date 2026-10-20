@@ -23,6 +23,8 @@ import { normalizeUnlockRequest, normalizeAutoUnlockRequest, sameUnlockRequest }
 import { exactUnsignedNumber, validatePaymentRequest, validateRefreshResult } from './released-native-contract.js'
 import { validateBurnRequest, validateBurnResponse } from './burn-contract.js'
 import { receiveAddress, joinAddressOperations, stopAddressOperations } from './receive-address.js'
+import { vssCapabilities, validateVssAutomaticBackupResult } from './vss-policy.js'
+import { bip322Capabilities, requireBip322, validateBip322Address, validateBip322Message, validateBip322Signature } from './bip322-contract.js'
 import {
   validateImportRgbContractRequest, validateImportRgbContractResult,
   validateImportRgbTransferConsignmentRequest, validateImportRgbTransferConsignmentResult
@@ -66,22 +68,36 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     /** @private */ this._autoUnlockRequest = normalizeAutoUnlockRequest(bindings.autoUnlockRequest)
     /** @private */ this._unlockInFlight = null
     /** @private */ this._addressInFlight = null
+    /** @private */ this._addressAdmission = null
     /** @private */ this._shutdownInFlight = null
     /** @private */ this._closed = false
+    /** @private */ this._messageSigningTail = Promise.resolve()
+    /** @private */ this._vssTail = Promise.resolve()
+    /** @private */ this._vssPending = 0
+    /** @private */ this._vssOperationsInFlight = new Set()
+    /** @private */ this._vssPolicyTail = Promise.resolve()
+    /** @private */ this._vssPolicyChanges = 0
+    /** @private */ this._vssPolicyRevision = 0
+    /** @private */ this._admittedMutationDispatch = false
+    /** @private */ this._vssAutomaticBackupEnabled = null
+    /** @private */ this._mutationsInFlight = new Set()
+    /** @private */ this._vssCheckpointPending = null
+    /** @private */ this._vssDirty = false
+    /** @private */ this._lastVssAddress = null
     /** @private @type {WalletAccountReadOnlyRgbLightning | null} */
     this._readOnlyAccount = null
   }
 
   /** @private */
   get _node () {
-    if (this._closed || this._shutdownInFlight) throw new Error('RGB Lightning account is closed')
+    if (this._closed || (this._shutdownInFlight && !this._admittedMutationDispatch)) throw new Error('RGB Lightning account is closed')
     return this._binding.ensureNode()
   }
 
   isDisposed () { return this._closed || Boolean(this._shutdownInFlight) || super.isDisposed() }
 
   /** Package support, not wallet readiness or bridge payout qualification. */
-  getCapabilities () { return { ...super.getCapabilities(), burn: true } }
+  getCapabilities () { return { ...super.getCapabilities(), burn: true, vss: vssCapabilities(), bip322: bip322Capabilities(this._binding) } }
 
   async getBfaCapabilities () { return { bfa: true, burn: true, consignment: true } }
 
@@ -100,6 +116,16 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     if (this._closed || this._shutdownInFlight) throw new UnlockError('RGB Lightning account is closed')
     let request
     try { request = normalizeUnlockRequest(unlockRequest) } catch (error) { throw wrapError(error, UnlockError) }
+    const address = this._addressAdmission
+    const policy = address && this._autoUnlockRequest && sameUnlockRequest(request, this._autoUnlockRequest)
+      ? address.policy
+      : this._vssPolicyChanges > 0 ? this._vssPolicyTail : null
+    return this._unlockWithPolicy(request, policy)
+  }
+
+  /** @private A previously admitted address owns its required unlock through teardown/policy drain. */
+  async _unlockWithPolicy (request, policy, admittedAddress = false) {
+    if (this._closed || (this._shutdownInFlight && !admittedAddress)) throw new UnlockError('RGB Lightning account is closed')
     if (this._unlockInFlight) {
       if (!sameUnlockRequest(this._unlockInFlight.request, request)) {
         throw new UnlockError('A different RGB Lightning unlock request is already in progress')
@@ -107,8 +133,9 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       return this._unlockInFlight.promise
     }
     const operation = Promise.resolve().then(async () => {
+      if (policy) await policy
       try { await this._binding.unlock(request) } catch (error) { throw wrapError(error, UnlockError) }
-      return { ok: true }
+      return this._afterVssMutation({ ok: true })
     })
     this._unlockInFlight = { request, promise: operation }
     try {
@@ -121,17 +148,36 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   async getAddress () {
     if (this._closed || this._shutdownInFlight) throw new AccountLockedError('RGB Lightning account is closed')
     if (this._addressInFlight) return this._addressInFlight
+    const admission = {
+      policy: this._vssPolicyChanges > 0 ? this._vssPolicyTail : null,
+      unlock: this._unlockInFlight?.promise
+    }
     const operation = Promise.resolve().then(async () => {
-      if (this._unlockInFlight) await this._unlockInFlight.promise
-      try { return await super.getAddress() } catch (error) {
+      if (admission.policy) await admission.policy
+      if (admission.unlock) await admission.unlock
+      try { return this._afterVssMutation(await this._admittedAddress(), true) } catch (error) {
         if (!(error instanceof AccountLockedError) || !this._autoUnlockRequest) throw error
       }
-      await this.unlock(this._autoUnlockRequest)
-      return super.getAddress()
+      await this._unlockWithPolicy(this._autoUnlockRequest, admission.policy, true)
+      return this._afterVssMutation(await this._admittedAddress(), true)
     })
     this._addressInFlight = operation
+    this._addressAdmission = admission
     try { return await operation } finally {
-      if (this._addressInFlight === operation) this._addressInFlight = null
+      if (this._addressInFlight === operation) {
+        this._addressInFlight = null
+        this._addressAdmission = null
+      }
+    }
+  }
+
+  /** @private Only already-admitted full-account work may finish address persistence during teardown. */
+  async _admittedAddress () {
+    try { return await receiveAddress(this._binding, false, false, true) } catch (error) {
+      if (/NotInitialized|LockedNode|SdkNode not created|call unlock|node (?:is )?locked|not initialized/i.test(String(error?.message ?? error))) {
+        throw new AccountLockedError('Unlock the RGB Lightning account before requesting its receive address.', { cause: error })
+      }
+      throw error
     }
   }
 
@@ -142,7 +188,13 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     const operation = Promise.resolve().then(async () => {
       // Unlock has no released cancellation API. Join it before teardown.
       if (this._unlockInFlight) await this._unlockInFlight.promise.catch(() => {})
+      if (this._addressInFlight) await this._addressInFlight.catch(() => {})
       await joinAddressOperations(this._binding)
+      await Promise.all([...this._mutationsInFlight].map(operation => operation.catch(() => {})))
+      await this._messageSigningTail
+      await this._vssPolicyTail
+      await Promise.all([...this._vssOperationsInFlight].map(operation => operation.catch(() => {})))
+      await this._vssTail
       await this._binding.shutdown()
       this._closed = true
       return { ok: true }
@@ -153,71 +205,160 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     }
   }
 
-  /**
-   * Forcibly take over a stale VSS ownership fence after the previous
-   * node died holding it. Authenticates with the wallet password.
-   * Throws if VSS isn't configured (no `vssUrl` at construction).
-   *
-   * Recovery flow only. Do not call while another live node may still
-   * hold the fence. Doing so corrupts the shared VSS state. See the VSS
-   * docs section "Single-writer ownership" for the contract.
-   *
-   * @param {string} password
-   * @throws {VssNotConfiguredError} if the wallet was built without a vssUrl.
-   * @throws {VssError} if the takeover is rejected by the VSS server.
-   */
-  async clearVssFence (password) {
-    this._assertVssConfigured()
-    try {
-      this._binding.clearVssFence(password)
-    } catch (e) {
-      throw wrapError(e, VssError)
+  /** @private Join VSS work with unlock and shutdown; never retry a native request. */
+  _vssOperation (operation, admittedMutation = false) {
+    if (this._closed || (this._shutdownInFlight && !admittedMutation)) return Promise.reject(new AccountLockedError('RGB Lightning account is closed'))
+    const policy = !admittedMutation && this._vssPolicyChanges > 0 ? this._vssPolicyTail : null
+    const pendingUnlock = admittedMutation ? null : this._unlockInFlight?.promise
+    this._vssPending++
+    const enqueue = () => {
+      const queued = this._vssTail.then(async () => {
+        if (pendingUnlock) await pendingUnlock
+        try { return await operation() } catch (error) {
+          if (error instanceof VssNotConfiguredError || error instanceof AccountLockedError) throw error
+          if (/NotInitialized|LockedNode|node (?:is )?locked|call unlock/i.test(String(error?.message ?? error))) {
+            throw new AccountLockedError('Unlock the RGB Lightning account before backing up.', { cause: error })
+          }
+          throw wrapError(error, VssError)
+        }
+      })
+      this._vssTail = queued.catch(() => {})
+      return queued
     }
-    return { ok: true }
+    // Do not append a later manual request to the tail being drained by a policy
+    // transition: its unlock may itself depend on that transition completing.
+    const pending = (policy ? policy.then(enqueue) : enqueue()).finally(() => { this._vssPending-- })
+    this._vssOperationsInFlight.add(pending)
+    pending.finally(() => this._vssOperationsInFlight.delete(pending)).catch(() => {})
+    return pending
+  }
+
+  /** Explicit recovery takeover. Native permits this only while the node is locked. */
+  async clearVssFence (password, expectedScope) {
+    if (typeof password !== 'string') throw new TypeError('clearVssFence requires a string password')
+    return this._vssOperation(() => this._binding.clearVssFence(password, expectedScope))
+  }
+
+  /** Prepare an actual cloud restore before the first address/unlock request. */
+  async prepareVssRestore (expectedScope) {
+    if (this._unlockInFlight) throw new AccountLockedError('Prepare VSS restore before unlocking the RGB Lightning account.')
+    return this._vssOperation(() => this._binding.prepareVssRestore(expectedScope))
+  }
+
+  /** Return the successful upstream RGB upload version; errors are never hidden. */
+  async vssBackup () { return this._vssOperation(() => this._binding.vssBackup()) }
+
+  /**
+   * Drain work admitted before this request, then commit the native durable policy.
+   * Later mutations wait at admission, so none can start using the old preference
+   * after a successful off acknowledgement. Failure requires a confirmed reread.
+   */
+  setVssAutomaticBackupEnabled (enabled) {
+    if (typeof enabled !== 'boolean') return Promise.reject(new TypeError('Automatic VSS backup requires a boolean'))
+    if (this._closed || this._shutdownInFlight) return Promise.reject(new AccountLockedError('RGB Lightning account is closed'))
+    const previousPolicy = this._vssPolicyTail
+    const admitted = [...this._mutationsInFlight]
+    const unlock = this._unlockInFlight?.promise
+    const address = this._addressInFlight
+    this._vssPolicyChanges++
+    this._vssPolicyRevision++
+    const transition = previousPolicy.then(async () => {
+      if (unlock) await unlock
+      if (address) await address
+      await Promise.all(admitted.map(operation => operation.catch(() => {})))
+      await this._vssTail
+      return this._vssOperation(async () => {
+        let result
+        try {
+          result = validateVssAutomaticBackupResult(await this._binding.setVssAutomaticBackupEnabled(enabled), enabled)
+        } catch (error) {
+          // A rare durability/rollback failure can make the outcome unknown.
+          // No future automatic hook may rely on the previously cached choice.
+          this._vssAutomaticBackupEnabled = null
+          throw error
+        }
+        this._vssAutomaticBackupEnabled = result.automatic_backup_enabled
+        // Native re-enable owns its catch-up and rollback before acknowledging.
+        if (enabled) {
+          this._vssDirty = false
+          this._binding._vssCheckpointFailed = false
+        }
+        return result
+      }, true)
+    }).finally(() => { this._vssPolicyChanges--; this._vssPolicyRevision++ })
+    this._vssPolicyTail = transition.catch(() => {})
+    return transition
+  }
+
+  /** Reflect only confirmed native policy; reading metadata never changes it. */
+  async getVssBackupMetadata () {
+    await this._vssPolicyTail
+    const revision = this._vssPolicyRevision
+    const metadata = await super.getVssBackupMetadata()
+    if (revision === this._vssPolicyRevision) this._vssAutomaticBackupEnabled = metadata.automatic_backup_enabled
+    return metadata
+  }
+
+  /** @private Retain native ownership through the checkpoint of each admitted mutation. */
+  _nativeMutation (operation) {
+    if (this._closed || this._shutdownInFlight) return Promise.reject(new AccountLockedError('RGB Lightning account is closed'))
+    let result
+    const dispatch = () => {
+      this._admittedMutationDispatch = true
+      try { return operation() } finally { this._admittedMutationDispatch = false }
+    }
+    // Only a policy transition delays dispatch. Capture that barrier now so a
+    // later transition cannot form a cycle with this admitted financial call.
+    try {
+      result = this._vssPolicyChanges > 0 ? this._vssPolicyTail.then(dispatch) : dispatch()
+    } catch (error) { return Promise.reject(error) }
+    const pending = Promise.resolve(result).then(result => this._afterVssMutation(result))
+    this._mutationsInFlight.add(pending)
+    pending.finally(() => this._mutationsInFlight.delete(pending)).catch(() => {})
+    return pending
   }
 
   /**
-   * @private
-   * @throws {VssNotConfiguredError} if no vssUrl was set at construction.
+   * @private Schedule an opportunistic checkpoint after a successful mutation.
+   * A remote failure must not turn a completed send/burn into a retryable payment.
+   * Status retains the last successful version; manual backup exposes failures.
    */
-  _assertVssConfigured () {
-    const status = this._binding.vssStatus()
-    if (!status || !status.configured) {
-      throw new VssNotConfiguredError()
-    }
-  }
-
-  /**
-   * Force an immediate VSS backup flush. Returns `{ version }` where
-   * version is the monotonically-increasing snapshot index just
-   * persisted. The number is useful for ordering / "is this device
-   * caught up with my last known checkpoint" comparisons; it carries
-   * no other semantics.
-   *
-   * Throws if VSS isn't configured (no `vssUrl` at construction) or
-   * the flush fails (server unreachable, auth rejected). Backed by
-   * upstream `vss_backup()` UniFFI method. Requires the C-FFI patch
-   * series at `rgb-lightning-node-bare/patches/` to be applied
-   * before the static lib is built (adds `rln_sdk_node_vss_backup`).
-   *
-   * Use for app-controlled checkpoints (e.g. "save state before app
-   * suspend") rather than relying on RLN's implicit on-write flush.
-   * RLN already syncs to VSS on every state-changing operation; this
-   * method is for the moments your app knows are critical (closing,
-   * backgrounding, payment-just-settled) and wants a "fsync now"
-   * round-trip with the cloud before potentially being killed.
-   *
-   * @returns {Promise<{version: number}>}
-   * @throws {VssNotConfiguredError} if the wallet was built without a vssUrl.
-   * @throws {VssError} if the flush fails (server unreachable, auth rejected).
-   */
-  async vssBackup () {
-    this._assertVssConfigured()
+  _afterVssMutation (result, addressRead = false) {
     try {
-      return this._binding.vssBackup()
-    } catch (e) {
-      throw wrapError(e, VssError)
-    }
+      if (this._binding.vssStatus?.()?.configured !== true) return result
+      // Re-reading an unchanged receive address does not create new backup work.
+      if (addressRead && this._lastVssAddress === result) return result
+      if (addressRead) this._lastVssAddress = result
+      this._vssDirty = true
+      if (this._vssAutomaticBackupEnabled === null) {
+        // Native persistence wins over the initial config after a cold launch.
+        this._vssAutomaticBackupEnabled = typeof this._binding.getVssBackupMetadata === 'function'
+          ? this._binding.getVssBackupMetadata().automatic_backup_enabled
+          : this._binding._config?.vssAutomaticBackupEnabled !== false
+      }
+      if (!this._vssAutomaticBackupEnabled) return result
+      if (this._vssCheckpointPending) return result
+      const checkpoint = this._vssOperation(async () => {
+        // Coalesce mutations already queued; if another mutation completes while
+        // an asynchronous custom binding uploads, cover it in the next pass.
+        while (this._vssDirty) {
+          this._vssDirty = false
+          try {
+            await this._binding.vssBackup()
+            this._binding._vssCheckpointFailed = false
+          } catch (_error) {
+            this._binding._vssCheckpointFailed = true
+            this._vssDirty = true
+            break // A new mutation or explicit manual backup may retry later.
+          }
+        }
+      }, true)
+      this._vssCheckpointPending = checkpoint
+      checkpoint.catch(() => {}).finally(() => {
+        if (this._vssCheckpointPending === checkpoint) this._vssCheckpointPending = null
+      })
+    } catch (_error) { /* A completed mutation must keep its original result. */ }
+    return result
   }
 
   /**
@@ -651,18 +792,18 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   // ==========================================================================
 
   /** @param {Object} request */
-  async issueAssetNia (request) { return this._node.issueAssetNia(request) }
-  async issueAssetUda (request) { return this._node.issueAssetUda(request) }
-  async issueAssetCfa (request) { return this._node.issueAssetCfa(request) }
-  async issueAssetIfa (request) { return this._node.issueAssetIfa(request) }
+  async issueAssetNia (request) { return this._nativeMutation(() => this._node.issueAssetNia(request)) }
+  async issueAssetUda (request) { return this._nativeMutation(() => this._node.issueAssetUda(request)) }
+  async issueAssetCfa (request) { return this._nativeMutation(() => this._node.issueAssetCfa(request)) }
+  async issueAssetIfa (request) { return this._nativeMutation(() => this._node.issueAssetIfa(request)) }
 
   /** @param {Object} request */
   async refreshTransfers (request) {
-    return validateRefreshResult(await this._node.refreshTransfers(request))
+    return this._nativeMutation(async () => validateRefreshResult(await this._node.refreshTransfers(request)))
   }
 
   /** @param {Object} request */
-  async failTransfers (request) { return this._node.failTransfers(request) }
+  async failTransfers (request) { return this._nativeMutation(() => this._node.failTransfers(request)) }
 
   /**
    * Create an RGB invoice. Forwarded verbatim to RLN's `rgbInvoice`
@@ -675,22 +816,22 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * `assignment_amount`, `duration_seconds`.
    * @param {Object} request - JsonRgbInvoiceRequest (see above).
    */
-  async createRgbInvoice (request) { return this._node.rgbInvoice(request) }
+  async createRgbInvoice (request) { return this._nativeMutation(() => this._node.rgbInvoice(request)) }
 
   /** Register validated public metadata only; no asset units or allocations are imported. */
   async importRgbContract (request) {
     const validated = validateImportRgbContractRequest(request)
-    return validateImportRgbContractResult(
+    return this._nativeMutation(async () => validateImportRgbContractResult(
       await this._node.importRgbContract(validated), validated.expected_asset_id
-    )
+    ))
   }
 
   /** Register metadata for an already accepted transfer; does not accept ownership. */
   async importRgbTransferConsignment (request) {
     const validated = validateImportRgbTransferConsignmentRequest(request)
-    return validateImportRgbTransferConsignmentResult(
+    return this._nativeMutation(async () => validateImportRgbTransferConsignmentResult(
       await this._node.importRgbTransferConsignment(validated), validated.expected_asset_id
-    )
+    ))
   }
 
   /**
@@ -717,7 +858,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    * invoice and assembles this request for you.
    * @param {Object} request - JsonSendRgbRequest (see above).
    */
-  async sendRgbAsset (request) { return this._node.sendRgb(request) }
+  async sendRgbAsset (request) { return this._nativeMutation(() => this._node.sendRgb(request)) }
 
   /**
    * Burn asset units with RLN's native snake_case request. BFA requires a
@@ -737,21 +878,21 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     }
     // Node/Bare burn is synchronous; RLN holds the wallet mutex through
     // prepare/sign/end. Do not defer dispatch or automatically replay failures.
-    return validateBurnResponse(node.burn(validated))
+    return this._nativeMutation(() => validateBurnResponse(node.burn(validated)))
   }
 
   /** @param {Object} request - JsonInflateRequest */
-  async inflate (request) { return this._node.inflate(request) }
+  async inflate (request) { return this._nativeMutation(() => this._node.inflate(request)) }
 
   /** @param {Object} request */
-  async postAssetMedia (request) { return this._node.postAssetMedia(request) }
+  async postAssetMedia (request) { return this._nativeMutation(() => this._node.postAssetMedia(request)) }
 
   // ==========================================================================
   // Bitcoin operations
   // ==========================================================================
 
   /** Raw RLN send-btc escape hatch for callers that already own the native request shape. */
-  async sendBtc (request) { return this._node.sendBtc(request) }
+  async sendBtc (request) { return this._nativeMutation(() => this._node.sendBtc(request)) }
 
   /**
    * WDK-standard on-chain send. Accepts `{ to, value, feeRate?,
@@ -787,19 +928,21 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   /** Rotate to a new receive address. Read-only accounts expose only the stable current address. */
   async rotateAddress () {
     if (this._closed || this._shutdownInFlight) throw new AccountLockedError('RGB Lightning account is closed')
-    return receiveAddress(this._binding, true, true)
+    return this._nativeMutation(() => receiveAddress(this._binding, true, true, true))
   }
 
   /** Allocate and persist a new receive address under either address policy. */
   async getNewAddress () {
     if (this._closed || this._shutdownInFlight) throw new AccountLockedError('RGB Lightning account is closed')
-    return receiveAddress(this._binding, true)
+    return this._nativeMutation(() => receiveAddress(this._binding, true, false, true))
   }
 
   /** @param {Object} request - JsonCreateUtxosRequest */
   async createUtxos (request) {
-    this._node.createUtxos(request)
-    return { ok: true }
+    return this._nativeMutation(async () => {
+      await this._node.createUtxos(request)
+      return { ok: true }
+    })
   }
 
   // ==========================================================================
@@ -821,6 +964,47 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
       throw new Error('RGB Lightning node returned an invalid message signature')
     }
     return signature
+  }
+
+  /** @private Serialize proofs with teardown; never retry a signing request. */
+  _messageSigningOperation (operation) {
+    if (this._closed || this._shutdownInFlight) return Promise.reject(new AccountLockedError('RGB Lightning account is closed'))
+    const pendingUnlock = this._unlockInFlight?.promise
+    const pending = this._messageSigningTail.then(async () => {
+      if (pendingUnlock) await pendingUnlock
+      return operation()
+    })
+    this._messageSigningTail = pending.catch(() => {})
+    return pending
+  }
+
+  /** Read the native signer's fixed owned address without allocating a script. */
+  async getMessageSigningAddress () {
+    requireBip322(this._binding, 'signing')
+    return this._messageSigningOperation(async () => {
+      const address = await this._binding.getMessageSigningAddress()
+      return validateBip322Address(address, this.getNetwork())
+    })
+  }
+
+  /**
+   * Sign the exact UTF-8 message for the explicitly reviewed owned P2TR address.
+   * The native signer validates ownership and returns a v2 smp-prefixed proof.
+   * This does not broadcast or sign a spendable Bitcoin transaction.
+   */
+  async signMessageBip322 (message, address) {
+    validateBip322Message(message)
+    validateBip322Address(address, this.getNetwork())
+    requireBip322(this._binding, 'signing')
+    return this._messageSigningOperation(async () => {
+      const signature = await this._binding.signMessageBip322(message, address)
+      validateBip322Signature(signature, true)
+      // Fail closed if transport corruption or a mismatched native response
+      // would otherwise escape to a caller as an apparently successful proof.
+      const valid = await this._binding.verifyMessageBip322(message, address, signature)
+      if (valid !== true) throw new Error('BIP-322 signer returned a proof that does not verify')
+      return signature
+    })
   }
 
   // ==========================================================================

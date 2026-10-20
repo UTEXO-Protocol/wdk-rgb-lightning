@@ -44,6 +44,19 @@ const readOnlyConsignment: Promise<Uint8Array> = readOnlyAccount.getConsignment(
 void exportedConsignment
 void readOnlyConsignment
 
+const signingAddress: Promise<string> = account.getMessageSigningAddress()
+const bip322Signature: Promise<string> = account.signMessageBip322('exact message\n', 'bcrt1paddress')
+const bip322Verified: Promise<boolean> = readOnlyAccount.verifyMessageBip322('exact message\n', 'bcrt1paddress', 'smpAA==')
+void signingAddress
+void bip322Signature
+void bip322Verified
+// @ts-expect-error A proof cannot be signed without an explicitly reviewed address.
+account.signMessageBip322('message')
+// @ts-expect-error Read-only accounts cannot sign BIP-322 proofs.
+readOnlyAccount.signMessageBip322('message', 'bcrt1paddress')
+// @ts-expect-error Read-only accounts cannot retrieve private-signer capabilities.
+readOnlyAccount.getMessageSigningAddress()
+
 const burnRequest: BurnAssetRequest = {
   asset_id: 'rgb:asset',
   amount: '18446744073709551615',
@@ -107,3 +120,16 @@ void umaAddress
 void nonStringUmaAddress
 void parsedAddress
 void parsedDomain
+
+const automaticPolicy: Promise<import('../index.js').VssAutomaticBackupResult> = account.setVssAutomaticBackupEnabled(false)
+const backupMetadata: Promise<import('../index.js').VssBackupMetadata> = account.getVssBackupMetadata()
+const readOnlyBackupMetadata: Promise<import('../index.js').VssBackupMetadata> = readOnlyAccount.getVssBackupMetadata()
+const nativeBackupMetadata: import('../index.js').VssBackupMetadata = binding.getVssBackupMetadata()
+void automaticPolicy
+void backupMetadata
+void readOnlyBackupMetadata
+void nativeBackupMetadata
+// @ts-expect-error The automatic snapshot policy requires a boolean.
+account.setVssAutomaticBackupEnabled('false')
+// @ts-expect-error Read-only accounts cannot change the automatic snapshot policy.
+readOnlyAccount.setVssAutomaticBackupEnabled(false)

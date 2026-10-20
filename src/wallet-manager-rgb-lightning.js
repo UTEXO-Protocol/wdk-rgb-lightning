@@ -4,6 +4,7 @@
 // you may not use this file except in compliance with the License.
 'use strict'
 
+import { assertVssConfigurationSafe } from './vss-policy.js'
 import WalletManager from '@tetherto/wdk-wallet'
 import { mnemonicToSeedSync } from 'bip39'
 import { normalizeAutoUnlockRequest } from './node-unlock-request.js'
@@ -102,6 +103,7 @@ export default class WalletManagerRgbLightning extends WalletManager {
    * @param {RgbLightningWalletConfig} config
    */
   constructor (seed, config = {}) {
+    assertVssConfigurationSafe(config)
     const { autoUnlockRequest, ...managerConfig } = config
     super(seed, managerConfig)
 
@@ -171,6 +173,7 @@ export default class WalletManagerRgbLightning extends WalletManager {
         vssUrl: this._config.vssUrl,
         vssAllowHttp: this._config.vssAllowHttp,
         vssAllowEmptyRestore: this._config.vssAllowEmptyRestore,
+        vssAutomaticBackupEnabled: this._config.vssAutomaticBackupEnabled,
         lspBaseUrl: this._config.lspBaseUrl,
         lspBearerToken: this._config.lspBearerToken
       })
@@ -239,7 +242,7 @@ export default class WalletManagerRgbLightning extends WalletManager {
   }
 
   dispose () {
-    if (addressOperationPending(this._binding) || Object.values(this._accounts).some(account => account._unlockInFlight || account._shutdownInFlight || account._addressInFlight)) {
+    if (addressOperationPending(this._binding) || Object.values(this._accounts).some(account => account._unlockInFlight || account._shutdownInFlight || account._addressInFlight || account._vssPending > 0 || account._vssPolicyChanges > 0 || account._mutationsInFlight?.size > 0)) {
       throw new Error('Await account activation and shutdown before synchronous manager disposal')
     }
     this._disposed = true
