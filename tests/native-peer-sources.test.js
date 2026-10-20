@@ -22,7 +22,7 @@ const fixtureRuntime = {
 }
 
 function packageFixture () {
-  return { peerDependencies: { [bare]: '0.2.0-beta.4', [node]: '0.2.0-beta.4' } }
+  return { peerDependencies: { [bare]: '0.2.0-beta.5', [node]: '0.2.0-beta.5' } }
 }
 
 describe('native peer source manifest configuration', () => {
@@ -49,7 +49,7 @@ describe('native peer source manifest configuration', () => {
     ['untrusted repository', sources => { sources.peers[bare].repository = 'https://example.com/bare.git' }],
     ['old branch', sources => { sources.peers[bare].ref = 'release/rln-0.15.0-beta.3' }],
     ['floating commit', sources => { sources.peers[bare].commit = 'main' }],
-    ['version range', sources => { sources.peers[node].version = '^0.2.0-beta.4' }]
+    ['version range', sources => { sources.peers[node].version = '^0.2.0-beta.5' }]
   ])('rejects %s', (_, mutate) => {
     const sources = readNativePeerSources()
     mutate(sources)

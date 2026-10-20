@@ -33,6 +33,7 @@ module always uses. Issue assets in a separate on-chain wallet, such as
 - [Installation](#installation)
 - [Quick start](#quick-start)
 - [Account API](#account-api)
+- [Bitcoin message signing](#bitcoin-message-signing-bip-322)
 - [Error handling](#error-handling)
 - [Mainnet policy and capabilities](#mainnet-policy-and-capabilities)
 - [WebRGB integration](#webrgb-integration)
@@ -80,15 +81,15 @@ Install this module with the native binding for your runtime:
 
 ```sh
 # Node.js
-npm install @utexo/wdk-rgb-lightning@0.2.0-beta.4 @utexo/rgb-lightning-node-nodejs@0.2.0-beta.4
+npm install @utexo/wdk-rgb-lightning@0.2.0-beta.5 @utexo/rgb-lightning-node-nodejs@0.2.0-beta.5
 
 # Bare / React Native
-npm install @utexo/wdk-rgb-lightning@0.2.0-beta.4 @utexo/rgb-lightning-node-bare@0.2.0-beta.4
+npm install @utexo/wdk-rgb-lightning@0.2.0-beta.5 @utexo/rgb-lightning-node-bare@0.2.0-beta.5
 ```
 
 Choose one binding. Bare installs its required native payload dependencies
 automatically. Standalone Bare requires >=1.33.0; see the
-[Bare setup guide](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/8b692da2e896e8acfef2bf15b1e501103100c070/README.md)
+[Bare setup guide](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/main/README.md)
 for React Native integration.
 
 Allow the native package's install scripts to run. If Bare's scripts were
@@ -99,7 +100,7 @@ npm --prefix node_modules/@utexo/rgb-lightning-node-bare run hydrate-native
 ```
 
 For Android, use `react-native-bare-kit@0.15.5` and apply the
-[native Android setup hook](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/8b692da2e896e8acfef2bf15b1e501103100c070/android/README.md)
+[native Android setup hook](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/main/android/README.md)
 in your root Gradle build.
 
 ## Quick start
@@ -201,7 +202,7 @@ are async and forward to the active binding.
 | WDK-standard | `index`, `path`, `keyPair`, `sign(message)`, `verify(message, signature)`, `transfer(options)`, `quoteTransfer(options)`, `quoteSendTransaction(tx)`, `getTransactionReceipt(hash)`, `toReadOnlyAccount()` |
 | Bitcoin message proofs | `getMessageSigningAddress()`, `signMessageBip322(message, address)`, `verifyMessageBip322(message, address, signature)` |
 | Diagnostics | `sendOnionMessage(request)`, `checkIndexerUrl(url)`, `checkProxyEndpoint(endpoint)` |
-| VSS | Local `vssStatus()`, automatic/manual RGB backup, restore and explicit locked-node fence takeover |
+| VSS | `vssStatus()`, `getVssBackupInfo()`, `getVssBackupMetadata()`, `setVssAutomaticBackupEnabled(enabled)`, `vssBackup()`, `prepareVssRestore(scope?)`, `getVssRestoreInfo()`, `clearVssFence(password, scope?)` |
 | APay / LSP | `apayNew(hostNodeId)`, `bootstrapLsp({ peerPubkeyAndAddr, hostNodeId? })`, `getLspConfig()`, `createLsp(peer?)` |
 
 Notes:
@@ -682,18 +683,19 @@ the wallet's behalf. Against a production LSP this requires
 
 The host-side logic — recipient routing, fee estimation, typed-error
 wrapping, and binding config mapping — is covered by a jest suite that
-runs with no live node and no native binding (the addon is mocked):
+runs with no live node and no native binding (the addon is mocked).
+Use Node 22 or newer and npm 12.0.1 for the release-package checks:
 
 ```sh
-npm ci
-npm test            # jest, host-side units
-npm run test:coverage
+npm ci --ignore-scripts
+npm test -- --runInBand
+npm run test:coverage -- --runInBand
 ```
 
 ### Integration / end-to-end
 
 The source repository includes a
-[Node/Bare regtest harness](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/tests/regtest/README.md)
+[Node/Bare regtest harness](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.5/tests/regtest/README.md)
 for real native nodes, transfers, channels and recovery scenarios, with a
 dedicated Docker Compose stack. These files are not included in the npm package.
 Run destructive reorg and process-interruption scenarios only against disposable,
@@ -701,8 +703,8 @@ isolated wallets and chain volumes.
 
 Each scenario records its actual source, runtime, completed checks and failures.
 The [qualification register](./PRODUCTION-GATES.md) is the current summary; the
-[older regtest report](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/tests/regtest/QUALIFICATION.md)
-and [mobile fixture](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/tests/mobile/README.md)
+[older regtest report](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.5/tests/regtest/QUALIFICATION.md)
+and [mobile fixture](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.5/tests/mobile/README.md)
 retain their historical source/framework scopes. A passing host test or an
 updated package declaration does not qualify a mobile application.
 
@@ -728,10 +730,10 @@ The pinned native graph retains the following financial and security limitations
 
 ## Troubleshooting
 
-- **`Rln(Conflict)` on a re-launch** — expected on every launch after the
-  initial wallet create. The binding swallows it internally; if it bubbles
-  up you're calling the lower-level binding directly instead of going
-  through the WDK account.
+- **`Rln(Conflict)`** — the binding handles the expected already-initialized
+  response during startup. Conflicts from other operations still require
+  investigation; retain the operation name and full error. A VSS writer conflict
+  requires stopping the other writer before explicit recovery.
 - **`VssNotConfiguredError` / `VSS_NOT_CONFIGURED`** — configure an explicit
   `vssUrl` to use backup or recovery. The legacy `VssUnsupportedError` export remains
   for compatibility. For local-only operation omit the VSS URL. A writer-fence

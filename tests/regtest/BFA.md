@@ -4,7 +4,7 @@ Use the Bitcoin, Electrs, Esplora and proxy services from [README.md](./README.m
 Keep scenarios serial. No real-network funds are used. The issuer below is a
 test-only rgb-lib process, not a WDK issuance API.
 
-Build and install the exact Node/Bare `0.2.0-beta.4` peers first. Runtime checks
+Build and install the exact Node/Bare `0.2.0-beta.5` peers first. Runtime checks
 require RLN `v0.17.0-beta.3` commit `ecc69f20308231400561f6f060fea88acfa40cc4`
 and reject older native artifacts. Bare requires a `BARE_BIN` executable >=1.33.0.
 

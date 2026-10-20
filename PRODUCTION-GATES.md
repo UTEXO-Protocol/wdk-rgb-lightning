@@ -1,4 +1,4 @@
-# Release qualification: 0.2.0-beta.4
+# Release qualification: 0.2.0-beta.5
 
 **19 October 2026 functional VSS re-enablement:** explicit VSS initialization,
 automatic/manual RGB backup, restore and user-requested locked-node fence takeover
@@ -12,7 +12,36 @@ Current working branch: `feat/bip322-message-signing`. This register separates e
 verification from decisions about release scope. An item is closed only by the
 evidence listed here, not by a general CI success.
 
-## Current merged VSS candidate — 20 October 2026
+## Beta.5 release preparation — 20 October 2026
+
+WDK, Bare, Node and all three required Bare data companions target
+**0.2.0-beta.5**. The earlier WDK beta.4 npm stage is superseded, not approved or
+finalized; its existing Git tag remains historical. Published native beta.4
+packages are unchanged and cannot provide these extensions.
+
+The release PRs are [Bare #28](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/pull/28)
+and [Node #27](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/pull/27).
+The source manifest admits their exact proposed beta.5 heads:
+
+| Peer | Beta.5 release head |
+| --- | --- |
+| Bare | `022f52c62b774f2ca8bd590c04f45e92356fbfae` |
+| Node | `fb5b2befd8ddfddec41f8cd2179b0a3324ca2c6f` |
+
+Those PRs must merge first, then WDK's pins must be refreshed to their resulting
+main commits. The unchanged merged-main gate intentionally rejects unmerged or
+stale source identities. Registry admission separately requires the complete
+published beta.5 graph, exact package-source metadata and native provenance.
+
+The version preparation preserves the qualified native inputs and compiled
+binary bytes. Bare adds an exact beta.5 iOS archive identity alongside the
+unchanged frozen beta.4 identity; no native runtime behavior or old archive
+allowance is relaxed. New source/package, local consumer and CI receipts are
+recorded on PR #48. Earlier financial, platform and recovery scopes retain their
+original identities and are not relabeled as new acceptance.
+
+## Qualified VSS main-source baseline before beta.5 versioning
+
 
 The maintained Bare/Node adapter for this change is
 `6d46717b80ffba8ed8af2de023a536af242aadcacbbb799fb9bb89f8933e4ca5`.
@@ -22,7 +51,7 @@ beta.4 binaries cannot satisfy this contract.
 
 Bare [#27](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/pull/27) and
 Node [#26](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/pull/26)
-are merged. `native-peer-sources.json` admits `main` at these exact commits:
+are merged. The preceding source-admission refresh admitted `main` at these exact commits:
 
 | Peer | Merged-main commit | Previously qualified feature head | Complete Git tree |
 | --- | --- | --- | --- |
@@ -35,13 +64,13 @@ is required for this source-admission update. Existing compiled binaries and
 host/mobile receipts retain their original source, artifact and test scopes;
 they are not relabeled as new merge-commit builds or new financial acceptance.
 
-The source manifest still uses the existing `0.2.0-beta.4` candidate versions.
-Published immutable beta.4 peers contain the older graph, so registry admission
-must continue to reject them. New native versions/publication and final registry
-qualification are separate prerequisites for a WDK release. This pin refresh
-does not authorize a merge, tag or publication.
+That source-admission refresh used beta.4 candidate versions for feature
+integration. The beta.5 release preparation above supersedes that package
+metadata. Published beta.4 peers contain the older graph and remain invalid for
+this runtime. Native publication and final registry qualification are separate
+prerequisites; no source update authorizes a merge, tag or publication.
 
-This source-only refresh passes the verifier against fresh isolated merged-main
+That source-only admission refresh passed the verifier against fresh isolated merged-main
 checkouts, all **33 Jest suites / 1,267 tests**, lint, declarations, optional
 WebRGB compatibility and all three fault-harness ownership tests. The production
 npm dependency audit reports zero vulnerabilities. Exact final package and CI

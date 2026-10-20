@@ -20,7 +20,7 @@ export function assertNativeRuntime (native) {
       Object.keys(info.vss_policy).length !== 3 ||
       Object.entries(VSS_SAFETY_POLICY).some(([key, value]) =>
         !Object.hasOwn(info.vss_policy, key) || info.vss_policy[key] !== value)) {
-    const error = new Error('Incompatible RGB Lightning native runtime; install the exact 0.2.0-beta.4 candidate peer')
+    const error = new Error('Incompatible RGB Lightning native runtime; install the exact 0.2.0-beta.5 candidate peer')
     error.code = 'ERR_RLN_RUNTIME_MISMATCH'
     throw error
   }

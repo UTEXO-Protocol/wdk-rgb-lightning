@@ -84,3 +84,17 @@ receipts stay valid; presentation can omit their date without disabling controls
 invalidating the separate remote observation. Existing source/archive receipts
 remain frozen at their original identities; the rebuilt native graph requires its
 own source, artifact and packed-consumer qualification.
+
+## Beta.5 package release preparation — 20 October 2026
+
+WDK and both native bindings now target 0.2.0-beta.5, including all three Bare
+data companions. The native release PRs change package/version metadata and
+release tooling/documentation while retaining the qualified native build inputs
+and binary bytes. The new iOS payload has its own reviewed archive identity;
+the historical beta.4 archive and provenance remain unchanged.
+
+The exact proposed source heads are recorded in `native-peer-sources.json`.
+After native release PRs merge, refresh those pins to their resulting main
+commits before WDK merge. Registry qualification must then admit published
+beta.5 packages; the older beta.4 packages are not a fallback. Fresh package/CI
+receipts on PR #48 are separate from the funded and recovery evidence above.

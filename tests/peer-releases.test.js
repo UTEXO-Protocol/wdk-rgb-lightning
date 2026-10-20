@@ -32,7 +32,7 @@ const releasedSources = {
     repository: `https://github.com/UTEXO-Protocol/${name.slice('@utexo/'.length)}.git`,
     ref: 'main',
     commit: mainCommits[name],
-    version: '0.2.0-beta.4'
+    version: '0.2.0-beta.5'
   }]))
 }
 const releasedRuntime = {
@@ -50,8 +50,8 @@ function packageFixture () {
   return {
     peerDependencies: {
       '@utexo/webrgb': '^0.1.0',
-      [bare]: '0.2.0-beta.4',
-      [node]: '0.2.0-beta.4'
+      [bare]: '0.2.0-beta.5',
+      [node]: '0.2.0-beta.5'
     },
     peerDependenciesMeta: {
       '@utexo/webrgb': { optional: true },
@@ -84,12 +84,12 @@ describe('published native peer release admission', () => {
     const result = await verifyReleasedPeers({ packageJson, fetchImpl: registry.fetchImpl })
 
     expect(result).toEqual([
-      { name: bare, range: '0.2.0-beta.4', minimum: '0.2.0-beta.4' },
-      { name: node, range: '0.2.0-beta.4', minimum: '0.2.0-beta.4' }
+      { name: bare, range: '0.2.0-beta.5', minimum: '0.2.0-beta.5' },
+      { name: node, range: '0.2.0-beta.5', minimum: '0.2.0-beta.5' }
     ])
     expect(registry.requested).toEqual([
-      'https://registry.npmjs.org/%40utexo%2Frgb-lightning-node-bare/0.2.0-beta.4',
-      'https://registry.npmjs.org/%40utexo%2Frgb-lightning-node-nodejs/0.2.0-beta.4'
+      'https://registry.npmjs.org/%40utexo%2Frgb-lightning-node-bare/0.2.0-beta.5',
+      'https://registry.npmjs.org/%40utexo%2Frgb-lightning-node-nodejs/0.2.0-beta.5'
     ])
   })
 
@@ -101,7 +101,7 @@ describe('published native peer release admission', () => {
       : registry.fetchImpl(url)
 
     await expect(verifyReleasedPeers({ packageJson: packageFixture(), fetchImpl }))
-      .rejects.toThrow(`${packageName}@0.2.0-beta.4 is unavailable (404 Not Found)`)
+      .rejects.toThrow(`${packageName}@0.2.0-beta.5 is unavailable (404 Not Found)`)
   })
 
   it('reports registry service failures without accepting an incomplete release', async () => {
@@ -114,8 +114,8 @@ describe('published native peer release admission', () => {
   it.each([
     ['missing', undefined],
     ['floating branch', 'github:UTEXO-Protocol/rgb-lightning-node-nodejs#main'],
-    ['range', '^0.2.0-beta.4'],
-    ['floor', '>=0.2.0-beta.4 <0.3.0']
+    ['range', '^0.2.0-beta.5'],
+    ['floor', '>=0.2.0-beta.5 <0.3.0']
   ])('rejects a %s native peer declaration before making registry requests', async (_, version) => {
     const packageJson = packageFixture()
     packageJson.peerDependencies[node] = version

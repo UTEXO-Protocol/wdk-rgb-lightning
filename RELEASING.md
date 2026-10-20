@@ -4,21 +4,43 @@ Releases are built from a reviewed commit on `main`, staged through npm trusted
 publishing, approved by a maintainer with 2FA, and finalized as an immutable
 GitHub release.
 
-## Current unpublished BIP-322/VSS candidate — 20 October 2026
+## 0.2.0-beta.5 release preparation — 20 October 2026
 
-Bare #27 and Node #26 are merged. The source manifest admits their exact `main`
-commits: Bare `c5425a3185677bcddfd5a46e278783eed431e2ab` and Node
-`5ffe8f22b9b242a5be4b21765395b206136f5a06`. Their complete source trees equal
-the qualified feature heads; native inputs and previously admitted binary bytes
-are unchanged. Existing compilation and runtime receipts keep their original
-identities.
+The release target is WDK **0.2.0-beta.5**, with exact Bare and Node
+**0.2.0-beta.5** peers. Bare's iOS, Android ARMv7/ARM64 and Android x64 data
+companions must also be **0.2.0-beta.5**. Existing native beta.4 packages are
+immutable older code and cannot satisfy the BIP-322/enabled-VSS contract.
 
-The candidate package versions remain `0.2.0-beta.4` for source integration.
-Published beta.4 peers predate these capabilities and must not be republished or
-accepted as this candidate. Before a new WDK release, review new native versions,
-publish/admit their complete graph, update the exact WDK peer versions and source
-pins, then run registry and packed-consumer qualification. A merged-main source
-check is separate from registry release admission; no gate is bypassed here.
+The native release PRs are [Bare #28](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/pull/28)
+and [Node #27](https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs/pull/27).
+They retain the qualified RLN/rgb-lib/LDK, adapter,
+wrapper and build-recipe inputs and previously admitted binary bytes. They change
+package identities and release documentation; compilation provenance retains
+its original labels. Bare's new iOS archive is admitted separately from the
+frozen published beta.4 archive, with an exact reviewed checksum and no increase
+to the previous iOS size ceiling.
+
+Release order:
+
+1. Cancel the obsolete WDK beta.4 npm stage. Do not approve/finalize it. Retain
+   its existing tag and historical source/artifact identity.
+2. Review and merge the Bare and Node beta.5 release PRs. Refresh WDK's
+   `native-peer-sources.json` to the resulting exact main commits; require its
+   normal merged-main source check to pass before merging WDK.
+3. Publish and independently verify the three Bare beta.5 data packages, then
+   the Bare wrapper; publish/admit Node beta.5 as well. Use the reviewed native
+   publication procedure and preserve exact package-source, artifact and builder
+   provenance. Native candidate build workflows do not publish packages.
+4. Require `npm run check:peer-releases` and both real packed-consumer checks
+   against the published beta.5 graph. HTTP 404, stale source or mismatched
+   native identities remain blocking results.
+5. Merge the reviewed WDK PR and create the fresh `v0.2.0-beta.5` tag on the
+   exact current main commit. Follow the staging/2FA/finalization procedure below.
+
+The complete curated WDK notes are the single dated beta.5 entry in
+`CHANGELOG.md`. The release workflow reads that entry directly; no separate
+release-notes file is needed. Preparation does not merge, tag, stage or publish
+any package and does not add funded mobile or device-loss recovery acceptance.
 
 ## Historical 0.2.0-beta.4 source and publication gates
 
@@ -214,8 +236,8 @@ Create an annotated tag on the exact release commit and push it:
 
 ```bash
 git fetch origin main
-git tag -a v0.2.0-beta.4 origin/main -m "Release v0.2.0-beta.4"
-git push origin v0.2.0-beta.4
+git tag -a v0.2.0-beta.5 origin/main -m "Release v0.2.0-beta.5"
+git push origin v0.2.0-beta.5
 ```
 
 The tag-triggered `Release` workflow:

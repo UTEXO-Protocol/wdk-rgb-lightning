@@ -8,142 +8,118 @@ while pre-`1.0`.
 
 ## [Unreleased]
 
-### Added
+## [0.2.0-beta.5] — 2026-10-20
 
-- Explicit BIP-322 simple Bitcoin message proofs through
-  `getMessageSigningAddress()`, `signMessageBip322(message, address)` and
-  read-only `verifyMessageBip322(message, address, signature)`. Signing uses the
-  native signer's first vanilla BIP86 address, verifies ownership and emits the
-  v2 `smp` prefix without broadcasting. Messages retain their exact UTF-8 bytes,
-  with a 4096-byte bound and rejection of unpaired UTF-16 surrogates.
-- Runtime BIP-322 capability detection, public offline P2TR/P2WPKH verification,
-  strict native result validation and signing-operation drain before shutdown.
-  Existing Lightning node-identity `sign()` / `verify()` semantics are unchanged.
-
-### Changed
-
-- Follow the maintained native peers' merged `main` sources: Bare
-  `c5425a3185677bcddfd5a46e278783eed431e2ab` (Bare #27) and Node
-  `5ffe8f22b9b242a5be4b21765395b206136f5a06` (Node #26). Their complete trees
-  match the qualified BIP-322 and enabled-VSS feature heads, including automatic
-  backup policy and clock-independent upload receipts. The source-pin update
-  changes no runtime code or native payload bytes. Published beta.4 artifacts do
-  not contain these extensions; a new native release and exact source/artifact
-  admission remain required before WDK publication.
-
-### VSS
-
-- Enable explicit HTTPS VSS configuration, initial restore, automatic/manual RGB
-  backup and user-requested locked-node fence takeover. Invalid configuration
-  fails before native creation and never silently falls back to local-only.
-- Require native `vss-backup-v1`, `vss-backup-info-v1`, `vss-restore-v1` and exact supported-policy
-  metadata. Expose read-only `getVssBackupInfo()` with real backup/dirty/error state.
-  Report local configuration and observed RGB upload versions, without inferring remote
-  health, cross-format monotonicity or whole-wallet recovery.
-- Add pre-unlock `prepareVssRestore()` and read-only `getVssRestoreInfo()`.
-  Actual downloaded state is validated against wallet identity and admitted through
-  authenticated local provenance after ordinary native consistency checks. A
-  missing cloud snapshot remains missing; later empty uploads are not restore proof.
-- Serialize manual/checkpoint work with shutdown. Read-only accounts retain query
-  access only; completed sends/burns keep their result if a remote checkpoint fails.
-  Upstream credential, chunk replacement and separate signer-state limitations
-  remain documented; no automatic fence deletion or remote erasure is added.
-
-## [0.2.0-beta.4] — 2026-10-16
-
-This breaking beta consolidates the changes developed under the unpublished
-0.2.0-beta.1, beta.2 and beta.3 candidates.
+This breaking beta combines the unpublished beta.4 WDK candidate with Bitcoin
+message proofs and enabled VSS backup/recovery. The earlier beta.4 npm stage is
+superseded; the published native beta.4 packages remain unchanged.
 
 ### Breaking changes
 
-- Require exact native peers `@utexo/rgb-lightning-node-bare@0.2.0-beta.4`
-  or `@utexo/rgb-lightning-node-nodejs@0.2.0-beta.4` for the selected runtime.
-  Verify compiled source, adapter and capabilities before creating native handles;
-  preceding native graphs are rejected.
+- Require the exact native peer `@utexo/rgb-lightning-node-bare@0.2.0-beta.5`
+  or `@utexo/rgb-lightning-node-nodejs@0.2.0-beta.5` for the selected runtime.
+  Check compiled RLN, adapter and capabilities before creating native handles;
+  older native graphs are rejected.
 - Adopt RLN `v0.17.0-beta.3` (`ecc69f20308231400561f6f060fea88acfa40cc4`),
-  rust-lightning `79b9eb5166546c62692d3a672986f385c7fe047d` and rgb-lib
-  `v0.3.0-beta.50-bfa` (`1b951af0c8233308c919975552487be19ad2a930`).
-- Replace the former custom runtime behavior with the released API. Snapshot/
-  FullSync, prepared-send/UTXO inventory, custom operation control, address
-  receipts, VSS delete-all and native routing fee caps are unavailable; unsupported
-  controls fail before submission. Existing overlay-dependent applications need
-  integration changes. Legacy wallet/channel migration is not qualified.
-- Enforce upstream mainnet Lightning rejection before native or HTTP work with
-  `LIGHTNING_DISABLED_ON_MAINNET`. Mainnet on-chain APIs and non-mainnet
-  Lightning APIs retain their documented availability and qualification scope.
+  rgb-lib `v0.3.0-beta.50-bfa` (`1b951af0c8233308c919975552487be19ad2a930`)
+  and LDK `79b9eb5166546c62692d3a672986f385c7fe047d`.
+- Replace the former custom runtime surface with the released API. Snapshot/
+  FullSync, prepared send/UTXO inventory, custom operation control, address
+  receipts, VSS delete-all and native routing fee caps remain unavailable.
+  Unsupported operations fail before submission; legacy wallet/channel
+  migration is not qualified.
+- Reject mainnet Lightning before native or HTTP work with
+  `LIGHTNING_DISABLED_ON_MAINNET`. Mainnet on-chain and non-mainnet Lightning
+  APIs retain their documented availability and qualification scope.
 
 ### Added
 
-- Typed `burnAsset(request)` on full accounts, with exact u64 decimal-string
-  amount/fee inputs and one native submission. Read-only accounts expose no burn
-  operation. There is no automatic retry, bridge payout or operation journal.
-- Optional `eth_rpc_url` on external unlock for native BFA event validation.
-  Omitted or null values retain non-BFA behavior; endpoint and chain identity
-  remain application responsibilities.
-- `getConsignment(assetId, txid)` on full and read-only accounts, returning
-  exact bytes. Upstream contract/transfer metadata imports validate identity
-  without crediting funds or replacing normal receipt settlement.
-- Optional transport-neutral WebRGB receiving/read adapter, with session
-  approval, revocation checks, strict request mapping and sanitized errors.
-  The optional type peer supports the unchanged `@utexo/webrgb@^0.1.0` subset;
-  it does not add a browser node, WalletConnect transport or remote burn API.
-- Local network, lifecycle and signer-aware capability reporting, plus typed
-  parser-only LSP discovery and address-attested APay registration.
-- UMA-form Lightning Address normalization (`$name@example.com` to
-  `name@example.com`) and the corresponding normalization/parser exports.
+- Owned BIP-322 Bitcoin address proofs: `getMessageSigningAddress()`,
+  `signMessageBip322(message, address)` and read-only
+  `verifyMessageBip322(message, address, signature)`. Signing uses the stable
+  first vanilla BIP86 Taproot address, verifies ownership and emits a v2 `smp`
+  simple proof without broadcasting. Messages preserve exact UTF-8 bytes with
+  a 4096-byte bound and malformed-surrogate rejection. Offline verification
+  supports P2TR key-path and P2WPKH simple proofs. Existing Lightning
+  node-identity `sign()` / `verify()` semantics are unchanged.
+- Explicitly configured VSS backup and pre-unlock `prepareVssRestore(scope?)`,
+  with bounded archive-path checks, wallet/network identity validation,
+  no-overwrite promotion and authenticated local restore receipts.
+  `getVssRestoreInfo()` separates preparation from completed native unlock.
+  A missing snapshot is not reported as a restored wallet.
+- Default-on, durable automatic RGB backup preference through
+  `setVssAutomaticBackupEnabled(enabled)`. The saved wallet/network/endpoint
+  choice wins initial configuration. Off retains manual backup and pending
+  changes; On checkpoints current state before confirmation.
+- Separate `getVssBackupInfo()` remote-health and `getVssBackupMetadata()` local
+  receipt APIs. Receipts record canonical manifest version and actual upload
+  completion time; valid receipts remain readable after clock corrections.
+- Typed `burnAsset(request)` with exact u64 decimal-string amounts and fee
+  inputs, optional external-unlock `eth_rpc_url`, saved-consignment export and
+  contract/transfer-metadata imports. Burn has one native submission and no
+  automatic retry, bridge payout or application operation journal.
+- Optional transport-neutral WebRGB receive/read integration, local capability
+  reporting, parser-only LSP discovery, address-attested APay and UMA-form
+  Lightning Address normalization. WebRGB adds no browser node, WalletConnect
+  transport or remote burn API.
 
 ### Fixed
 
-- Normalize canonical and supported flat unlock settings, reject ambiguous
-  configuration, and use persistent strict external signing. Serialize activation,
-  receive-address allocation and teardown.
-- Drain the node before revoking its signer. Retain failed account/default-signer/
-  registered-signer cleanup ownership for explicit retries without repeating
-  completed cleanup. Native beta.4 provides terminal signer shutdown and owned
-  session task/listener cleanup.
-- Preserve exact response integers outside JavaScript's safe range, per-batch
-  refresh failures, `utxo.exists` (including false) and `pending_blinded`.
-  Ordinary numeric request inputs reject unsafe integers; the typed burn boundary
-  additionally accepts full-u64 decimal strings.
-- Validate LSP/LNURL response amounts, usable single-channel liquidity, terminal
-  cancellation, Lightning Address/invoice mapping and local invoice decoding
-  before convenience-helper payments. Linked-asset auto-quoting is not added.
-- Validate exactly the two native release peers independently of optional WebRGB,
-  checking their reviewed main sources and declared native graph.
+- Serialize activation, receive-address allocation, backup-policy transitions,
+  admitted mutations, checkpoints and shutdown. Drain the node before signer
+  revocation. Retain failed account/signer cleanup ownership for explicit retry
+  without repeating successful cleanup; native session tasks/listeners are
+  cleaned up before normal same-process reopening.
+- Preserve pending backup state and the prior automatic preference after upload
+  failure. Manual backup remains available while automatic snapshots are off.
+  Unchanged syncing reads and pure status reads do not create upload timestamps;
+  discovered incoming/spent BTC changes checkpoint when enabled.
+- Use the canonical remote RGB manifest version for backup acknowledgments.
+  A historical automatic-error flag does not invalidate a successful manual
+  receipt. Backup failure does not turn a completed transfer into a failed
+  payment or automatically repeat that payment.
+- Normalize canonical/legacy unlock inputs, retain persistent strict external
+  signing, preserve exact large response integers and per-batch refresh errors,
+  and retain `utxo.exists` and `pending_blinded` values.
+- Validate LSP/LNURL amounts, usable single-channel liquidity, terminal
+  cancellation, Lightning Address mapping and local invoice decoding before
+  convenience-helper payments.
 
-### Native distribution and release tooling
+### Distribution and release tooling
 
-- Consume reviewed main sources: Bare `8b692da2e896e8acfef2bf15b1e501103100c070`
-  and Node `04b641dce121ac690d5d0866eeba4fa76aebe7a5`.
-- Bare requires exact-version iOS, Android ARMv7/ARM64 and Android x64 data
-  packages. Its Darwin wrapper validates all three payloads before restoring six
-  mobile paths and verifying all seven targets. Missing/corrupt payloads fail
-  without a private source-build fallback; ignored-script installs have an
-  explicit hydration route. Distribution splitting preserves the original native
-  binaries and compilation provenance.
-- Build reproducible tarballs from clean committed source with the exact Git
-  identity stamped only in staging. npm 12 consumer canaries authorize exact
-  native sources, require observed postinstall admission and reject script-policy
-  bypasses. The release workflow includes this version's curated changelog entry
-  in its GitHub notes alongside package metadata and generated changes.
+- Version Bare and all three required iOS/Android data companions together at
+  beta.5. Validate every payload and all seven Bare targets before use; retain
+  all five qualified Node targets. Native build inputs, binary hashes and
+  original compilation provenance remain unchanged by package versioning.
+- Build reproducible, allowlisted npm archives from clean committed source.
+  Native registry admission checks exact versions, source commits and the
+  complete runtime graph. npm 12 packed consumers approve exact native install
+  sources and require observed artifact admission. Curated GitHub release
+  notes come from this complete changelog entry.
 
 ### Known limitations
 
-- Interrupted BTC sends can leave reservations requiring recovery (P02).
-- RGB settled/spendable accounting can remain stale after a Bitcoin reorg (P03).
-- Incoming witness receipts can be double-counted in pending projections before
-  settling to the correct amount (P04).
-- An earlier wrong-amount BFA lock can cause a later valid mint to fail (P06).
-- Native dependency security review remains open (D01). Passing the production
-  npm audit does not establish a clean Rust dependency audit.
-- Recorded host and iOS 27 Debug regtest passes have their stated scope;
-  optimized mobile Release, remaining platform/public-network qualification,
-  redistribution/notices and recovery gates remain as recorded. VSS/device-loss
-  and general channel recovery are not qualified by those passes.
+- Interrupted BTC sends can leave input reservations requiring recovery.
+- RGB settled/spendable accounting can remain stale after a Bitcoin reorg;
+  pending witness receipts can be double-counted before correct settlement.
+- An earlier wrong-amount BFA lock can make a later valid mint fail validation.
+- Upstream VSS external-signer credentials derive from public bootstrap data.
+  VSS does not replicate the mnemonic, separate VLS signer database or
+  application journals. Interrupted chunk replacement, stale writer fences and
+  arbitrary crash/device-loss recovery remain qualification limits. Explicit
+  recovery never clears a foreign writer automatically; remote erasure is absent.
+- Native dependency security, notices, remaining supported-platform/device and
+  public-network financial qualification retain their recorded open scope.
+  A clean npm audit or host/simulator pass does not establish those results.
 
-This is an experimental beta, not a production-readiness claim. See
-[PRODUCTION-GATES.md](https://github.com/UTEXO-Protocol/wdk-rgb-lightning/blob/v0.2.0-beta.4/PRODUCTION-GATES.md)
-for exact evidence, supported scopes and unresolved items.
+See [PRODUCTION-GATES.md](./PRODUCTION-GATES.md) for exact evidence and remaining
+qualification. This beta does not make a production-readiness claim.
+
+## [0.2.0-beta.4] — 2026-10-16
+
+Superseded staged WDK candidate; not published to npm. Its changes are included
+in 0.2.0-beta.5. The earlier Git tag and staged-artifact identity are retained as
+history; do not approve or finalize that obsolete stage.
 
 ## [0.1.0-beta.15] — 2026-07-23
 

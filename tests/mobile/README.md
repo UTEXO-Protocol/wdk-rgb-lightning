@@ -9,7 +9,7 @@ Start the [local stack](../regtest/README.md) first; run chain scenarios seriall
 
 The results and framework scaffold below are historical, not qualification of
 the current RLN `0.17.0-beta.3` artifacts. The fixture's package declarations
-select candidate `0.2.0-beta.4`; changing those declarations does not upgrade or
+select candidate `0.2.0-beta.5`; changing those declarations does not upgrade or
 qualify the Expo 56/Bare Kit 0.14.5 scaffold. Current native peers come from the
 merged main commits in [native-peer-sources.json](../../native-peer-sources.json).
 Use the [current Bare integration instructions](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/main/android/README.md)
