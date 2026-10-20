@@ -101,7 +101,13 @@ payout; persistence and failure recovery; funded recovery qualification;
 and a user-coordinated iOS 27 rebuild and runtime test. No hosted dev bridge
 has been operated and no migration package has been published.
 
-The existing external-signer VSS bootstrap credential limitation remains.
+The existing external-signer VSS security limitation remains: its authentication
+and encryption material is derived from public wallet bootstrap data. A party
+with that data cannot be assumed excluded from the backups. Snapshots include
+private proxy operation keys, so local AEAD/CAS/restore passes do not establish
+credential secrecy or production cloud confidentiality. Private signer-derived
+VSS material requires separate external-signer API support; this migration
+preserves existing functional behavior without claiming that prerequisite.
 Generic new-library gaps in custom channel funding locktime, deferred sweep
 consumption and IFA linking are guarded explicitly; no global Lightning
 disablement or mnemonic fallback was added. Iris remains on-chain only.
