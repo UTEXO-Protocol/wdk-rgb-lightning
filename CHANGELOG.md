@@ -94,7 +94,10 @@ superseded; the published native beta.4 packages remain unchanged.
 - Build reproducible, allowlisted npm archives from clean committed source.
   Native registry admission checks exact versions, source commits and the
   complete runtime graph. npm 12 packed consumers approve exact native install
-  sources and require observed artifact admission. Curated GitHub release
+  sources and require observed artifact admission. Bare's packed canary keeps
+  asynchronous checks alive and requires a completion marker within a bounded
+  timeout, preventing an early successful exit from being reported as a pass.
+  Curated GitHub release
   notes come from this complete changelog entry.
 
 ### Known limitations

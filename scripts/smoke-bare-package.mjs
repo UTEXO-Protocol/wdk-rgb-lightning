@@ -95,6 +95,10 @@ try {
     import { smokeWalletPolicy } from ${JSON.stringify(path.join(root, 'scripts/smoke-wallet-policy.mjs'))}
     import native from '${nativePackage}'
     import { parseLspInfo as parseOnly } from '${pkg.name}/lsp-info'
+    // An unresolved Promise alone does not keep Bare's event loop alive.
+    const completionGuard = setTimeout(() => {
+      throw new Error('Packed Bare checks did not complete within 60 seconds')
+    }, 60_000)
     if (WalletManager.Binding !== BareRgbLightningBinding || parseLspInfo !== parseOnly) {
       throw new Error('Packed Bare exports resolved incorrectly')
     }
@@ -121,6 +125,7 @@ try {
       manager.dispose()
     }
     await smokeWalletPolicy(WalletManager, WebRgbProvider, LightningDisabledError, ${JSON.stringify(path.join(temporaryRoot, 'mainnet-wallet'))})
+    clearTimeout(completionGuard)
     console.log('Packed Bare/WDK exports, native identity, signer, mainnet policy and WebRGB passed')
   `
   const smokePath = path.join(temporaryRoot, 'smoke.mjs')
@@ -128,7 +133,15 @@ try {
   const bareLauncher = path.join(temporaryRoot, 'node_modules/bare-runtime/bin/bare')
   console.log('Packed Bare CLI runtime version:')
   run(process.execPath, [bareLauncher, '--version'], { cwd: temporaryRoot })
-  run(process.execPath, [bareLauncher, smokePath], { cwd: temporaryRoot })
+  const smoke = runAndCapture(process.execPath, [bareLauncher, smokePath], {
+    cwd: temporaryRoot,
+    timeout: 90_000
+  })
+  process.stdout.write(smoke.stdout)
+  process.stderr.write(smoke.stderr)
+  if (!smoke.stdout.includes('Packed Bare/WDK exports, native identity, signer, mainnet policy and WebRGB passed')) {
+    throw new Error('Packed Bare checks exited without their completion marker')
+  }
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true })
 }
