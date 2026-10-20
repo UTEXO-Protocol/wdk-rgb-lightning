@@ -43,6 +43,23 @@ allowance is relaxed. New source/package, local consumer and CI receipts are
 recorded on PR #48. Earlier financial, platform and recovery scopes retain their
 original identities and are not relabeled as new acceptance.
 
+## Fresh Bare dependency resolution — 20 October 2026
+
+The first fully public beta.5 native consumer passed registry/source/SLSA and
+104 registry signatures / 79 attestations, then failed before wallet creation:
+`bare-node-runtime` admitted `bare-worker@4.5.3`, whose `bare-module@7.5.0`
+requires Bare >=1.35.0. A stale package index initially masked that dependency
+change. This was a real fresh-install failure on the documented Bare 1.33 floor;
+consumer-only overrides or a skipped native canary are not acceptance.
+
+WDK now declares the already-qualified bridge versions directly:
+`bare-node-runtime@1.5.0`, `bare-worker@4.4.0` and `bare-module@6.4.0`.
+The existing lockfile and Iris qualification already used these versions.
+The minimum Bare version, native sources/artifact bytes and wallet/runtime
+implementation code are unchanged. Fresh Node/Bare registry consumers must pass
+with these declared dependencies and without consumer overrides before tagging
+or staging WDK. Exact fix-source/package receipts are recorded on the follow-up PR.
+
 ## Qualified VSS main-source baseline before beta.5 versioning
 
 
