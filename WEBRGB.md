@@ -6,7 +6,7 @@ dApp
   -> WebRgbProvider from @utexo/wdk-rgb-lightning/webrgb
   -> WalletAccountRgbLightning
   -> Node.js or Bare native binding
-  -> released RLN 0.15.0-beta.3
+  -> pinned RLN / rgb-lib-bfa native graph
 ```
 
 This is a wallet-side adapter, not a browser runtime. Use the existing WDK
@@ -86,7 +86,7 @@ const { address } = await provider.getAddress()
 const receive = await provider.blindReceive({
   // Omit assetId when receiving an asset not yet known to this wallet.
   amount: 1000000,
-  durationSeconds: 3600,
+  durationSeconds: 86400,
   minConfirmations: 3
 })
 const decoded = await provider.decodeRgbInvoice(receive.invoice)
@@ -108,7 +108,7 @@ fields fail, never round. Native WDK methods still preserve large response
 integers as decimal strings. Nonfungible/inflation-right transfers do not acquire
 a fabricated fungible amount. A zero/Any invoice decodes to `amount: null`.
 
-Receive defaults to one hour and at least three confirmations; the host can
+Receive defaults to 24 hours and at least three confirmations; the host can
 raise the floor, and the dApp cannot lower it. This floor does not fix upstream
 RGB reorg handling. `getTransferStatus` reports native status, not independent
 Bitcoin finality. Unknown-asset blind receives may not appear in asset-based
@@ -120,6 +120,45 @@ never created. See the [release gates](./RELEASE-0.15-TRACKER.md).
 This adapter advertises no Lightning, send, issuance, burn or burn-proof methods.
 The existing WDK send and consignment-export APIs remain available directly to
 the host; they are not implicitly granted to a dApp. No burn journal is included.
+
+## Protocol-1.0 invoice sends
+
+Use `account.sendRgbInvoice({ invoice, asset_id, amount, donation, fee_rate,
+min_confirmations, witness_data? })` for encrypted proxy sends. Pass the complete
+invoice unchanged. Native parsing preserves its recipient public key, encryption
+policy and expiry, validates asset/amount/network, and uses the sender's configured
+proxy. A witness invoice additionally needs `witness_data: { amount_sat }`; native
+derives proxy blinding. A blinded invoice takes no witness data. Amount and fee
+accept exact positive u64 decimal strings where necessary.
+
+The generic `transfer()` RGB route uses this complete-invoice path. It never
+falls back to rebuilding an old recipient request when the binding lacks support.
+`sendRgbAsset()` remains a raw native API for explicitly supported request forms;
+an old recipient projection cannot supply missing protocol-1.0 keys.
+
+## V1 burn helpers
+
+The same subpath exports `burnDestinationFor(payout, qualifiedRoutes)`,
+`validateBurnDestination(value)`, `burnDestinationHash(value)` and
+`createBurnPackage(proofBytes, destination)`. These pure helpers do not invoke a
+wallet, persist an operation, enable a route or burn tokens. Route construction
+currently accepts explicitly qualified EVM routes only; it rejects all other
+chains. The generic hash validator supports the portable V1 byte format and the
+independent bridge/enclave vectors.
+
+The hash is the `UtexoBurnDestinationV1` hashStruct commitment to destination
+chain, endpoint and recipient bytes, returned as 32-byte hexadecimal without
+`0x` for the native `burn_recipient`. It is not a signed-message/domain digest.
+The host must validate the requested destination against wallet-owned route
+policy, show it in consent and durably save its preimage **before** invoking
+native burn. Carry the same metadata through WalletConnect results and saved
+transfer lookup. Advertise V1 routes only after qualification.
+
+`createBurnPackage` wraps an already saved binary RGB Transfer proof and the V1
+destination in one versioned `.utexoburn` JSON file, preserving exact bytes and
+canonical Base64. Its proof limit is 10 MiB. Export failure must never trigger
+another burn. A matching transaction ID alone does not reconcile an ambiguous
+native outcome; independent proof validation is still required.
 
 ## Errors
 

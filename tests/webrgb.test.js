@@ -130,6 +130,17 @@ describe('WebRGB session authorization', () => {
 })
 
 describe('WebRGB native mappings', () => {
+  test.each(['UnknownContractId', 'NotFound', 'AssetNotFound'])('maps contextual missing-asset code %s without exposing native details', async code => {
+    const failure = Object.assign(new Error('private path and credentials'), { code })
+    const { provider } = fixture({ sessionApproved: true }, {
+      getAssetBalance: async () => { throw failure }, getAddress: async () => { throw failure }
+    })
+    await expect(provider.getAssetBalance(ID)).rejects.toMatchObject({
+      code: 'ASSET_NOT_FOUND',
+      message: 'This asset is not in this wallet yet. Receive it first, then refresh your balance.'
+    })
+    await expect(provider.getAddress()).rejects.toMatchObject({ code: 'INTERNAL_ERROR', message: 'Wallet operation failed' })
+  })
   test('advertises exactly the read/receive subset, never burn, send or Lightning', async () => {
     const { provider } = fixture({ sessionApproved: true })
     expect(await provider.getInfo()).toEqual({ ready: true, network: 'mainnet', protocol: 'RGB_LN', methods: [...WEBRGB_READ_METHODS] })
@@ -147,7 +158,7 @@ describe('WebRGB native mappings', () => {
     const { provider, wallet, confirm } = fixture({ sessionApproved: true })
     const result = await provider.blindReceive({ assetId: ID, amount: 12, minConfirmations: 0 })
     expect(result).toEqual({ invoice: 'rgb:invoice', recipientId: 'utxob:recipient', expirationTimestamp: 2000, minConfirmations: 3 })
-    expect(wallet.createRgbInvoice).toHaveBeenCalledWith({ asset_id: ID, assignment_kind: 'Fungible', assignment_amount: 12, duration_seconds: 3600, min_confirmations: 3, witness: false })
+    expect(wallet.createRgbInvoice).toHaveBeenCalledWith({ asset_id: ID, assignment_kind: 'Fungible', assignment_amount: 12, duration_seconds: 86400, min_confirmations: 3, witness: false })
     expect(confirm.mock.calls[0][0].method).toBe('blindReceive')
     expect(Object.isFrozen(confirm.mock.calls[0][0].params)).toBe(true)
     expect(Object.isFrozen(confirm.mock.calls[0][0])).toBe(true)
@@ -156,7 +167,7 @@ describe('WebRGB native mappings', () => {
   test('unknown-asset receive uses Any and preserves a higher floor', async () => {
     const { provider, wallet } = fixture({ sessionApproved: true, minConfirmations: 6 })
     await provider.blindReceive()
-    expect(wallet.createRgbInvoice).toHaveBeenCalledWith({ assignment_kind: 'Any', duration_seconds: 3600, min_confirmations: 6, witness: false })
+    expect(wallet.createRgbInvoice).toHaveBeenCalledWith({ assignment_kind: 'Any', duration_seconds: 86400, min_confirmations: 6, witness: false })
   })
 
   test('caller mutation and request origin cannot change approved invoice parameters', async () => {

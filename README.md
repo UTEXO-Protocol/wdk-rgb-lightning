@@ -195,7 +195,7 @@ are async and forward to the active binding.
 | HODL invoices | `createHodlInvoice({ paymentHash, ... })`, `cancelHodlInvoice(request)`, `claimHodlInvoice(request)` |
 | Payments | `sendPayment(request)`, `keysend(request)`, `listPayments()`, `getPayment(hash, type)` |
 | RGB assets | `listAssets(filter?)`, `getAssetBalance(id)`, `getAssetMetadata(id)`, `listTransfers(id)`, `listTransfersByTxid(txid)`, `refreshTransfers(req)`, `failTransfers(req)` |
-| RGB invoices/transfers | `createRgbInvoice(request)`, `decodeRgbInvoice(invoice)`, `sendRgbAsset(request)`, `getAssetMedia(digest)`, `postAssetMedia(request)` |
+| RGB invoices/transfers | `createRgbInvoice(request)`, `decodeRgbInvoice(invoice)`, `sendRgbInvoice(request)`, `sendRgbAsset(request)`, `getAssetMedia(digest)`, `postAssetMedia(request)` |
 | RGB burn | `burnAsset({ asset_id, amount, burn_recipient?, fee_rate, min_confirmations })` returns `{ txid, batch_transfer_idx }`; no automatic retry or bridge payout |
 | RGB issuance (unsupported in this mode) | `issueAssetNia(request)`, `issueAssetUda(request)`, `issueAssetCfa(request)`, `issueAssetIfa(request)`, `inflate(request)` forward the released `UnsupportedInExternalSignerMode` error; use a separate on-chain wallet |
 | BTC | `getBalance(skipSync?)`, `getBalanceDetails(skipSync?)`, `sendTransaction({ to, value, ... })`, `sendBtc(nativeRequest)`, `getTransactions(skipSync?)`, `getTransactionsByTxid(txid)`, `listUnspents(skipSync?)`, `createUtxos(request)`, `estimateFee(blocks)` |
@@ -379,9 +379,10 @@ try {
 
 `getNetwork()` reads the configured network without unlocking.
 `getCapabilities()` describes this package/signer combination, not wallet
-readiness, balance or successful qualification. `getBfaCapabilities()` returns
-`{ bfa: true, burn: true, consignment: true }` on a full account. The read-only
-facade reports `burn: false` in both capability methods and has no `burnAsset`.
+readiness, balance or successful qualification. `getBfaCapabilities()` checks
+the admitted native build's capability flags and actual facade methods without
+creating a wallet. Missing capability reports fail closed. The read-only
+facade reports `burn: false` and has no `burnAsset`.
 Configure `eth_rpc_url` when
 unlocking to enable native validation of BFA bridge events:
 

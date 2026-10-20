@@ -1,7 +1,7 @@
 {
   "name": "@utexo/wdk-rgb-lightning",
   "version": "0.2.0-beta.5",
-  "description": "WDK module for RGB Lightning (rgb-lightning-node) \u2014 channels, invoices, payments, hodl, RGB-over-LN.",
+  "description": "WDK module for RGB Lightning (rgb-lightning-node) — channels, invoices, payments, hodl, RGB-over-LN.",
   "keywords": [
     "wdk",
     "wallet",
@@ -42,18 +42,20 @@
     "test:regtest:imports": "node tests/regtest/imports.mjs"
   },
   "dependencies": {
+    "@noble/hashes": "1.8.0",
     "@noble/secp256k1": "2.3.0",
+    "@scure/base": "1.2.6",
     "@tetherto/wdk-wallet": "1.0.0-beta.14",
+    "bare-module": "6.4.0",
     "bare-node-runtime": "1.5.0",
-    "bip39": "3.1.0",
-    "sodium-universal": "5.0.1",
     "bare-worker": "4.4.0",
-    "bare-module": "6.4.0"
+    "bip39": "3.1.0",
+    "sodium-universal": "5.0.1"
   },
   "peerDependencies": {
-    "@utexo/webrgb": "^0.1.0",
     "@utexo/rgb-lightning-node-bare": "0.2.0-beta.5",
-    "@utexo/rgb-lightning-node-nodejs": "0.2.0-beta.5"
+    "@utexo/rgb-lightning-node-nodejs": "0.2.0-beta.5",
+    "@utexo/webrgb": "^0.1.0"
   },
   "peerDependenciesMeta": {
     "@utexo/webrgb": {

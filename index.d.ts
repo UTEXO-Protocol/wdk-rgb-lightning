@@ -348,6 +348,8 @@ export interface DecodedRgbInvoice {
   network: string
   expiration_timestamp: number | null
   transport_endpoints: string[]
+  public_key?: string | null
+  encryption?: 'Required' | 'Optional' | 'Unsupported'
 }
 
 export interface CreateHodlInvoiceParams {
@@ -419,6 +421,18 @@ export interface SendRgbAssetRequest {
   fee_rate: number
   min_confirmations: number
   recipient_groups: Array<{ asset_id: string; recipients: RgbSendRecipient[] }>
+}
+
+/** Rust retains/validates the full protocol-1.0 invoice and uses the sender's own proxy. */
+export interface SendRgbInvoiceRequest {
+  invoice: string
+  asset_id: string
+  amount: ExactInteger
+  donation: boolean
+  fee_rate: ExactInteger
+  min_confirmations: number
+  /** Blinding is derived by the native library. */
+  witness_data?: { amount_sat: ExactInteger }
 }
 
 /** Native `JsonRgbInvoiceRequest` shape for `createRgbInvoice`. */
@@ -510,6 +524,7 @@ export interface IRgbLightningBinding {
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   getMessageSigningCapabilities?(): { signing: boolean; verification: boolean }
+  getBfaCapabilities?(): { bfa: boolean; burn: boolean; consignment: boolean }
   getMessageSigningAddress?(): string
   signMessageBip322?(message: string, address: string): string
   verifyMessageBip322?(message: string, address: string, signature: string): boolean
@@ -535,6 +550,7 @@ export class NodeRgbLightningBinding implements IRgbLightningBinding {
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   getMessageSigningCapabilities(): { signing: boolean; verification: boolean }
+  getBfaCapabilities(): { bfa: boolean; burn: boolean; consignment: boolean }
   getMessageSigningAddress(): string
   signMessageBip322(message: string, address: string): string
   verifyMessageBip322(message: string, address: string, signature: string): boolean
@@ -564,6 +580,7 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   getMessageSigningCapabilities(): { signing: boolean; verification: boolean }
+  getBfaCapabilities(): { bfa: boolean; burn: boolean; consignment: boolean }
   getMessageSigningAddress(): string
   signMessageBip322(message: string, address: string): string
   verifyMessageBip322(message: string, address: string, signature: string): boolean
@@ -800,6 +817,7 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   failTransfers(request: object): Promise<object>
   createRgbInvoice(request: CreateRgbInvoiceRequest | object): Promise<object>
   sendRgbAsset(request: SendRgbAssetRequest | object): Promise<object>
+  sendRgbInvoice(request: SendRgbInvoiceRequest): Promise<{ txid: string; batch_transfer_idx: number }>
   /** Burns once through the external signer. Reconcile uncertain outcomes before retrying; no Ethereum payout. */
   burnAsset(request: BurnAssetRequest): Promise<BurnAssetResponse>
   /** Validated contract metadata only; creates no balance. Requires the approved import extension. */

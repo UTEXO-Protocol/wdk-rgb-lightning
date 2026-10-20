@@ -97,6 +97,7 @@ export function createReadOnlyRgbLightningAdapter (binding) {
   }
 
   return Object.freeze({
+    getBfaCapabilities: () => binding.getBfaCapabilities?.() ?? { bfa: false, burn: false, consignment: false },
     getNetwork: () => network,
     isDisposed: () => binding._closed === true,
     bootstrap: () => binding.bootstrap(),
@@ -193,7 +194,8 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
 
   /** Build capabilities, not runtime readiness. BFA unlock requires eth_rpc_url. */
   async getBfaCapabilities () {
-    return { bfa: true, burn: false, consignment: true }
+    const capabilities = this._reader.getBfaCapabilities?.()
+    return { bfa: capabilities?.bfa === true, burn: false, consignment: capabilities?.consignment === true }
   }
 
   /** @protected */

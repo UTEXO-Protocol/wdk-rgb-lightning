@@ -54,6 +54,8 @@
  * @typedef {Object} IRgbLightningBinding
  * @property {() => unknown} ensureNode - Construct or return the cached
  *   `SdkNode` handle.
+ * @property {() => {bfa: boolean, burn: boolean, consignment: boolean}} [getBfaCapabilities] -
+ *   Admitted native capability flags plus real methods, without constructing a node.
  * @property {(seedHex: string, fallbackSeedHex?: string) => void} attachExternalSigner - Build
  *   the in-process VLS signer from a host-supplied 32-byte seed.
  *   Must be called before `unlock()`.

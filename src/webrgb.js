@@ -1,5 +1,7 @@
 // Copyright 2026 UTEXO. Licensed under the Apache License, Version 2.0.
 
+export { validateBurnDestination, burnDestinationHash, burnDestinationFor, createBurnPackage, MAX_BURN_PROOF_BYTES } from './burn-destination.js'
+
 export const WEBRGB_READ_METHODS = Object.freeze([
   'enable', 'getInfo', 'getAddress', 'blindReceive', 'listAssets',
   'getAssetBalance', 'listTransfers', 'getTransferStatus', 'decodeRgbInvoice'
@@ -175,7 +177,7 @@ export class WebRgbProvider {
     try { await this.#enabling } finally { this.#enabling = undefined }
   }
 
-  async #call (revision, operation) {
+  async #call (revision, operation, context) {
     this.#check(revision)
     try {
       const result = await operation()
@@ -185,8 +187,12 @@ export class WebRgbProvider {
       this.#check(revision)
       if (error instanceof WebRgbError) throw error
       const message = String(error?.message ?? '')
-      if (/^Rln\(NotFound\): Unknown RGB contract ID$/.test(message)) {
-        throw new WebRgbError('ASSET_NOT_FOUND', 'Asset is not known to this wallet')
+      const code = typeof error?.code === 'string' ? error.code : error?.code?.type
+      if (context === 'asset-balance' &&
+          (['AssetNotFound', 'UnknownAsset', 'UnknownContractId', 'NotFound'].includes(code) ||
+           /^Rln\((?:UnknownContractId|AssetNotFound|UnknownAsset)\):/.test(message) ||
+           /^Rln\(NotFound\): Unknown RGB contract ID$/.test(message))) {
+        throw new WebRgbError('ASSET_NOT_FOUND', 'This asset is not in this wallet yet. Receive it first, then refresh your balance.')
       }
       if (/^Rln\(InvalidRequest\):|^Error parsing string:/.test(message)) {
         throw new WebRgbError('INVALID_PARAMS', 'Invalid wallet request')
@@ -218,7 +224,7 @@ export class WebRgbProvider {
     const params = {
       assetId: assetId(raw.assetId),
       amount: raw.amount === undefined ? undefined : integer(raw.amount, 'amount'),
-      durationSeconds: integer(raw.durationSeconds === undefined ? 3600 : raw.durationSeconds, 'durationSeconds', 1, 2592000),
+      durationSeconds: integer(raw.durationSeconds === undefined ? 86400 : raw.durationSeconds, 'durationSeconds', 1, 2592000),
       minConfirmations: Math.max(this.#floor, integer(raw.minConfirmations === undefined ? this.#floor : raw.minConfirmations, 'minConfirmations', 0, 255))
     }
     await this.#confirmRequest('blindReceive', { ...params })
@@ -265,7 +271,7 @@ export class WebRgbProvider {
     const revision = this.#revision
     this.#check(revision)
     assetId(id, true)
-    const raw = await this.#call(revision, () => this.#wallet.getAssetBalance(id))
+    const raw = await this.#call(revision, () => this.#wallet.getAssetBalance(id), 'asset-balance')
     this.#check(revision)
     return { assetId: id, balance: nativeInteger(raw?.spendable, 'asset balance'), raw }
   }
