@@ -99,7 +99,9 @@ describe.each([BareRgbLightningBinding, NodeRgbLightningBinding])('automatic VSS
       clock.mockReturnValue(receipt.completed_at_ms - 86400000)
       await expect(account.sendBtc({ amount: 1 })).resolves.toEqual({ txid: 'once' })
       await flush()
-      expect(native.vssBackup).toHaveBeenCalledTimes(enabled ? 1 : 0)
+      // The current native receipt already acknowledges this version. Reading it
+      // under a changed clock must not force an additional automatic upload.
+      expect(native.vssBackup).not.toHaveBeenCalled()
     } finally {
       clock.mockRestore()
       await account.shutdown()

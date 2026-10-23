@@ -24,7 +24,8 @@ function makeAccount () {
   account.sendPayment = jest.fn(async () => ({ payment_hash: 'ph', fee_msat: 7 }))
   account.keysend = jest.fn(async () => ({ payment_hash: 'kh', fee_msat: 11 }))
   account.sendTransaction = jest.fn(async () => ({ hash: 'btctxid', fee: 282n }))
-  account.sendRgbAsset = jest.fn(async () => ({ txid: 'rgbtxid' }))
+  account.sendRgbAsset = jest.fn(async () => ({ txid: 'legacy-must-not-be-used' }))
+  account.sendRgbInvoice = jest.fn(async () => ({ txid: 'rgbtxid' }))
   // The RGB path decodes the invoice to source recipient_id / asset_id /
   // transport_endpoints before building the native sendRgb request.
   account.decodeRgbInvoice = jest.fn(async () => ({
@@ -88,62 +89,30 @@ describe('WalletAccountRgbLightning.transfer', () => {
     expect(account.sendTransaction).not.toHaveBeenCalled()
   })
 
-  it('decodes the RGB invoice and sends the nested recipient_groups shape RLN requires', async () => {
+  it('passes the complete RGB invoice to native without reconstructing a lossy recipient', async () => {
     const account = makeAccount()
     const res = await account.transfer({ recipient: RGB_INVOICE, amount: 5, token: 'asset123', feeRate: 4 })
     expect(account.decodeRgbInvoice).toHaveBeenCalledWith(RGB_INVOICE)
-    expect(account.sendRgbAsset).toHaveBeenCalledWith({
+    expect(account.sendRgbInvoice).toHaveBeenCalledWith({
+      invoice: RGB_INVOICE,
+      asset_id: 'asset123',
+      amount: 5,
       donation: false,
       fee_rate: 4,
-      min_confirmations: 1,
-      recipient_groups: [{
-        asset_id: 'asset123',
-        recipients: [{
-          recipient_id: 'recip123',
-          assignment_kind: 'Fungible',
-          assignment_amount: 5,
-          transport_endpoints: ['rpc://proxy.example/json-rpc']
-        }]
-      }]
+      min_confirmations: 1
     })
+    expect(account.sendRgbAsset).not.toHaveBeenCalled()
     expect(res).toEqual({ hash: 'rgbtxid', fee: 0n })
   })
 
-  it('requires and forwards explicit Bitcoin output data for a Witness RGB invoice', async () => {
+  it('requires witness satoshis and lets native derive proxy blinding', async () => {
     const account = makeAccount()
-    const endpoint = 'rpc://proxy.example/json-rpc?rid_nonce=0123456789abcdef'
-    account.decodeRgbInvoice = jest.fn(async () => ({
-      recipient_id: 'witness-recipient',
-      recipient_type: 'Witness',
-      asset_id: 'assetFromInvoice',
-      transport_endpoints: [endpoint]
-    }))
-
-    await expect(account.transfer({
-      recipient: RGB_INVOICE,
-      amount: 5,
-      feeRate: 4
-    })).rejects.toThrow('witnessData.amountSats must be a positive safe integer')
-
-    await account.transfer({
-      recipient: RGB_INVOICE,
-      amount: 5,
-      feeRate: 4,
-      witnessData: { amountSats: 1_000, blinding: 7 }
-    })
-
-    expect(account.sendRgbAsset).toHaveBeenCalledWith(expect.objectContaining({
-      recipient_groups: [{
-        asset_id: 'assetFromInvoice',
-        recipients: [{
-          recipient_id: 'witness-recipient',
-          assignment_kind: 'Fungible',
-          assignment_amount: 5,
-          transport_endpoints: [endpoint],
-          witness_data: { amount_sat: 1_000, blinding: 7 }
-        }]
-      }]
-    }))
+    account.decodeRgbInvoice = jest.fn(async () => ({ recipient_id: 'witness', recipient_type: 'Witness', asset_id: 'assetFromInvoice' }))
+    await expect(account.transfer({ recipient: RGB_INVOICE, amount: 5, feeRate: 4 }))
+      .rejects.toThrow('witnessData.amountSats must be a positive safe integer')
+    await account.transfer({ recipient: RGB_INVOICE, amount: 5, feeRate: 4, witnessData: { amountSats: 1000 } })
+    expect(account.sendRgbInvoice).toHaveBeenCalledWith(expect.objectContaining({ invoice: RGB_INVOICE, witness_data: { amount_sat: 1000 } }))
+    expect(account.sendRgbAsset).not.toHaveBeenCalled()
   })
 
   it('rejects invalid or inapplicable RGB witness output data', async () => {
@@ -166,15 +135,15 @@ describe('WalletAccountRgbLightning.transfer', () => {
       amount: 5,
       feeRate: 1,
       witnessData: { amountSats: 1_000, blinding: -1 }
-    })).rejects.toThrow('witnessData.blinding must be a non-negative safe integer')
+    })).rejects.toThrow('protocol-1.0 witness blinding is derived by the native wallet')
     expect(account.sendRgbAsset).not.toHaveBeenCalled()
   })
 
   it('falls back to the invoice-encoded asset_id when no token is supplied', async () => {
     const account = makeAccount()
     await account.transfer({ recipient: RGB_INVOICE, amount: 2, feeRate: 1 })
-    const sent = account.sendRgbAsset.mock.calls[0][0]
-    expect(sent.recipient_groups[0].asset_id).toBe('assetFromInvoice')
+    const sent = account.sendRgbInvoice.mock.calls[0][0]
+    expect(sent.asset_id).toBe('assetFromInvoice')
   })
 
   it('uses a live fee-rate estimate when feeRate is omitted', async () => {
@@ -182,7 +151,7 @@ describe('WalletAccountRgbLightning.transfer', () => {
     account._defaultFeeRate = jest.fn(async () => 9)
     await account.transfer({ recipient: RGB_INVOICE, amount: 1, token: 'asset123' })
     expect(account._defaultFeeRate).toHaveBeenCalledWith(6)
-    expect(account.sendRgbAsset.mock.calls[0][0].fee_rate).toBe(9)
+    expect(account.sendRgbInvoice.mock.calls[0][0].fee_rate).toBe(9)
   })
 
   it('requires an amount on the RGB path', async () => {
@@ -209,21 +178,14 @@ describe('WalletAccountRgbLightning.transfer', () => {
     expect(account.sendRgbAsset).not.toHaveBeenCalled()
   })
 
-  it('throws when there are no transport endpoints and no proxy is configured', async () => {
+  it('does not invent recipient endpoints from the sender wallet configuration', async () => {
     const account = makeAccount()
-    account.decodeRgbInvoice = jest.fn(async () => ({ recipient_id: 'r', asset_id: 'a', transport_endpoints: [] }))
-    await expect(account.transfer({ recipient: RGB_INVOICE, amount: 5, feeRate: 1 }))
-      .rejects.toThrow('no transport endpoints')
-    expect(account.sendRgbAsset).not.toHaveBeenCalled()
-  })
-
-  it('falls back to the wallet proxyEndpoint when the invoice carries no transport endpoints', async () => {
-    const account = makeAccount()
-    account._binding._config = { proxyEndpoint: 'rpc://wallet-proxy/json-rpc' }
+    account._binding._config = { proxyEndpoint: 'rpc://sender-proxy/json-rpc' }
     account.decodeRgbInvoice = jest.fn(async () => ({ recipient_id: 'r', asset_id: 'a', transport_endpoints: [] }))
     await account.transfer({ recipient: RGB_INVOICE, amount: 5, feeRate: 1 })
-    const sent = account.sendRgbAsset.mock.calls[0][0]
-    expect(sent.recipient_groups[0].recipients[0].transport_endpoints).toEqual(['rpc://wallet-proxy/json-rpc'])
+    expect(account.sendRgbInvoice).toHaveBeenCalledWith(expect.objectContaining({ invoice: RGB_INVOICE }))
+    expect(account.sendRgbAsset).not.toHaveBeenCalled()
+    // The real native parser decides whether this complete invoice is sendable.
   })
 })
 

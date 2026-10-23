@@ -97,6 +97,7 @@ export function createReadOnlyRgbLightningAdapter (binding) {
   }
 
   return Object.freeze({
+    getBfaCapabilities: () => binding.getBfaCapabilities?.() ?? { bfa: false, burn: false, consignment: false },
     getNetwork: () => network,
     isDisposed: () => binding._closed === true,
     bootstrap: () => binding.bootstrap(),
@@ -193,7 +194,8 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
 
   /** Build capabilities, not runtime readiness. BFA unlock requires eth_rpc_url. */
   async getBfaCapabilities () {
-    return { bfa: true, burn: false, consignment: true }
+    const capabilities = this._reader.getBfaCapabilities?.()
+    return { bfa: capabilities?.bfa === true, burn: false, consignment: capabilities?.consignment === true }
   }
 
   /** @protected */
@@ -539,6 +541,40 @@ export default class WalletAccountReadOnlyRgbLightning extends WalletAccountRead
    * @returns {Promise<object>} The native fee estimate response.
    */
   async estimateFee (blocks) { return this._reader.estimateFee(blocks) }
+
+  /**
+   * Returns a fee estimate or the native estimator's explicit no-estimate state.
+   * Expected absence stays inside the account/worklet boundary. Transport,
+   * locked-wallet and malformed-response failures keep their error behavior.
+   *
+   * @param {number} blocks - Confirmation target, between 1 and 1008.
+   * @returns {Promise<{status: 'available', estimate: {fee_rate: number}} | {status: 'unavailable'}>}
+   */
+  async estimateFeeResult (blocks) {
+    if (!Number.isInteger(blocks) || blocks < 1 || blocks > 1008) {
+      throw new RangeError('blocks must be an integer between 1 and 1008')
+    }
+    let estimate
+    try {
+      estimate = await this._reader.estimateFee(blocks)
+    } catch (error) {
+      // The pinned C-FFI reports this exact Conflict message. The unwrapped
+      // variant is also the native API's documented Display value. Do not
+      // infer absence from arbitrary text containing either phrase.
+      if (error instanceof Error &&
+          (error.message === 'Rln(Conflict): Cannot estimate fees' || error.message === 'Cannot estimate fees')) {
+        return Object.freeze({ status: 'unavailable' })
+      }
+      throw error
+    }
+    if (!estimate || typeof estimate !== 'object' || Array.isArray(estimate) ||
+        Object.keys(estimate).length !== 1 || !Object.hasOwn(estimate, 'fee_rate') ||
+        typeof estimate.fee_rate !== 'number' || !Number.isFinite(estimate.fee_rate) ||
+        estimate.fee_rate <= 0 || !Number.isSafeInteger(Math.ceil(estimate.fee_rate))) {
+      throw new TypeError('The native fee estimate response is invalid')
+    }
+    return Object.freeze({ status: 'available', estimate })
+  }
 
   /**
    * Verifies a Lightning message signature for this account.

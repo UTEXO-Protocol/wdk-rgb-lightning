@@ -3,8 +3,11 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
+import { assertHistoricalQualification } from './historical-scope.mjs'
 import { spawn } from 'node:child_process'
 import { here, prepareChain } from './harness.mjs'
+
+assertHistoricalQualification()
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wdk-external-eth-unlock-'))
 fs.chmodSync(root, 0o700)

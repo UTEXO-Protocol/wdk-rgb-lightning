@@ -15,6 +15,7 @@ const nativeRepositories = Object.freeze({
   '@utexo/rgb-lightning-node-nodejs': 'https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs.git'
 })
 const nativeSourceRepository = 'https://github.com/UTEXO-Protocol/rgb-lightning-node.git'
+const rgbLibraryRepository = 'https://github.com/UTEXO-Protocol/rgb-lib-bfa.git'
 
 function sha256 (bytes) {
   return createHash('sha256').update(bytes).digest('hex')
@@ -65,6 +66,10 @@ export function validateNativePeerPackage (metadata, {
       native.commit !== expectedRuntime.rln_commit ||
       native.rlnVersion !== expectedRuntime.rln_version ||
       native.lightningCommit !== expectedRuntime.lightning_commit ||
+      typeof expectedRuntime.rgb_lib_commit !== 'string' || !/^[a-f0-9]{40}$/.test(expectedRuntime.rgb_lib_commit) ||
+      /^0+$/.test(expectedRuntime.rgb_lib_commit) ||
+      native.rgbLibRepository !== rgbLibraryRepository ||
+      native.rgbLibCommit !== expectedRuntime.rgb_lib_commit ||
       native.patch !== `patches/release-adapter-v${expectedRuntime.rln_version}.patch` ||
       native.patchSha256 !== expectedRuntime.adapter_sha256 ||
       native.cffiLockSha256 !== sources.sharedCffiLockSha256) {

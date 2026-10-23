@@ -17,6 +17,7 @@ import { retainSecret, revealSecret, secretMatches, wipeSecret } from './secret-
 import { signerStoragePath } from './signer-storage-path.js'
 import { normalizeUnlockRequest } from './node-unlock-request.js'
 import { assertNativeRuntime } from './native-runtime-contract.js'
+import { nativeBfaCapabilities } from './bfa-capabilities.js'
 import { addressReuse } from './receive-address.js'
 import { nativeSupportsBip322, requireBip322, validateBip322Message, validateBip322Address, validateBip322Signature } from './bip322-contract.js'
 
@@ -356,6 +357,8 @@ export class NodeRgbLightningBinding {
     const supported = nativeSupportsBip322(rln)
     return { signing: supported, verification: supported }
   }
+
+  getBfaCapabilities () { return nativeBfaCapabilities(rln) }
 
   /** Fixed first vanilla BIP86 receive address; no allocation or rotation. */
   getMessageSigningAddress () {

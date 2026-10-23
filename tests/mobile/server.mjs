@@ -2,6 +2,9 @@ import http from 'node:http'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { assertHistoricalQualification } from '../regtest/historical-scope.mjs'
+
+assertHistoricalQualification()
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wdk-mobile-results-'))
 fs.chmodSync(root, 0o700)

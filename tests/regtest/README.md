@@ -1,4 +1,12 @@
-# Local Released-Runtime Qualification
+# Historical Local Released-Runtime Qualification
+
+This fixture is the released beta.5 / legacy rgb-lib / proxy-0.3 scope. It is
+**not rgb-lib-bfa/proxy-1.0 migration qualification**. The migration branch
+refuses setup, native-wallet construction and chain/daemon calls before any
+legacy stack operation. Reproduce this historical fixture from its exact beta.5
+source graph; do not update these dependencies or reuse these ports/volumes as
+the migration stack. See [migration qualification](../../MIGRATION-QUALIFICATION.md)
+for the separate candidate graph and pending acceptance work.
 
 Disposable regtest only. No mainnet/Signet funds, existing wallets, VSS, virtual
 channels, or unmerged upstream behavior patches are used. These tests exercise

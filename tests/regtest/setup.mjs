@@ -4,6 +4,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { here, prepareChain, until } from './harness.mjs'
+import { assertHistoricalQualification } from './historical-scope.mjs'
+
+assertHistoricalQualification()
 
 const onchainOnly = process.argv.slice(2).includes('--onchain-only')
 if (process.argv.slice(2).some(argument => argument !== '--onchain-only')) {

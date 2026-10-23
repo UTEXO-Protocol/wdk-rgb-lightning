@@ -22,8 +22,12 @@ import { UtexoLsp } from './utexo-lsp.js'
 import { normalizeUnlockRequest, normalizeAutoUnlockRequest, sameUnlockRequest } from './node-unlock-request.js'
 import { exactUnsignedNumber, validatePaymentRequest, validateRefreshResult } from './released-native-contract.js'
 import { validateBurnRequest, validateBurnResponse } from './burn-contract.js'
+import { validateRgbInvoiceSend } from './rgb-invoice-send.js'
 import { receiveAddress, joinAddressOperations, stopAddressOperations } from './receive-address.js'
-import { vssCapabilities, validateVssAutomaticBackupResult } from './vss-policy.js'
+import {
+  vssCapabilities, validateVssAutomaticBackupResult,
+  validateVssBackupInfo, validateVssBackupMetadata
+} from './vss-policy.js'
 import { bip322Capabilities, requireBip322, validateBip322Address, validateBip322Message, validateBip322Signature } from './bip322-contract.js'
 import {
   validateImportRgbContractRequest, validateImportRgbContractResult,
@@ -99,7 +103,14 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   /** Package support, not wallet readiness or bridge payout qualification. */
   getCapabilities () { return { ...super.getCapabilities(), burn: true, vss: vssCapabilities(), bip322: bip322Capabilities(this._binding) } }
 
-  async getBfaCapabilities () { return { bfa: true, burn: true, consignment: true } }
+  async getBfaCapabilities () {
+    const capabilities = this._binding.getBfaCapabilities?.()
+    return {
+      bfa: capabilities?.bfa === true,
+      burn: capabilities?.burn === true,
+      consignment: capabilities?.consignment === true
+    }
+  }
 
   // ==========================================================================
   // Lifecycle
@@ -318,6 +329,25 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
     return pending
   }
 
+  /** @private Only a current, identity-bound native acknowledgement can replace an automatic upload. */
+  async _hasAcknowledgedNativeVssCheckpoint () {
+    try {
+      if (this._binding._vssCheckpointFailed ||
+          typeof this._binding.getVssBackupInfo !== 'function' ||
+          typeof this._binding.getVssBackupMetadata !== 'function' ||
+          typeof this._binding.bootstrap !== 'function') return false
+      const info = validateVssBackupInfo(await this._binding.getVssBackupInfo())
+      if (!info.backup_exists || info.backup_required || info.last_auto_backup_failed) return false
+      const metadata = validateVssBackupMetadata(
+        await this._binding.getVssBackupMetadata(), this._binding._config, await this._binding.bootstrap())
+      return metadata.last_backup !== null &&
+        metadata.last_backup.version === info.version
+    } catch (_error) {
+      // Missing or uncertain native evidence retains the existing checkpoint fallback.
+      return false
+    }
+  }
+
   /**
    * @private Schedule an opportunistic checkpoint after a successful mutation.
    * A remote failure must not turn a completed send/burn into a retryable payment.
@@ -344,7 +374,9 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
         while (this._vssDirty) {
           this._vssDirty = false
           try {
-            await this._binding.vssBackup()
+            // Native mutation admission already owns blocking snapshots. Reconcile its
+            // real acknowledgement inside this queue before requesting another upload.
+            if (!await this._hasAcknowledgedNativeVssCheckpoint()) await this._binding.vssBackup()
             this._binding._vssCheckpointFailed = false
           } catch (_error) {
             this._binding._vssCheckpointFailed = true
@@ -860,6 +892,21 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    */
   async sendRgbAsset (request) { return this._nativeMutation(() => this._node.sendRgb(request)) }
 
+  /** Protocol-1.0 send. Rust validates the complete invoice and retains its recipient keys. */
+  async sendRgbInvoice (request) {
+    const validated = validateRgbInvoiceSend(request)
+    if (this._unlockInFlight) throw new AccountLockedError('Await account unlock before sending RGB assets')
+    return this._nativeMutation(() => {
+      const node = this._node
+      if (typeof node.sendRgbInvoice !== 'function') {
+        const error = new Error('The installed native binding does not support protocol-1.0 invoice sends')
+        error.code = 'ERR_RLN_UNSUPPORTED_CAPABILITY'
+        throw error
+      }
+      return node.sendRgbInvoice(validated)
+    })
+  }
+
   /**
    * Burn asset units with RLN's native snake_case request. BFA requires a
    * 32-byte hex burn_recipient. Does not perform an Ethereum payout.
@@ -1034,7 +1081,7 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
    *   - BOLT11 invoice → `sendPayment({ invoice, amt_msat?, asset_id? })`
    *   - LN node pubkey  → `keysend({ dest_pubkey, amt_msat, asset_id? })`
    *   - BTC address     → `sendTransaction({ to, value, feeRate })`
-   *   - RGB invoice     → `sendRgbAsset` (asset_id picked from invoice)
+   *   - RGB invoice     → `sendRgbInvoice` (asset_id picked from invoice)
    *
    * `options.token` is interpreted as an RGB asset_id when present.
    * `options.amount` is treated as **msats** for LN flows and **sats**
@@ -1088,17 +1135,8 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
         })
       }
       case 'rgb-invoice': {
-        // RGB send. The recipient IS the rgb invoice, which encodes the
-        // recipient_id, the asset, and — crucially — the receiver's
-        // consignment transport endpoints. RLN's `sendRgb` does not
-        // re-derive any of these: it requires a nested `recipient_groups`
-        // request with explicit `transport_endpoints` (the flat
-        // `{ recipient_id, amount, asset_id }` shape this used to build is
-        // rejected on deserialise). So decode the invoice and assemble the
-        // request from it, mirroring the working rgb-sdk-rn / wdk-wallet-rgb
-        // sends. transfer() assumes a Fungible assignment (the natural case
-        // for an amount-based transfer); non-fungible or multi-recipient
-        // sends should call sendRgbAsset() with a full SendRgbAssetRequest.
+        // Decode for asset/witness UX only. Never rebuild a recipient from
+        // this projection: doing so loses proxy keys, encryption and expiry.
         if (amount === undefined || amount === null) {
           throw new Error('transfer(rgb): amount (asset units) is required')
         }
@@ -1111,49 +1149,26 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
         if (!contractId) {
           throw new Error('transfer(rgb): asset_id missing — pass options.token or use an invoice that encodes the asset')
         }
-        const endpoints = (Array.isArray(decoded?.transport_endpoints) && decoded.transport_endpoints.length > 0)
-          ? decoded.transport_endpoints
-          : this._defaultTransportEndpoints()
-        if (endpoints.length === 0) {
-          throw new Error('transfer(rgb): the RGB invoice carries no transport endpoints and the wallet has no proxyEndpoint configured')
-        }
         const witnessData = options.witnessData
         if (decoded?.recipient_type === 'Witness') {
           if (!witnessData || !Number.isSafeInteger(witnessData.amountSats) || witnessData.amountSats <= 0) {
             throw new Error('transfer(rgb): witnessData.amountSats must be a positive safe integer for a Witness RGB invoice')
           }
-          if (
-            witnessData.blinding !== undefined &&
-            (!Number.isSafeInteger(witnessData.blinding) || witnessData.blinding < 0)
-          ) {
-            throw new Error('transfer(rgb): witnessData.blinding must be a non-negative safe integer when provided')
-          }
+          if (witnessData.blinding !== undefined) throw new Error('transfer(rgb): protocol-1.0 witness blinding is derived by the native wallet')
         } else if (witnessData !== undefined) {
           throw new Error('transfer(rgb): witnessData is only valid for a Witness RGB invoice')
         }
         const feeRate = options.feeRate ?? await this._defaultFeeRate(6)
-        const recipientRequest = {
-          recipient_id: recipientId,
-          assignment_kind: 'Fungible',
-          assignment_amount: Number(amount),
-          transport_endpoints: endpoints
-        }
-        if (decoded?.recipient_type === 'Witness') {
-          recipientRequest.witness_data = {
-            amount_sat: witnessData.amountSats,
-            ...(witnessData.blinding === undefined ? {} : { blinding: witnessData.blinding })
-          }
-        }
         const req = {
+          invoice: recipient,
+          asset_id: contractId,
+          amount: exactUnsignedNumber(amount, 'transfer amount'),
           donation: false,
           fee_rate: Number(feeRate),
           min_confirmations: 1,
-          recipient_groups: [{
-            asset_id: contractId,
-            recipients: [recipientRequest]
-          }]
+          ...(decoded?.recipient_type === 'Witness' ? { witness_data: { amount_sat: witnessData.amountSats } } : {})
         }
-        const r = await this.sendRgbAsset(req)
+        const r = await this.sendRgbInvoice(req)
         // RLN's send response carries the txid; the on-chain fee for an RGB
         // transfer isn't surfaced separately, so report 0 (unchanged).
         return { hash: r?.txid ?? '', fee: BigInt(0) }

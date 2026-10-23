@@ -7,7 +7,10 @@ export function addressReuse (config) {
   if (config.reuseAddresses !== undefined && typeof config.reuseAddresses !== 'boolean') {
     throw new TypeError('reuseAddresses must be a boolean')
   }
-  return config.reuseAddresses ?? true
+  if (config.reuseAddresses === true) {
+    throw new TypeError('reuseAddresses: true is not supported by rgb-lib-bfa; use false')
+  }
+  return false
 }
 
 function addressFrom (value) {

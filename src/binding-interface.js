@@ -23,8 +23,8 @@
  *   Defaults to `0`, which lets the operating system choose a port.
  * @property {number} [maxMediaUploadSizeMb] - Maximum RGB media upload size
  *   in MiB. Defaults to `5`.
- * @property {boolean} [reuseAddresses] - Defaults to true. False uses released
- *   native non-reuse for Bitcoin and colored scripts. Account address reads
+ * @property {boolean} [reuseAddresses] - Defaults to false. This candidate
+ *   rejects true because rgb-lib-bfa does not support address reuse. Account address reads
  *   share a session cache; getNewAddress explicitly allocates another address.
  * @property {boolean} [enableVirtualChannelsV0] - Enable the
  *   virtual-channels-v0 protocol. Defaults to `false`. Production APay requires
@@ -46,14 +46,16 @@
  * @property {string} [lspBearerToken] - Bearer token sent to the LSP's
  *   `/internal/*` endpoints. Omit when the LSP does not require authorization.
  *
- * Address policy is explicit and must remain consistent for a wallet. The
- * default preserves reuse; new wallets may opt into native non-reuse.
+ * Address policy must remain consistent for a wallet. This candidate uses
+ * native non-reuse; disposable migration wallets need no legacy conversion.
  */
 
 /**
  * @typedef {Object} IRgbLightningBinding
  * @property {() => unknown} ensureNode - Construct or return the cached
  *   `SdkNode` handle.
+ * @property {() => {bfa: boolean, burn: boolean, consignment: boolean}} [getBfaCapabilities] -
+ *   Admitted native capability flags plus real methods, without constructing a node.
  * @property {(seedHex: string, fallbackSeedHex?: string) => void} attachExternalSigner - Build
  *   the in-process VLS signer from a host-supplied 32-byte seed.
  *   Must be called before `unlock()`.
