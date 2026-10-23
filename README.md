@@ -206,7 +206,7 @@ are async and forward to the active binding.
 | RGB invoices/transfers | `createRgbInvoice(request)`, `decodeRgbInvoice(invoice)`, `sendRgbInvoice(request)`, `sendRgbAsset(request)`, `getAssetMedia(digest)`, `postAssetMedia(request)` |
 | RGB burn | `burnAsset({ asset_id, amount, burn_recipient?, fee_rate, min_confirmations })` returns `{ txid, batch_transfer_idx }`; no automatic retry or bridge payout |
 | RGB issuance (unsupported in this mode) | `issueAssetNia(request)`, `issueAssetUda(request)`, `issueAssetCfa(request)`, `issueAssetIfa(request)`, `inflate(request)` forward the released `UnsupportedInExternalSignerMode` error; use a separate on-chain wallet |
-| BTC | `getBalance(skipSync?)`, `getBalanceDetails(skipSync?)`, `sendTransaction({ to, value, ... })`, `sendBtc(nativeRequest)`, `getTransactions(skipSync?)`, `getTransactionsByTxid(txid)`, `listUnspents(skipSync?)`, `createUtxos(request)`, `estimateFee(blocks)` |
+| BTC | `getBalance(skipSync?)`, `getBalanceDetails(skipSync?)`, `sendTransaction({ to, value, ... })`, `sendBtc(nativeRequest)`, `getTransactions(skipSync?)`, `getTransactionsByTxid(txid)`, `listUnspents(skipSync?)`, `createUtxos(request)`, `estimateFee(blocks)`, `estimateFeeResult(blocks)` |
 | WDK-standard | `index`, `path`, `keyPair`, `sign(message)`, `verify(message, signature)`, `transfer(options)`, `quoteTransfer(options)`, `quoteSendTransaction(tx)`, `getTransactionReceipt(hash)`, `toReadOnlyAccount()` |
 | Bitcoin message proofs | `getMessageSigningAddress()`, `signMessageBip322(message, address)`, `verifyMessageBip322(message, address, signature)` |
 | Diagnostics | `sendOnionMessage(request)`, `checkIndexerUrl(url)`, `checkProxyEndpoint(endpoint)` |
@@ -215,6 +215,11 @@ are async and forward to the active binding.
 
 Notes:
 
+- **`estimateFeeResult(blocks)`** accepts targets from 1 to 1,008 blocks and
+  returns `{ status: 'available', estimate: { fee_rate } }` or
+  `{ status: 'unavailable' }` for the native no-estimate condition. It assigns
+  no fallback rate; transport, lock, invalid-target and malformed-response
+  failures still throw. Existing `estimateFee()` behavior is unchanged.
 - **Bitcoin message signing** uses the explicit BIP-322 API below. Existing
   `sign()` and `verify()` retain their Lightning node-identity semantics.
 

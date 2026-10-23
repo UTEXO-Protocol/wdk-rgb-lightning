@@ -1,6 +1,6 @@
 # rgb-lib-bfa migration candidate
 
-This branch is unpublished `0.2.0-bfa.0`, based on the released beta.5 WDK.
+This branch is unpublished `0.2.0-bfa.1`, based on the released beta.5 WDK.
 It requires exact matching native artifacts. Installing beta.5 peers or using
 a workspace link does not qualify this candidate. Do not merge or publish it
 until the pending acceptance checks below have real evidence.
@@ -9,16 +9,16 @@ until the pending acceptance checks below have real evidence.
 
 | Component | Commit |
 | --- | --- |
-| Focused RLN | `c29d1b2dfe43ba95c25ced8984f09e42c789d6af` |
-| UTEXO-Protocol/rgb-lib-bfa | `962730a211f0f7569d7ad8ae777052f433d87655` |
-| LDK | `510189d5700a6d1406229ce7523e181c3838715e` |
-| Bare candidate | `71ebe14ca702e9c269f4643a362eb3e3303db47c` |
-| Node candidate | `f73d9c23c7b71b4f4e8e74d6f0610c4992c664ee` |
+| Focused RLN | `d10d679f0dd73246f6b475a44bdf13edd5f9b2a4` |
+| UTEXO-Protocol/rgb-lib-bfa | `89c37086a68ef792da75c62bce59b58b1d7952a0` |
+| LDK | `bbe68189872c26088e351d034b05c58769cb996a` |
+| Bare candidate | `81cfe1fa8ce64ff82d671a24c23e35834fc8b490` |
+| Node candidate | `5f9b0e9a59e59d265f900a8e5f79a2644058a1ca` |
 
 The shared C-FFI lock SHA-256 is
-`460728009d9c1db3abf9a2f2ad4d76f777589b55eff96ff7be1f3c4d301dab30`.
+`3039a36910386f9d6f350ed33791cd6461174cd340247998b80726a6581c3763`.
 The maintained adapter SHA-256 is
-`26834a8aca4676380abb41c432f7ebbc33153a58b669213cf1f32472d38db275`.
+`db4511e71a1c770def1aeeb5f1ab5e72e07fdd228627d6d744dce56b4b3bdcfe`.
 `native-peer-sources.json` and `src/native-runtime-contract.js` enforce these
 identities. RLN's base version string remains `0.17.0-beta.3`; the exact
 commit identifies this focused migration. It is not an official new RLN tag.
@@ -65,14 +65,52 @@ Keep the registry peer-release gate for publication. These unpublished
 versions cannot pass a registry availability check yet.
 
 The migration uses a separate local chain, proxy 1.0, bridge and disposable
-wallets. The supplied Signet public contract is **Bridged USDT / BUSDT / 6**,
+wallets. The initial historical Signet import fixture was **Bridged USDT / BUSDT / 6**,
 asset `rgb:OG9No4hZ-UrxoWmR-09ohtOk-ppxBN7h-g~KkQro-ncKc9A4`, SHA-256
 `dfb49261fed5ad3dd237dd3a03913793b76fe70e486372bbeb0769b82158a895`.
 It must not be relabelled as a funded regtest asset; the local fixture has its
-own issued identity. Native import proves registration and metadata, not a
+own issued identity. This historical contract is not the current Iris staging
+asset configuration. Native import proves registration and metadata, not a
 spendable balance or hosted-bridge acceptance.
 
 ## Qualification status
+
+### Current bfa.1 source qualification
+
+The exact graph above passes 128 RLN Rust tests, 18 C-FFI tests and 40 WDK
+suites / 1,484 tests. WDK also passes TypeScript, lint, the WebRGB peer contract,
+exact native-source verification and clean-HEAD package allowlist admission.
+These source/package checks do not qualify a newly installed native binary.
+
+This graph contains the native EVM JSON-RPC empty-parameter repair, preserving
+explicit configured endpoints. WDK's additive `estimateFeeResult()` represents
+only the exact native no-estimate condition as an unavailable result; unexpected
+transport, lock and malformed-response failures remain errors. The original
+`estimateFee()` contract is unchanged.
+
+New seven-target Bare and five-target Node builds, original CI receipts, native
+artifact admission and actual packed Node/Bare consumers remain pending. The
+previous candidate's binaries, package hashes and financial/VSS passes are
+historical evidence and must not be reused as bfa.1 acceptance. The new candidate
+keeps separate archive identities rather than overwriting the frozen bfa.0 set.
+
+The next runtime checks include fresh disposable public Signet VSS default-on,
+manual backup, Off/On policy, truthful completion receipts, graceful reopen and
+fresh-directory restore; the installed WDK fee-result boundary; and repeated
+funded isolated BTC/BFA send/receive, restore and stable polling on this exact
+graph. Native V1 burn, saved proof, independent bridge redemption, exactly-one
+EVM payout and replay rejection remain separate financial acceptance scopes.
+No hosted dev bridge has been operated and no migration package is published.
+
+APK creation is explicitly on hold at the user's request. No APK or installed
+mobile acceptance is claimed for bfa.1; the running Android app is preserved.
+Mobile Release and user-run hosted bridge acceptance remain separate checks.
+
+### Historical bfa.0 and earlier Debug qualification
+
+The following results and their then-pending repairs describe earlier source
+graphs. Their exact pins, counts and receipts are retained for comparison; none
+is an acceptance result for the current bfa.1 graph above.
 
 The focused `c29d1b2d` repair maps wrong-ID/network contract validation failures
 to the existing invalid-contract category and resolves the UniFFI input path at
@@ -80,9 +118,9 @@ build-script runtime. Focused/maintained/focused shared-cache switches each pass
 the four targeted tests and generate the correct checkout's scaffolding without
 touching inputs or cleaning the cache. Earlier `cd3be114` Debug/BTC evidence and
 later `c29d1b2d` / `cf92a461` Debug financial evidence are retained separately.
-Neither qualifies the current `26834a8a` adapter or its newly pinned peers.
+Neither qualified the then-new `26834a8a` adapter or its pinned peers.
 
-WDK now passes 39 suites / 1,429 tests, types, lint, the optional WebRGB
+That WDK source passed 39 suites / 1,429 tests, types, lint, the optional WebRGB
 contract, exact native-source checks and package allowlist verification. Its
 packed Bare canary requires all three candidate payload archives alongside the
 wrapper and retains exact install-script grants and runtime admission. The old
@@ -140,7 +178,7 @@ the same acknowledged full-content digest and allowed BDK metadata; no digest
 coverage was relaxed. Its receipt is
 `qualification-consumers/funded-ZzQEJp/qualification.json`, SHA-256
 `3551f180585cdc11dc7e4ebd4f9cc1e606199118d51fb70aa1bc75bcbabc5011`.
-The maintained adapter now uses its complete acknowledged-content check for
+That repair's adapter uses its complete acknowledged-content check for
 refresh while retaining fresh, pending, failed and private-state changes. WDK's
 serialized automatic fallback skips an extra upload only with validated clean
 native status and a current identity/network/endpoint-bound completion receipt.
@@ -150,7 +188,7 @@ and all 1,429 WDK tests. Its native source receipt SHA-256 is
 `7e42bee7f1b95fb7ba8b92e8aad23b109c96b76fff70e041647cc1c2ff0b8824`.
 New binaries and actual post-fix financial/stable-poll acceptance remain pending.
 
-Still required: new target artifacts and actual packed consumers; repeat the
+The earlier run's remaining scopes were: new target artifacts and actual packed consumers; repeat the
 funded BTC/BFA, restore and stable-poll scopes on the exact current peers; local
 native V1 burn, saved proof, independent bridge redemption, exactly-one EVM
 payout and replay rejection; and a user-coordinated iOS 27 rebuild and runtime
@@ -158,6 +196,8 @@ test. Neither the partial financial run nor its standalone journals qualify
 Iris cold-pending burn recovery, hosted cloud VSS secrecy, mobile Release or
 public-network operation. No hosted dev bridge has been operated and no
 migration package has been published.
+
+### Remaining upstream and release limitations
 
 RLN's upstream submodule ancestry check also waits for companion LDK #59:
 the exact migration commit is intentionally not yet reachable from LDK `dev`.
