@@ -2,7 +2,7 @@
 
 [![Built with WDK](./assets/built-with-wdk.png)](https://github.com/tetherto/wdk)
 
-This branch is the unpublished `0.2.0-bfa.0` migration candidate. It requires
+This branch is the unpublished `0.2.0-bfa.1` migration candidate. It requires
 the matching candidate native archives; released beta.5 binaries are rejected.
 See [migration qualification](./MIGRATION-QUALIFICATION.md) for the exact
 source graph, integration procedure and pending acceptance checks.

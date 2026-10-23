@@ -6,7 +6,7 @@ import { assertNativeRuntime, REQUIRED_NATIVE_RUNTIME } from '../src/native-runt
 import bare from '@utexo/rgb-lightning-node-bare'
 
 const wrapper = 'RLN_BARE_PACKAGE_TARBALL'
-const version = '0.2.0-bfa.0'
+const version = '0.2.0-bfa.1'
 let root
 let environment
 

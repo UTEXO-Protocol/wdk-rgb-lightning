@@ -21,6 +21,11 @@ import WalletManager, { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 
 export type DecimalString = `${bigint}`
 
+/** Expected no-estimate is data; transport, lock and contract failures still throw. */
+export type FeeEstimateResult =
+  | Readonly<{ status: 'available', estimate: Readonly<{ fee_rate: number }> }>
+  | Readonly<{ status: 'unavailable' }>
+
 export interface RgbImportResult {
   asset_id: string
   already_imported: boolean
@@ -710,6 +715,9 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
 
   /** Estimates the Bitcoin fee rate for a confirmation target. */
   estimateFee(blocks: number): Promise<object>
+
+  /** Returns the native estimator's explicit availability; blocks must be 1..1008. */
+  estimateFeeResult(blocks: number): Promise<FeeEstimateResult>
 
   /**
    * Verifies a Lightning message signature for this account.

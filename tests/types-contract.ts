@@ -16,6 +16,7 @@ import type WalletManagerRgbLightning from '../index.js'
 import type {
   BurnAssetRequest,
   BurnAssetResponse,
+  FeeEstimateResult,
   IRgbLightningBinding,
   LnurlPayOptions,
   LspLiquidityTimeoutError,
@@ -43,6 +44,20 @@ const exportedConsignment: Promise<Uint8Array> = account.getConsignment('rgb:ass
 const readOnlyConsignment: Promise<Uint8Array> = readOnlyAccount.getConsignment('rgb:asset', '00'.repeat(32))
 void exportedConsignment
 void readOnlyConsignment
+
+const feeEstimateResult: Promise<FeeEstimateResult> = account.estimateFeeResult(6)
+const readOnlyFeeEstimateResult: Promise<FeeEstimateResult> = readOnlyAccount.estimateFeeResult(6)
+void feeEstimateResult.then(result => {
+  if (result.status === 'available') {
+    const nativeRate: number = result.estimate.fee_rate
+    return nativeRate
+  }
+  // @ts-expect-error Explicit absence does not contain an estimate or a synthetic fallback rate.
+  return result.estimate
+})
+void readOnlyFeeEstimateResult
+// @ts-expect-error Confirmation targets require numbers.
+account.estimateFeeResult('6')
 
 const signingAddress: Promise<string> = account.getMessageSigningAddress()
 const bip322Signature: Promise<string> = account.signMessageBip322('exact message\n', 'bcrt1paddress')

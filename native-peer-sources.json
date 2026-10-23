@@ -1,18 +1,18 @@
 {
   "schemaVersion": 1,
-  "sharedCffiLockSha256": "460728009d9c1db3abf9a2f2ad4d76f777589b55eff96ff7be1f3c4d301dab30",
+  "sharedCffiLockSha256": "3039a36910386f9d6f350ed33791cd6461174cd340247998b80726a6581c3763",
   "peers": {
     "@utexo/rgb-lightning-node-bare": {
       "repository": "https://github.com/UTEXO-Protocol/rgb-lightning-node-bare.git",
-      "ref": "72f428a2daf3268dc593303b89363aeffb42a5b8",
-      "commit": "72f428a2daf3268dc593303b89363aeffb42a5b8",
-      "version": "0.2.0-bfa.0"
+      "ref": "81cfe1fa8ce64ff82d671a24c23e35834fc8b490",
+      "commit": "81cfe1fa8ce64ff82d671a24c23e35834fc8b490",
+      "version": "0.2.0-bfa.1"
     },
     "@utexo/rgb-lightning-node-nodejs": {
       "repository": "https://github.com/UTEXO-Protocol/rgb-lightning-node-nodejs.git",
-      "ref": "ce1032cc0ece3171e1e6cc17870733c2751a6045",
-      "commit": "ce1032cc0ece3171e1e6cc17870733c2751a6045",
-      "version": "0.2.0-bfa.0"
+      "ref": "5f9b0e9a59e59d265f900a8e5f79a2644058a1ca",
+      "commit": "5f9b0e9a59e59d265f900a8e5f79a2644058a1ca",
+      "version": "0.2.0-bfa.1"
     }
   }
 }

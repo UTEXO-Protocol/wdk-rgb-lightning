@@ -31,7 +31,7 @@ export function packedBareInputs ({ version, environment = process.env }) {
   const count = payloads.filter(Boolean).length
   if (count !== 0 && count !== payloads.length) throw new Error('All three Bare payload tarballs must be supplied together')
   if (count && !owner) throw new Error('Local Bare payload tarballs require the local Bare wrapper tarball')
-  if (version === '0.2.0-bfa.0' && (!owner || count !== 3)) {
+  if (version === '0.2.0-bfa.1' && (!owner || count !== 3)) {
     throw new Error('The unpublished BFA candidate requires the Bare wrapper and all three local payload tarballs')
   }
   const selected = [owner, ...payloads].filter(Boolean)
