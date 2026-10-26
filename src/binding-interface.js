@@ -54,6 +54,7 @@
  * @typedef {Object} IRgbLightningBinding
  * @property {() => unknown} ensureNode - Construct or return the cached
  *   `SdkNode` handle.
+ * @property {() => {supported: boolean}} [getRgbOutputSetupCapabilities] - Native operation-owned output setup support.
  * @property {() => {bfa: boolean, burn: boolean, consignment: boolean}} [getBfaCapabilities] -
  *   Admitted native capability flags plus real methods, without constructing a node.
  * @property {(seedHex: string, fallbackSeedHex?: string) => void} attachExternalSigner - Build

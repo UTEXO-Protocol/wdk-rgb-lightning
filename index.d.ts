@@ -105,6 +105,33 @@ export interface SendPaymentRequest {
   asset_amount?: number
 }
 
+/** Durable RGB output intent. Only lowercase hex IDs (32–64 characters) are accepted. */
+export interface PrepareCreateUtxosRequest {
+  operation_id: string
+  up_to: boolean
+  num?: number | null
+  size?: number | null
+  fee_rate: number | string
+  skip_sync: boolean
+}
+export interface CreateUtxosOperationRequest { operation_id: string }
+export type CreateUtxosOperationStatus = 'preparing' | 'prepared' | 'submitting' | 'broadcast' | 'confirmed' | 'cancelled' | 'failed'
+export interface CreateUtxosOperation {
+  operation_id: string
+  txid: string | null
+  status: CreateUtxosOperationStatus
+  /** False after restore unless native evidence proves cancellation cannot discard a broadcast. */
+  can_cancel: boolean
+  /** True only when the exact persisted transaction may be committed. */
+  can_commit: boolean
+  inputs: Array<{ txid: string; vout: number }>
+  num_outputs: number
+  size_sat: number
+  fee_sat: number | string
+  fee_rate: number | string
+}
+export interface PendingVanillaTransaction { txid: string; type: 'CreateUtxos' | 'SendBtc' | 'Drain' }
+
 /** Native burn request. Numbers must be safe integers; strings preserve the full u64 range. */
 export interface BurnAssetRequest {
   asset_id: string
@@ -534,6 +561,7 @@ export interface IRgbLightningBinding {
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   getMessageSigningCapabilities?(): { signing: boolean; verification: boolean }
   getBfaCapabilities?(): { bfa: boolean; burn: boolean; consignment: boolean }
+  getRgbOutputSetupCapabilities?(): { supported: boolean }
   getMessageSigningAddress?(): string
   signMessageBip322?(message: string, address: string): string
   verifyMessageBip322?(message: string, address: string, signature: string): boolean
@@ -560,6 +588,7 @@ export class NodeRgbLightningBinding implements IRgbLightningBinding {
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   getMessageSigningCapabilities(): { signing: boolean; verification: boolean }
   getBfaCapabilities(): { bfa: boolean; burn: boolean; consignment: boolean }
+  getRgbOutputSetupCapabilities(): { supported: boolean }
   getMessageSigningAddress(): string
   signMessageBip322(message: string, address: string): string
   verifyMessageBip322(message: string, address: string, signature: string): boolean
@@ -590,6 +619,7 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   getMessageSigningCapabilities(): { signing: boolean; verification: boolean }
   getBfaCapabilities(): { bfa: boolean; burn: boolean; consignment: boolean }
+  getRgbOutputSetupCapabilities(): { supported: boolean }
   getMessageSigningAddress(): string
   signMessageBip322(message: string, address: string): string
   verifyMessageBip322(message: string, address: string, signature: string): boolean
@@ -844,6 +874,16 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   rotateAddress(): Promise<string>
   /** Explicitly allocate and persist a fresh Bitcoin address under either address policy. */
   getNewAddress(): Promise<string>
+  getRgbOutputSetupCapabilities(): { supported: boolean }
+  /** Persists an exact unsigned transaction and reserves its inputs for this operation only. */
+  prepareCreateUtxos(request: PrepareCreateUtxosRequest): Promise<CreateUtxosOperation>
+  /** Uncertain retries submit only the same signed transaction. */
+  commitPreparedCreateUtxos(request: CreateUtxosOperationRequest): Promise<CreateUtxosOperation>
+  /** Releases inputs only if native evidence proves that no broadcast was possible. */
+  cancelCreateUtxosPlan(request: CreateUtxosOperationRequest): Promise<CreateUtxosOperation>
+  getCreateUtxosOperation(request: CreateUtxosOperationRequest): Promise<CreateUtxosOperation | null>
+  listCreateUtxosOperations(): Promise<CreateUtxosOperation[]>
+  listPendingVanillaTransactions(): Promise<PendingVanillaTransaction[]>
   createUtxos(request: object): Promise<{ ok: true }>
 
   // Onion / signing / diagnostics

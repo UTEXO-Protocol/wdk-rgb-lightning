@@ -9,16 +9,16 @@ until the pending acceptance checks below have real evidence.
 
 | Component | Commit |
 | --- | --- |
-| Focused RLN | `d10d679f0dd73246f6b475a44bdf13edd5f9b2a4` |
+| Focused RLN | `7cced3aa3c2c904a88d8f8a7832981d25a5ea871` |
 | UTEXO-Protocol/rgb-lib-bfa | `89c37086a68ef792da75c62bce59b58b1d7952a0` |
 | LDK | `bbe68189872c26088e351d034b05c58769cb996a` |
-| Bare candidate | `81cfe1fa8ce64ff82d671a24c23e35834fc8b490` |
-| Node candidate | `5f9b0e9a59e59d265f900a8e5f79a2644058a1ca` |
+| Bare candidate | `a38f6bd656c659dfc04ddc36caea7dce2e5e4ccc` |
+| Node candidate | `705e44eb382e9c4efd32d092f953317a3620d483` |
 
 The shared C-FFI lock SHA-256 is
 `3039a36910386f9d6f350ed33791cd6461174cd340247998b80726a6581c3763`.
 The maintained adapter SHA-256 is
-`db4511e71a1c770def1aeeb5f1ab5e72e07fdd228627d6d744dce56b4b3bdcfe`.
+`b70bb70610ff1b47eb55ea2bdf67a65af85e89fbabc006f2345302cbe74f1082`.
 `native-peer-sources.json` and `src/native-runtime-contract.js` enforce these
 identities. RLN's base version string remains `0.17.0-beta.3`; the exact
 commit identifies this focused migration. It is not an official new RLN tag.
@@ -77,34 +77,49 @@ spendable balance or hosted-bridge acceptance.
 
 ### Current bfa.1 source qualification
 
-The exact graph above passes 128 RLN Rust tests, 18 C-FFI tests and 40 WDK
-suites / 1,484 tests. WDK also passes TypeScript, lint, the WebRGB peer contract,
-exact native-source verification and clean-HEAD package allowlist admission.
-These source/package checks do not qualify a newly installed native binary.
+The graph above passes 21 native durable-output Rust cases, including two real
+funded isolated regtest fixtures, 13 wallet-source/snapshot-barrier cases and
+53 VSS cases. The funded scope verifies actual watch-only PSBT fee/count,
+independent funding with a retained legacy reservation, exact same-transaction
+retry after a real broadcast followed by an injected database failure, and
+confirmation recovery. It does not qualify a packaged mobile signer.
 
-This graph contains the native EVM JSON-RPC empty-parameter repair, preserving
-explicit configured endpoints. WDK's additive `estimateFeeResult()` represents
-only the exact native no-estimate condition as an unavailable result; unexpected
-transport, lock and malformed-response failures remain errors. The original
-`estimateFee()` contract is unchanged.
+Bare passes 112 host installer/contract tests and Node passes 47 host contract
+tests, with TypeScript checks for both. The maintained C-FFI graph (including
+VLS/VSS) and Node NAPI adapter pass locked Rust typechecking. WDK passes
+41 suites / 1,567 tests, TypeScript, lint and the WebRGB peer contract.
+Exact native-source verification and clean-HEAD package allowlist admission
+bind this WDK to the committed peers above. Source and package admission are
+separate from installed native binary and device acceptance.
 
-New seven-target Bare and five-target Node builds, original CI receipts, native
-artifact admission and actual packed Node/Bare consumers remain pending. The
-previous candidate's binaries, package hashes and financial/VSS passes are
-historical evidence and must not be reused as bfa.1 acceptance. The new candidate
-keeps separate archive identities rather than overwriting the frozen bfa.0 set.
+The candidate preserves the EVM JSON-RPC empty-parameter repair and explicit
+configured endpoints. WDK's additive `estimateFeeResult()` represents only the
+exact native no-estimate condition as unavailable; unexpected transport, lock
+and malformed-response failures remain errors. `estimateFee()` is unchanged.
+The recoverable output setup API below adds explicit operation identity,
+transaction-bound review and evidence-based cancellation. Snapshot capture
+shares a barrier with the complete output-operation journal/database transition;
+automatic backup cannot capture a reserved input without its prepared record.
+Existing VSS policy ownership and completion semantics are retained.
 
-The next runtime checks include fresh disposable public Signet VSS default-on,
-manual backup, Off/On policy, truthful completion receipts, graceful reopen and
-fresh-directory restore; the installed WDK fee-result boundary; and repeated
-funded isolated BTC/BFA send/receive, restore and stable polling on this exact
-graph. Native V1 burn, saved proof, independent bridge redemption, exactly-one
-EVM payout and replay rejection remain separate financial acceptance scopes.
-No hosted dev bridge has been operated and no migration package is published.
+Only an Android ARM64 candidate artifact is requested for this iteration.
+Rebuilding the other six Bare targets, all Node platform binaries, full native
+distribution assembly and their corresponding runtime acceptance are deferred.
+The all-target publication gates are unchanged. Previous binaries, archived
+qualification counts and package hashes must not be reused to qualify this
+new source graph. No new packaged-native or Android installation pass is
+claimed in this source qualification record.
 
-APK creation is explicitly on hold at the user's request. No APK or installed
-mobile acceptance is claimed for bfa.1; the running Android app is preserved.
-Mobile Release and user-run hosted bridge acceptance remain separate checks.
+Android device checks still need the exact new compiled runtime and wrapper
+identities, wallet creation/reopen, output prepare/review/cancel/submit/recovery,
+usable pending/confirmed outputs, and bridge admission. Funded BTC/BFA
+transfers, VSS remote behavior and bridge mint/burn retain their separate
+financial acceptance scopes. No hosted dev bridge has been operated and no
+migration package has been merged or published.
+
+Prior bfa.1 source checks (128 RLN tests, 18 C-FFI tests and 40 WDK suites /
+1,484 tests) applied to the earlier `d10d679f` / `db4511e7` graph. They are
+historical evidence, not additional acceptance counts for the graph above.
 
 ### Historical bfa.0 and earlier Debug qualification
 
@@ -236,3 +251,25 @@ also checks an independent bridge burn-commitment vector through that public
 subpath. This changes JS packaging only; the reviewed native graph and binaries
 remain unchanged. Source tests alone do not qualify this path: the actual packed
 consumer and installed mobile build remain separate acceptance checks.
+
+
+## Recoverable RGB output setup
+
+The candidate adds `rgb-output-operations-v1`. Check the compiled capability and the complete API surface before using it; method names alone do not establish native support.
+
+Persist a random `operation_id` containing 32–64 lowercase hexadecimal characters before calling `prepareCreateUtxos({ operation_id, up_to, num, size, fee_rate, skip_sync })`. Preparation reserves native inputs and returns the exact transaction ID, input outpoints, actual RGB output count and Bitcoin fee for review. The library may prepare fewer outputs than requested when funds do not cover the requested count and fee; always review the returned count and fee. No transaction is signed or broadcast during preparation.
+
+`commitPreparedCreateUtxos({ operation_id })` commits only the persisted transaction. Retrying the same ID retains the same transaction and input ownership. `getCreateUtxosOperation({ operation_id })` and `listCreateUtxosOperations()` recover operation evidence after process loss; `listPendingVanillaTransactions()` reports native reservations. Never infer an operation's identity by comparing transaction histories.
+
+| Status | Meaning and allowed action |
+| --- | --- |
+| `preparing` | Preparation was interrupted before a complete review record. Native recovery releases only an unambiguously owned, provably unbroadcast reservation. |
+| `prepared` | Exact transaction ready for review. `can_commit` permits the reviewed transaction; only `can_cancel: true` proves safe cancellation. A restored snapshot may predate a broadcast, so restored preparations cannot be discarded merely because the snapshot says `prepared`. |
+| `submitting` | The exact signed transaction is persisted and broadcast may have occurred. Retry commits only that same transaction; cancellation is refused. |
+| `broadcast` | Native broadcast bookkeeping completed. Observe the exact transaction for confirmation. |
+| `confirmed` | The exact transaction was observed confirmed. Reconcile again after a chain reorganization. |
+| `cancelled` / `failed` | A terminal, provably unbroadcast operation. Its ID cannot be reused for different intent; prepare a fresh operation if needed. |
+
+`cancelCreateUtxosPlan({ operation_id })` is permitted only when native `can_cancel` evidence proves it safe. Never derive this permission from `status` alone. A timeout, missing mempool transaction or elapsed time never authorizes clearing uncertain inputs. Existing usable RGB outputs and independently spendable native inputs do not require a blanket ban on new output setup. Native reservation and allocation checks remain authoritative.
+
+The legacy one-shot `createUtxos()` remains available for compatibility. Applications needing review, interruption recovery and exact idempotent retries should use the prepared operation API. Host JavaScript tests are distinct from funded native and Android application qualification; retain the exact source and artifact receipts for each tested build.

@@ -6,12 +6,12 @@ import { VSS_SAFETY_POLICY } from './vss-policy.js'
 export const REQUIRED_NATIVE_RUNTIME = Object.freeze({
   abi_version: 1,
   rln_version: '0.17.0-beta.3',
-  rln_commit: 'd10d679f0dd73246f6b475a44bdf13edd5f9b2a4',
+  rln_commit: '7cced3aa3c2c904a88d8f8a7832981d25a5ea871',
   lightning_commit: 'bbe68189872c26088e351d034b05c58769cb996a',
   rgb_lib_commit: '89c37086a68ef792da75c62bce59b58b1d7952a0',
-  adapter_sha256: 'db4511e71a1c770def1aeeb5f1ab5e72e07fdd228627d6d744dce56b4b3bdcfe'
+  adapter_sha256: 'b70bb70610ff1b47eb55ea2bdf67a65af85e89fbabc006f2345302cbe74f1082'
 })
-const CAPABILITIES = ['invoice-first-send-v1', 'rgb-proxy-v1', 'canonical-unlock-v1', 'persistent-native-signer', 'refresh-transfers-v1', 'apay-address', 'decoded-invoice-cltv', 'tagged-rgb-assignment', 'pending-blinded-v1', 'rgb-contract-import-v1', 'rgb-transfer-metadata-import-v1', 'consignment-export-v1', 'mainnet-lightning-rejection-v1', 'external-signer-eth-rpc-v1', 'external-signer-burn-v1', 'native-signer-shutdown-v1', 'owned-session-cleanup-v1', 'vss-backup-v1', 'vss-backup-info-v1', 'vss-restore-v1', 'vss-automatic-backup-v1', 'vss-backup-metadata-v1']
+const CAPABILITIES = ['rgb-output-operations-v1', 'invoice-first-send-v1', 'rgb-proxy-v1', 'canonical-unlock-v1', 'persistent-native-signer', 'refresh-transfers-v1', 'apay-address', 'decoded-invoice-cltv', 'tagged-rgb-assignment', 'pending-blinded-v1', 'rgb-contract-import-v1', 'rgb-transfer-metadata-import-v1', 'consignment-export-v1', 'mainnet-lightning-rejection-v1', 'external-signer-eth-rpc-v1', 'external-signer-burn-v1', 'native-signer-shutdown-v1', 'owned-session-cleanup-v1', 'vss-backup-v1', 'vss-backup-info-v1', 'vss-restore-v1', 'vss-automatic-backup-v1', 'vss-backup-metadata-v1']
 
 export function assertNativeRuntime (native) {
   const info = native.getRuntimeInfo?.()

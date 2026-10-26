@@ -148,3 +148,22 @@ void nativeBackupMetadata
 account.setVssAutomaticBackupEnabled('false')
 // @ts-expect-error Read-only accounts cannot change the automatic snapshot policy.
 readOnlyAccount.setVssAutomaticBackupEnabled(false)
+
+const outputPreparation: Promise<import('../index.js').CreateUtxosOperation> = account.prepareCreateUtxos({
+  operation_id: 'ab'.repeat(16), up_to: false, num: 4, size: 20000, fee_rate: '2', skip_sync: false
+})
+const outputSubmission: Promise<import('../index.js').CreateUtxosOperation> = account.commitPreparedCreateUtxos({ operation_id: 'ab'.repeat(16) })
+const outputRecovery: Promise<import('../index.js').CreateUtxosOperation | null> = account.getCreateUtxosOperation({ operation_id: 'ab'.repeat(16) })
+const outputOperations: Promise<import('../index.js').CreateUtxosOperation[]> = account.listCreateUtxosOperations()
+const outputReservations: Promise<import('../index.js').PendingVanillaTransaction[]> = account.listPendingVanillaTransactions()
+const outputCapability: { supported: boolean } = binding.getRgbOutputSetupCapabilities!()
+void outputPreparation
+void outputSubmission
+void outputRecovery
+void outputOperations
+void outputReservations
+void outputCapability
+// @ts-expect-error A txid/old plan ID cannot replace durable operation ownership.
+account.commitPreparedCreateUtxos({ plan_id: 'ab'.repeat(16) })
+// @ts-expect-error Read-only accounts cannot prepare spending transactions.
+readOnlyAccount.prepareCreateUtxos({ operation_id: 'ab'.repeat(16), up_to: false, fee_rate: 2, skip_sync: false })

@@ -23,6 +23,7 @@ import { normalizeUnlockRequest, normalizeAutoUnlockRequest, sameUnlockRequest }
 import { exactUnsignedNumber, validatePaymentRequest, validateRefreshResult } from './released-native-contract.js'
 import { validateBurnRequest, validateBurnResponse } from './burn-contract.js'
 import { validateRgbInvoiceSend } from './rgb-invoice-send.js'
+import { requireRgbOutputSetup, validateCreateUtxosOperationRequest, validateCreateUtxosOperation, validateCreateUtxosOperations, validatePendingVanillaTransactions } from './rgb-output-operations.js'
 import { receiveAddress, joinAddressOperations, stopAddressOperations } from './receive-address.js'
 import {
   vssCapabilities, validateVssAutomaticBackupResult,
@@ -982,6 +983,63 @@ export default class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbL
   async getNewAddress () {
     if (this._closed || this._shutdownInFlight) throw new AccountLockedError('RGB Lightning account is closed')
     return this._nativeMutation(() => receiveAddress(this._binding, true, false, true))
+  }
+
+  /** Real native capability and exact transaction ownership, independent of VSS UI state. */
+  getRgbOutputSetupCapabilities () {
+    return { supported: this._binding.getRgbOutputSetupCapabilities?.()?.supported === true }
+  }
+
+  /** Persist an unsigned transaction with its exact inputs, count and fee before review. */
+  async prepareCreateUtxos (request) {
+    const validated = validateCreateUtxosOperationRequest(request, true)
+    requireRgbOutputSetup(this._binding)
+    return this._nativeMutation(async () => validateCreateUtxosOperation(
+      await this._node.prepareCreateUtxos(validated), validated.operation_id))
+  }
+
+  /** A retry can only submit the same prepared transaction; it never builds a replacement. */
+  async commitPreparedCreateUtxos (request) {
+    const validated = validateCreateUtxosOperationRequest(request)
+    requireRgbOutputSetup(this._binding)
+    return this._nativeMutation(async () => validateCreateUtxosOperation(
+      await this._node.commitPreparedCreateUtxos(validated), validated.operation_id))
+  }
+
+  /** Native code refuses cancellation after signing/broadcast uncertainty. */
+  async cancelCreateUtxosPlan (request) {
+    const validated = validateCreateUtxosOperationRequest(request)
+    requireRgbOutputSetup(this._binding)
+    return this._nativeMutation(async () => validateCreateUtxosOperation(
+      await this._node.cancelCreateUtxosPlan(validated), validated.operation_id))
+  }
+
+  /** @private Join native status reads during teardown without manufacturing backup mutations. */
+  _rgbOutputSetupRead (operation) {
+    if (this._closed || this._shutdownInFlight) return Promise.reject(new AccountLockedError('RGB Lightning account is closed'))
+    const pending = Promise.resolve().then(operation)
+    this._mutationsInFlight.add(pending)
+    pending.finally(() => this._mutationsInFlight.delete(pending)).catch(() => {})
+    return pending
+  }
+
+  async getCreateUtxosOperation (request) {
+    const validated = validateCreateUtxosOperationRequest(request)
+    requireRgbOutputSetup(this._binding)
+    return this._rgbOutputSetupRead(async () => {
+      const result = await this._node.getCreateUtxosOperation(validated)
+      return result === null ? null : validateCreateUtxosOperation(result, validated.operation_id)
+    })
+  }
+
+  async listCreateUtxosOperations () {
+    requireRgbOutputSetup(this._binding)
+    return this._rgbOutputSetupRead(async () => validateCreateUtxosOperations(await this._node.listCreateUtxosOperations()))
+  }
+
+  async listPendingVanillaTransactions () {
+    requireRgbOutputSetup(this._binding)
+    return this._rgbOutputSetupRead(async () => validatePendingVanillaTransactions(await this._node.listPendingVanillaTransactions()))
   }
 
   /** @param {Object} request - JsonCreateUtxosRequest */
