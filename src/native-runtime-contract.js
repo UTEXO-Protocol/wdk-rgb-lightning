@@ -6,10 +6,10 @@ import { VSS_SAFETY_POLICY } from './vss-policy.js'
 export const REQUIRED_NATIVE_RUNTIME = Object.freeze({
   abi_version: 1,
   rln_version: '0.17.0-beta.3',
-  rln_commit: '7cced3aa3c2c904a88d8f8a7832981d25a5ea871',
-  lightning_commit: 'bbe68189872c26088e351d034b05c58769cb996a',
-  rgb_lib_commit: '89c37086a68ef792da75c62bce59b58b1d7952a0',
-  adapter_sha256: 'b70bb70610ff1b47eb55ea2bdf67a65af85e89fbabc006f2345302cbe74f1082'
+  rln_commit: '89ebe9fdb1be94cbba0b2bd722cea9af297399f1',
+  lightning_commit: '17f2fb56f8d96d0ec512c715d2ebc65f829eb2c2',
+  rgb_lib_commit: 'abd41d3afff6d8fb11461e26e843301650e22df3',
+  adapter_sha256: '4a730e3036e1197b2d9cd2d2584de722745f35e74dd1707dfe9b08e251b8b12b'
 })
 const CAPABILITIES = ['rgb-output-operations-v1', 'invoice-first-send-v1', 'rgb-proxy-v1', 'canonical-unlock-v1', 'persistent-native-signer', 'refresh-transfers-v1', 'apay-address', 'decoded-invoice-cltv', 'tagged-rgb-assignment', 'pending-blinded-v1', 'rgb-contract-import-v1', 'rgb-transfer-metadata-import-v1', 'consignment-export-v1', 'mainnet-lightning-rejection-v1', 'external-signer-eth-rpc-v1', 'external-signer-burn-v1', 'native-signer-shutdown-v1', 'owned-session-cleanup-v1', 'vss-backup-v1', 'vss-backup-info-v1', 'vss-restore-v1', 'vss-automatic-backup-v1', 'vss-backup-metadata-v1']
 

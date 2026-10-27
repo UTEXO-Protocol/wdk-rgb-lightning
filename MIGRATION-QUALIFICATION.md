@@ -9,16 +9,16 @@ until the pending acceptance checks below have real evidence.
 
 | Component | Commit |
 | --- | --- |
-| Focused RLN | `7cced3aa3c2c904a88d8f8a7832981d25a5ea871` |
-| UTEXO-Protocol/rgb-lib-bfa | `89c37086a68ef792da75c62bce59b58b1d7952a0` |
-| LDK | `bbe68189872c26088e351d034b05c58769cb996a` |
-| Bare candidate | `a38f6bd656c659dfc04ddc36caea7dce2e5e4ccc` |
-| Node candidate | `705e44eb382e9c4efd32d092f953317a3620d483` |
+| Focused RLN | `89ebe9fdb1be94cbba0b2bd722cea9af297399f1` |
+| UTEXO-Protocol/rgb-lib-bfa | `abd41d3afff6d8fb11461e26e843301650e22df3` |
+| LDK | `17f2fb56f8d96d0ec512c715d2ebc65f829eb2c2` |
+| Bare candidate | `cc8a05aa3fad911a36d5761002984a94ae0595ad` |
+| Node candidate | `b516a830f579360c88920719527d0a5511da0225` |
 
 The shared C-FFI lock SHA-256 is
-`3039a36910386f9d6f350ed33791cd6461174cd340247998b80726a6581c3763`.
+`741bd3d0f81b28c1f40e426b44f5c9ae152d777269934d7c0dc919d74f908da9`.
 The maintained adapter SHA-256 is
-`b70bb70610ff1b47eb55ea2bdf67a65af85e89fbabc006f2345302cbe74f1082`.
+`4a730e3036e1197b2d9cd2d2584de722745f35e74dd1707dfe9b08e251b8b12b`.
 `native-peer-sources.json` and `src/native-runtime-contract.js` enforce these
 identities. RLN's base version string remains `0.17.0-beta.3`; the exact
 commit identifies this focused migration. It is not an official new RLN tag.
@@ -75,9 +75,47 @@ spendable balance or hosted-bridge acceptance.
 
 ## Qualification status
 
-### Current bfa.1 source qualification
+### Current final89 maintained source qualification
 
-The graph above passes 21 native durable-output Rust cases, including two real
+The final maintained overlay passes 453 library tests, 19 C-FFI tests and
+three explicitly selected funded fixtures on its own local chain. Four library
+entries remain ignored in the broad run: the three funded fixtures were run
+separately, and one entry is a subprocess helper. These counts overlap focused
+runs and must not be added together. Bare's 112 JavaScript tests and Node's
+47 JavaScript tests and both declaration checks pass. WDK passes 41 suites /
+1,574 tests, types, lint and exact native peer source admission.
+
+Mutation admission explicitly covers both funding branches and all protected
+sweep phases. The output operation retains its outer snapshot writer and raw
+inner guards. Tests distinguish paused/enabled automatic backup, durable
+pending intent, failed upload, actual protobuf-client commit acknowledgement,
+catch-up when enabling, canceled callers, signer shutdown/reopening, BIP-322
+and bounded VSS restore. The external-signer VSS credential limitation is
+unchanged; local fixture commits do not establish public-cloud authorization.
+
+The exact graph is being compiled for Android ARM64 first, with a separately
+scoped Darwin Node consumer for packed native acceptance. Other mobile/native
+targets, complete distribution assembly and publication gates are separate.
+No previous APK or historical native binary qualifies these sources. Android
+APK creation, import, protected Settings, outputs, actual session resumption
+and funded acceptance require their own final-artifact receipts.
+
+V1 construction now supports explicit configured EVM and native Tron routes,
+including checksum validation and independent Go ABI vectors. This constructs
+and verifies destination commitments; it does not prove payout liquidity or
+settlement on public Ethereum, Arbitrum, Polygon, Plasma or Tron. Iris retains
+consent, durable intent, exact proof/result matching and no automatic reburn.
+
+The inherited LDK legacy test-harness compilation limitation remains separately
+documented. LDK #59 was merged by the team as the canonical commit in the table;
+its reviewed pre-merge branch identity is not used as the dependency pin.
+
+### Historical 7cced3 bfa.1 source qualification
+
+The following results belong to the earlier 7cced3 / b70bb7 graph. They do not
+qualify the final89 graph or its newly rebuilt artifacts.
+
+That earlier graph passes 21 native durable-output Rust cases, including two real
 funded isolated regtest fixtures, 13 wallet-source/snapshot-barrier cases and
 53 VSS cases. The funded scope verifies actual watch-only PSBT fee/count,
 independent funding with a retained legacy reservation, exact same-transaction
@@ -102,7 +140,7 @@ shares a barrier with the complete output-operation journal/database transition;
 automatic backup cannot capture a reserved input without its prepared record.
 Existing VSS policy ownership and completion semantics are retained.
 
-Only an Android ARM64 candidate artifact is requested for this iteration.
+At that historical checkpoint only an Android ARM64 candidate was requested.
 Rebuilding the other six Bare targets, all Node platform binaries, full native
 distribution assembly and their corresponding runtime acceptance are deferred.
 The all-target publication gates are unchanged. Previous binaries, archived
