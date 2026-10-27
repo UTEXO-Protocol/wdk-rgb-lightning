@@ -1,4 +1,9 @@
-# BFA Qualification
+# Historical BFA Qualification
+
+These commands cover beta.5's older RGB fork and proxy-0.3 stack. They do not
+qualify the new BUSDT contract, V1 burn destination or proxy-1.0 migration.
+Candidate source fails the historical harness guard before stack/wallet use;
+use the separate [migration qualification](../../MIGRATION-QUALIFICATION.md).
 
 Use the Bitcoin, Electrs, Esplora and proxy services from [README.md](./README.md).
 Keep scenarios serial. No real-network funds are used. The issuer below is a

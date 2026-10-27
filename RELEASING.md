@@ -149,6 +149,27 @@ The canaries authorize the exact native registry version or local tarball source
 under npm 12, require its postinstall admission, reject script-policy bypasses,
 and fail if any dependency install script remains unreviewed.
 
+For the unpublished `0.2.0-bfa.0` Bare distribution, supply all four native
+archives so npm does not look for unpublished payloads in the registry:
+
+```sh
+RLN_BARE_PACKAGE_TARBALL=/absolute/bare-wrapper.tgz \
+RLN_BARE_IOS_PACKAGE_TARBALL=/absolute/bare-ios.tgz \
+RLN_BARE_ANDROID_ARM_PACKAGE_TARBALL=/absolute/bare-android-arm.tgz \
+RLN_BARE_ANDROID_X64_PACKAGE_TARBALL=/absolute/bare-android-x64.tgz \
+npm run smoke:package:bare -- "$WDK_TGZ"
+```
+
+The three payload inputs are all-or-none and require a local wrapper. Each must
+be a distinct regular `.tgz` file; no payload lifecycle scripts are authorized.
+Only the exact wrapper file receives npm's install-script grant. The wrapper's
+normal installer still verifies all payload identities and bytes, the canary
+asserts the complete current `REQUIRED_NATIVE_RUNTIME` graph/capabilities/VSS
+policy, and the packed binding performs its own runtime admission. These input
+checks do not replace independently reviewed archive/CI provenance. Released
+registry canaries and released wrapper-only local inputs retain their prior
+behavior. An unpublished candidate cannot fall back to registry payloads.
+
 With the final local WDK tarball in `WDK_TGZ`, repeat the nonpublishing registry
 checks after removing inherited `RLN_*` source/artifact/JS-only overrides:
 

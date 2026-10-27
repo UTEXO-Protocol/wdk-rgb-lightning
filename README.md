@@ -2,6 +2,11 @@
 
 [![Built with WDK](./assets/built-with-wdk.png)](https://github.com/tetherto/wdk)
 
+This branch is the unpublished `0.2.0-bfa.1` migration candidate. It requires
+the matching candidate native archives; released beta.5 binaries are rejected.
+See [migration qualification](./MIGRATION-QUALIFICATION.md) for the exact
+source graph, integration procedure and pending acceptance checks.
+
 WDK module for RGB-over-Lightning, built on
 [`rgb-lightning-node`][rgb-lightning-node] (RLN). It runs a full LDK +
 `rgb-lib` Lightning node behind WDK's wallet-manager/account contract and
@@ -78,6 +83,9 @@ module-load differs.
 ## Installation
 
 Install this module with the native binding for your runtime:
+
+The registry commands below install the released beta.5 baseline. For this
+branch, use the reviewed candidate archives described in the migration guide.
 
 ```sh
 # Node.js
@@ -195,10 +203,11 @@ are async and forward to the active binding.
 | HODL invoices | `createHodlInvoice({ paymentHash, ... })`, `cancelHodlInvoice(request)`, `claimHodlInvoice(request)` |
 | Payments | `sendPayment(request)`, `keysend(request)`, `listPayments()`, `getPayment(hash, type)` |
 | RGB assets | `listAssets(filter?)`, `getAssetBalance(id)`, `getAssetMetadata(id)`, `listTransfers(id)`, `listTransfersByTxid(txid)`, `refreshTransfers(req)`, `failTransfers(req)` |
-| RGB invoices/transfers | `createRgbInvoice(request)`, `decodeRgbInvoice(invoice)`, `sendRgbAsset(request)`, `getAssetMedia(digest)`, `postAssetMedia(request)` |
+| RGB invoices/transfers | `createRgbInvoice(request)`, `decodeRgbInvoice(invoice)`, `sendRgbInvoice(request)`, `sendRgbAsset(request)`, `getAssetMedia(digest)`, `postAssetMedia(request)` |
 | RGB burn | `burnAsset({ asset_id, amount, burn_recipient?, fee_rate, min_confirmations })` returns `{ txid, batch_transfer_idx }`; no automatic retry or bridge payout |
 | RGB issuance (unsupported in this mode) | `issueAssetNia(request)`, `issueAssetUda(request)`, `issueAssetCfa(request)`, `issueAssetIfa(request)`, `inflate(request)` forward the released `UnsupportedInExternalSignerMode` error; use a separate on-chain wallet |
-| BTC | `getBalance(skipSync?)`, `getBalanceDetails(skipSync?)`, `sendTransaction({ to, value, ... })`, `sendBtc(nativeRequest)`, `getTransactions(skipSync?)`, `getTransactionsByTxid(txid)`, `listUnspents(skipSync?)`, `createUtxos(request)`, `estimateFee(blocks)` |
+| BTC | `getBalance(skipSync?)`, `getBalanceDetails(skipSync?)`, `sendTransaction({ to, value, ... })`, `sendBtc(nativeRequest)`, `getTransactions(skipSync?)`, `getTransactionsByTxid(txid)`, `listUnspents(skipSync?)`, `createUtxos(request)`, `estimateFee(blocks)`, `estimateFeeResult(blocks)` |
+| Recoverable RGB output setup | `getRgbOutputSetupCapabilities()`, `prepareCreateUtxos(request)`, `commitPreparedCreateUtxos({ operation_id })`, `cancelCreateUtxosPlan({ operation_id })`, `getCreateUtxosOperation({ operation_id })`, `listCreateUtxosOperations()`, `listPendingVanillaTransactions()` |
 | WDK-standard | `index`, `path`, `keyPair`, `sign(message)`, `verify(message, signature)`, `transfer(options)`, `quoteTransfer(options)`, `quoteSendTransaction(tx)`, `getTransactionReceipt(hash)`, `toReadOnlyAccount()` |
 | Bitcoin message proofs | `getMessageSigningAddress()`, `signMessageBip322(message, address)`, `verifyMessageBip322(message, address, signature)` |
 | Diagnostics | `sendOnionMessage(request)`, `checkIndexerUrl(url)`, `checkProxyEndpoint(endpoint)` |
@@ -207,6 +216,11 @@ are async and forward to the active binding.
 
 Notes:
 
+- **`estimateFeeResult(blocks)`** accepts targets from 1 to 1,008 blocks and
+  returns `{ status: 'available', estimate: { fee_rate } }` or
+  `{ status: 'unavailable' }` for the native no-estimate condition. It assigns
+  no fallback rate; transport, lock, invalid-target and malformed-response
+  failures still throw. Existing `estimateFee()` behavior is unchanged.
 - **Bitcoin message signing** uses the explicit BIP-322 API below. Existing
   `sign()` and `verify()` retain their Lightning node-identity semantics.
 
@@ -225,11 +239,11 @@ Notes:
 - **`getAddress()` never returns a fabricated spend address.** Before unlock
   it rejects with `AccountLockedError` unless `autoUnlockRequest` is configured; UI loaders can call
   `getAddressState()` for `{ status: 'locked', address: null }`. The WDK
-  bindings default to `reuseAddresses: true`. `rotateAddress()` advances and
-  reveals the next address before returning it. Fresh wallets can explicitly
-  set `reuseAddresses: false`; WDK caches the current receive address within the
-  account session so repeated `getAddress()` calls remain stable. Use
-  `getNewAddress()` to allocate a new receive address under either policy.
+  candidate uses `reuseAddresses: false`; the new library rejects `true`.
+  WDK caches the current receive address within the account session so
+  repeated `getAddress()` calls remain stable. Use `getNewAddress()` to
+  allocate and persist a fresh receive address. `rotateAddress()` belongs to
+  the old reuse policy and rejects with guidance to use `getNewAddress()`.
   Allocation calls are serialized across full and read-only accounts, and
   shutdown waits for in-flight allocation. The current native lifecycle repair
   drains the node before explicit signer revocation and supports the qualified
@@ -360,7 +374,9 @@ wallet-connected LSP methods and standalone account-taking LSP helpers use the
 same policy before HTTP side effects. Read-only accounts follow it too.
 
 Signet, testnet and regtest retain their Lightning APIs; availability is not a
-claim that their recorded release gates are resolved. BTC/RGB on-chain methods,
+claim that their recorded release gates are resolved. This unpublished migration
+candidate cannot open ordinary locally funded BTC/RGB channels; see the exact
+[migration limits](./MIGRATION-QUALIFICATION.md). BTC/RGB on-chain methods,
 identity queries, message signing/verification and standalone LSP discovery
 remain available. `getTransactionReceipt` does not query Lightning history on
 mainnet, so an unknown on-chain hash returns `null`.
@@ -379,9 +395,10 @@ try {
 
 `getNetwork()` reads the configured network without unlocking.
 `getCapabilities()` describes this package/signer combination, not wallet
-readiness, balance or successful qualification. `getBfaCapabilities()` returns
-`{ bfa: true, burn: true, consignment: true }` on a full account. The read-only
-facade reports `burn: false` in both capability methods and has no `burnAsset`.
+readiness, balance or successful qualification. `getBfaCapabilities()` checks
+the admitted native build's capability flags and actual facade methods without
+creating a wallet. Missing capability reports fail closed. The read-only
+facade reports `burn: false` and has no `burnAsset`.
 Configure `eth_rpc_url` when
 unlocking to enable native validation of BFA bridge events:
 

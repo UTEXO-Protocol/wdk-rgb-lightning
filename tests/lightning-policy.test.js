@@ -9,6 +9,7 @@ function fixture (network = 'mainnet') {
   const node = new Proxy({}, { get: (target, key) => (target[key] ??= jest.fn(() => ({}))) })
   const binding = {
     _config: { network },
+    getBfaCapabilities: () => ({ bfa: true, burn: true, consignment: true }),
     ensureNode: jest.fn(() => node),
     apayNew: jest.fn(),
     apayNewWithAddress: jest.fn()

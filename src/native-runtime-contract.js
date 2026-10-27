@@ -6,11 +6,12 @@ import { VSS_SAFETY_POLICY } from './vss-policy.js'
 export const REQUIRED_NATIVE_RUNTIME = Object.freeze({
   abi_version: 1,
   rln_version: '0.17.0-beta.3',
-  rln_commit: 'ecc69f20308231400561f6f060fea88acfa40cc4',
-  lightning_commit: '79b9eb5166546c62692d3a672986f385c7fe047d',
-  adapter_sha256: '6d46717b80ffba8ed8af2de023a536af242aadcacbbb799fb9bb89f8933e4ca5'
+  rln_commit: '89ebe9fdb1be94cbba0b2bd722cea9af297399f1',
+  lightning_commit: '17f2fb56f8d96d0ec512c715d2ebc65f829eb2c2',
+  rgb_lib_commit: 'abd41d3afff6d8fb11461e26e843301650e22df3',
+  adapter_sha256: '4a730e3036e1197b2d9cd2d2584de722745f35e74dd1707dfe9b08e251b8b12b'
 })
-const CAPABILITIES = ['canonical-unlock-v1', 'persistent-native-signer', 'refresh-transfers-v1', 'apay-address', 'decoded-invoice-cltv', 'tagged-rgb-assignment', 'pending-blinded-v1', 'rgb-contract-import-v1', 'rgb-transfer-metadata-import-v1', 'consignment-export-v1', 'mainnet-lightning-rejection-v1', 'external-signer-eth-rpc-v1', 'external-signer-burn-v1', 'native-signer-shutdown-v1', 'owned-session-cleanup-v1', 'vss-backup-v1', 'vss-backup-info-v1', 'vss-restore-v1', 'vss-automatic-backup-v1', 'vss-backup-metadata-v1']
+const CAPABILITIES = ['rgb-output-operations-v1', 'invoice-first-send-v1', 'rgb-proxy-v1', 'canonical-unlock-v1', 'persistent-native-signer', 'refresh-transfers-v1', 'apay-address', 'decoded-invoice-cltv', 'tagged-rgb-assignment', 'pending-blinded-v1', 'rgb-contract-import-v1', 'rgb-transfer-metadata-import-v1', 'consignment-export-v1', 'mainnet-lightning-rejection-v1', 'external-signer-eth-rpc-v1', 'external-signer-burn-v1', 'native-signer-shutdown-v1', 'owned-session-cleanup-v1', 'vss-backup-v1', 'vss-backup-info-v1', 'vss-restore-v1', 'vss-automatic-backup-v1', 'vss-backup-metadata-v1']
 
 export function assertNativeRuntime (native) {
   const info = native.getRuntimeInfo?.()
@@ -20,7 +21,7 @@ export function assertNativeRuntime (native) {
       Object.keys(info.vss_policy).length !== 3 ||
       Object.entries(VSS_SAFETY_POLICY).some(([key, value]) =>
         !Object.hasOwn(info.vss_policy, key) || info.vss_policy[key] !== value)) {
-    const error = new Error('Incompatible RGB Lightning native runtime; install the exact 0.2.0-beta.5 candidate peer')
+    const error = new Error('Incompatible RGB Lightning native runtime; install the exact 0.2.0-bfa.1 candidate peer')
     error.code = 'ERR_RLN_RUNTIME_MISMATCH'
     throw error
   }

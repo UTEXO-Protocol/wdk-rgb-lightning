@@ -21,6 +21,11 @@ import WalletManager, { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 
 export type DecimalString = `${bigint}`
 
+/** Expected no-estimate is data; transport, lock and contract failures still throw. */
+export type FeeEstimateResult =
+  | Readonly<{ status: 'available', estimate: Readonly<{ fee_rate: number }> }>
+  | Readonly<{ status: 'unavailable' }>
+
 export interface RgbImportResult {
   asset_id: string
   already_imported: boolean
@@ -99,6 +104,33 @@ export interface SendPaymentRequest {
   asset_id?: string
   asset_amount?: number
 }
+
+/** Durable RGB output intent. Only lowercase hex IDs (32–64 characters) are accepted. */
+export interface PrepareCreateUtxosRequest {
+  operation_id: string
+  up_to: boolean
+  num?: number | null
+  size?: number | null
+  fee_rate: number | string
+  skip_sync: boolean
+}
+export interface CreateUtxosOperationRequest { operation_id: string }
+export type CreateUtxosOperationStatus = 'preparing' | 'prepared' | 'submitting' | 'broadcast' | 'confirmed' | 'cancelled' | 'failed'
+export interface CreateUtxosOperation {
+  operation_id: string
+  txid: string | null
+  status: CreateUtxosOperationStatus
+  /** False after restore unless native evidence proves cancellation cannot discard a broadcast. */
+  can_cancel: boolean
+  /** True only when the exact persisted transaction may be committed. */
+  can_commit: boolean
+  inputs: Array<{ txid: string; vout: number }>
+  num_outputs: number
+  size_sat: number
+  fee_sat: number | string
+  fee_rate: number | string
+}
+export interface PendingVanillaTransaction { txid: string; type: 'CreateUtxos' | 'SendBtc' | 'Drain' }
 
 /** Native burn request. Numbers must be safe integers; strings preserve the full u64 range. */
 export interface BurnAssetRequest {
@@ -348,6 +380,10 @@ export interface DecodedRgbInvoice {
   network: string
   expiration_timestamp: number | null
   transport_endpoints: string[]
+  /** Legacy field; protocol-1.0 invoices may return null. */
+  proxy_recipient_id?: string | null
+  public_key?: string | null
+  encryption?: 'Required' | 'Optional' | 'Unsupported'
 }
 
 export interface CreateHodlInvoiceParams {
@@ -421,6 +457,18 @@ export interface SendRgbAssetRequest {
   recipient_groups: Array<{ asset_id: string; recipients: RgbSendRecipient[] }>
 }
 
+/** Rust retains/validates the full protocol-1.0 invoice and uses the sender's own proxy. */
+export interface SendRgbInvoiceRequest {
+  invoice: string
+  asset_id: string
+  amount: ExactInteger
+  donation: boolean
+  fee_rate: ExactInteger
+  min_confirmations: number
+  /** Blinding is derived by the native library. */
+  witness_data?: { amount_sat: ExactInteger }
+}
+
 /** Native `JsonRgbInvoiceRequest` shape for `createRgbInvoice`. */
 export interface CreateRgbInvoiceRequest {
   /** REQUIRED — RLN rejects the request on deserialise if omitted. */
@@ -444,11 +492,13 @@ export interface RgbLightningBindingConfig {
   daemonListeningPort?: number
   ldkPeerListeningPort?: number
   maxMediaUploadSizeMb?: number
-  /** Defaults to true. False allocates fresh scripts natively; getAddress caches the current session address. Use getNewAddress for an explicit allocation. */
+  /** Defaults to false. This rgb-lib-bfa candidate rejects true. getAddress caches the current session address; getNewAddress allocates and persists a fresh script. */
   reuseAddresses?: boolean
   /**
-   * Explicitly opt into virtual channels. Default is false; standard channels
-   * remain supported. Configure trusted peer identities separately.
+   * Explicitly opt into virtual channels. Default is false. This migration
+   * candidate cannot construct locally funded standard or colored virtual
+   * channels; other channel paths remain unqualified. See MIGRATION-QUALIFICATION.md.
+   * Configure trusted peer identities separately.
    */
   enableVirtualChannelsV0?: boolean
   /**
@@ -510,6 +560,8 @@ export interface IRgbLightningBinding {
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   getMessageSigningCapabilities?(): { signing: boolean; verification: boolean }
+  getBfaCapabilities?(): { bfa: boolean; burn: boolean; consignment: boolean }
+  getRgbOutputSetupCapabilities?(): { supported: boolean }
   getMessageSigningAddress?(): string
   signMessageBip322?(message: string, address: string): string
   verifyMessageBip322?(message: string, address: string, signature: string): boolean
@@ -535,6 +587,8 @@ export class NodeRgbLightningBinding implements IRgbLightningBinding {
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   getMessageSigningCapabilities(): { signing: boolean; verification: boolean }
+  getBfaCapabilities(): { bfa: boolean; burn: boolean; consignment: boolean }
+  getRgbOutputSetupCapabilities(): { supported: boolean }
   getMessageSigningAddress(): string
   signMessageBip322(message: string, address: string): string
   verifyMessageBip322(message: string, address: string, signature: string): boolean
@@ -564,6 +618,8 @@ export class BareRgbLightningBinding implements IRgbLightningBinding {
   apayNew(hostNodeId: string): object
   apayNewWithAddress(hostNodeId: string, username: string, domain: string): object
   getMessageSigningCapabilities(): { signing: boolean; verification: boolean }
+  getBfaCapabilities(): { bfa: boolean; burn: boolean; consignment: boolean }
+  getRgbOutputSetupCapabilities(): { supported: boolean }
   getMessageSigningAddress(): string
   signMessageBip322(message: string, address: string): string
   verifyMessageBip322(message: string, address: string, signature: string): boolean
@@ -690,6 +746,9 @@ export class WalletAccountReadOnlyRgbLightning extends WalletAccountReadOnly {
   /** Estimates the Bitcoin fee rate for a confirmation target. */
   estimateFee(blocks: number): Promise<object>
 
+  /** Returns the native estimator's explicit availability; blocks must be 1..1008. */
+  estimateFeeResult(blocks: number): Promise<FeeEstimateResult>
+
   /**
    * Verifies a Lightning message signature for this account.
    *
@@ -800,6 +859,7 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   failTransfers(request: object): Promise<object>
   createRgbInvoice(request: CreateRgbInvoiceRequest | object): Promise<object>
   sendRgbAsset(request: SendRgbAssetRequest | object): Promise<object>
+  sendRgbInvoice(request: SendRgbInvoiceRequest): Promise<{ txid: string; batch_transfer_idx: number }>
   /** Burns once through the external signer. Reconcile uncertain outcomes before retrying; no Ethereum payout. */
   burnAsset(request: BurnAssetRequest): Promise<BurnAssetResponse>
   /** Validated contract metadata only; creates no balance. Requires the approved import extension. */
@@ -814,6 +874,16 @@ export class WalletAccountRgbLightning extends WalletAccountReadOnlyRgbLightning
   rotateAddress(): Promise<string>
   /** Explicitly allocate and persist a fresh Bitcoin address under either address policy. */
   getNewAddress(): Promise<string>
+  getRgbOutputSetupCapabilities(): { supported: boolean }
+  /** Persists an exact unsigned transaction and reserves its inputs for this operation only. */
+  prepareCreateUtxos(request: PrepareCreateUtxosRequest): Promise<CreateUtxosOperation>
+  /** Uncertain retries submit only the same signed transaction. */
+  commitPreparedCreateUtxos(request: CreateUtxosOperationRequest): Promise<CreateUtxosOperation>
+  /** Releases inputs only if native evidence proves that no broadcast was possible. */
+  cancelCreateUtxosPlan(request: CreateUtxosOperationRequest): Promise<CreateUtxosOperation>
+  getCreateUtxosOperation(request: CreateUtxosOperationRequest): Promise<CreateUtxosOperation | null>
+  listCreateUtxosOperations(): Promise<CreateUtxosOperation[]>
+  listPendingVanillaTransactions(): Promise<PendingVanillaTransaction[]>
   createUtxos(request: object): Promise<{ ok: true }>
 
   // Onion / signing / diagnostics

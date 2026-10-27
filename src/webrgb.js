@@ -1,5 +1,7 @@
 // Copyright 2026 UTEXO. Licensed under the Apache License, Version 2.0.
 
+export { validateBurnDestination, burnDestinationHash, burnDestinationFor, createBurnPackage, MAX_BURN_PROOF_BYTES } from './burn-destination.js'
+
 export const WEBRGB_READ_METHODS = Object.freeze([
   'enable', 'getInfo', 'getAddress', 'blindReceive', 'listAssets',
   'getAssetBalance', 'listTransfers', 'getTransferStatus', 'decodeRgbInvoice'
@@ -63,19 +65,43 @@ function optionalText (value, name) {
   return value == null ? undefined : nativeText(value, name)
 }
 
-function transferAmount (assignments) {
-  if (!Array.isArray(assignments)) throw new WebRgbError('INTERNAL_ERROR', 'Invalid native assignments')
-  let sum
-  for (const assignment of assignments) {
-    const match = typeof assignment === 'string' && /^Fungible\((\d+)\)$/.exec(assignment)
-    if (match) {
-      sum = (sum ?? 0) + nativeInteger(match[1], 'transfer amount')
-      nativeInteger(sum, 'transfer amount')
-    } else if (typeof assignment !== 'string' || !/^(Any|NonFungible|ReplaceRight|InflationRight\(\d+\))$/.test(assignment)) {
-      throw new WebRgbError('INTERNAL_ERROR', 'Invalid native assignment')
-    }
+function nativeNetwork (value) {
+  // UniFFI emits Rust enum names (for example Signet), while WebRGB uses
+  // canonical lowercase names. Never substitute the wallet's own network.
+  const network = nativeText(value, 'network').toLowerCase()
+  if (!['mainnet', 'testnet', 'testnet4', 'signet', 'regtest'].includes(network)) {
+    throw new WebRgbError('INTERNAL_ERROR', 'Invalid native network')
   }
-  return sum
+  return network
+}
+
+function assignmentAmount (assignment) {
+  const match = typeof assignment === 'string' && /^(Fungible|InflationRight)\((0|[1-9]\d{0,19})\)$/.exec(assignment)
+  if (match) {
+    const value = BigInt(match[2])
+    if (value > (1n << 64n) - 1n) throw new WebRgbError('INTERNAL_ERROR', 'Invalid native assignment')
+    return match[1] === 'Fungible' ? value : undefined
+  }
+  if (typeof assignment !== 'string' || !/^(Any|NonFungible|ReplaceRight|MintRight)$/.test(assignment)) {
+    throw new WebRgbError('INTERNAL_ERROR', 'Invalid native assignment')
+  }
+}
+
+function transferAmount (transfer) {
+  if (!Array.isArray(transfer.assignments)) throw new WebRgbError('INTERNAL_ERROR', 'Invalid native assignments')
+  const amounts = transfer.assignments.map(assignmentAmount)
+  let amount
+  if (transfer.kind === 'Send' || transfer.kind === 'Burn') {
+    // rgb-lib-bfa assignments describe the sender's remaining change, not the
+    // amount delivered to this recipient or burned by this operation.
+    amount = assignmentAmount(transfer.requested_assignment)
+    if (transfer.requested_assignment === 'Any' || (transfer.kind === 'Burn' && amount === undefined)) {
+      throw new WebRgbError('INTERNAL_ERROR', 'Invalid native requested assignment')
+    }
+  } else {
+    amount = amounts.reduce((sum, value) => value === undefined ? sum : (sum ?? 0n) + value, undefined)
+  }
+  return amount === undefined ? undefined : nativeInteger(amount.toString(), 'transfer amount')
 }
 
 /** One native-wallet session per dApp. No browser injection or transport. */
@@ -175,7 +201,7 @@ export class WebRgbProvider {
     try { await this.#enabling } finally { this.#enabling = undefined }
   }
 
-  async #call (revision, operation) {
+  async #call (revision, operation, context) {
     this.#check(revision)
     try {
       const result = await operation()
@@ -185,8 +211,12 @@ export class WebRgbProvider {
       this.#check(revision)
       if (error instanceof WebRgbError) throw error
       const message = String(error?.message ?? '')
-      if (/^Rln\(NotFound\): Unknown RGB contract ID$/.test(message)) {
-        throw new WebRgbError('ASSET_NOT_FOUND', 'Asset is not known to this wallet')
+      const code = typeof error?.code === 'string' ? error.code : error?.code?.type
+      if (context === 'asset-balance' &&
+          (['AssetNotFound', 'UnknownAsset', 'UnknownContractId', 'NotFound'].includes(code) ||
+           /^Rln\((?:UnknownContractId|AssetNotFound|UnknownAsset)\):/.test(message) ||
+           /^Rln\(NotFound\): Unknown RGB contract ID$/.test(message))) {
+        throw new WebRgbError('ASSET_NOT_FOUND', 'This asset is not in this wallet yet. Receive it first, then refresh your balance.')
       }
       if (/^Rln\(InvalidRequest\):|^Error parsing string:/.test(message)) {
         throw new WebRgbError('INVALID_PARAMS', 'Invalid wallet request')
@@ -218,7 +248,9 @@ export class WebRgbProvider {
     const params = {
       assetId: assetId(raw.assetId),
       amount: raw.amount === undefined ? undefined : integer(raw.amount, 'amount'),
-      durationSeconds: integer(raw.durationSeconds === undefined ? 3600 : raw.durationSeconds, 'durationSeconds', 1, 2592000),
+      // Proxy 1.0 send/ACK needs at least fifteen minutes remaining. Use a
+      // thirty-minute receive floor so an invoice is usable after approval.
+      durationSeconds: integer(raw.durationSeconds === undefined ? 86400 : raw.durationSeconds, 'durationSeconds', 1800, 2592000),
       minConfirmations: Math.max(this.#floor, integer(raw.minConfirmations === undefined ? this.#floor : raw.minConfirmations, 'minConfirmations', 0, 255))
     }
     await this.#confirmRequest('blindReceive', { ...params })
@@ -265,7 +297,7 @@ export class WebRgbProvider {
     const revision = this.#revision
     this.#check(revision)
     assetId(id, true)
-    const raw = await this.#call(revision, () => this.#wallet.getAssetBalance(id))
+    const raw = await this.#call(revision, () => this.#wallet.getAssetBalance(id), 'asset-balance')
     this.#check(revision)
     return { assetId: id, balance: nativeInteger(raw?.spendable, 'asset balance'), raw }
   }
@@ -284,7 +316,7 @@ export class WebRgbProvider {
           transferId: nativeInteger(transfer?.idx, 'transfer ID'),
           status: nativeText(transfer.status, 'transfer status'),
           kind: nativeText(transfer.kind, 'transfer kind'),
-          amount: transferAmount(transfer.assignments),
+          amount: transferAmount(transfer),
           recipientId: optionalText(transfer.recipient_id, 'recipient ID'),
           txid: optionalText(transfer.txid, 'transaction ID')
         })
@@ -338,7 +370,7 @@ export class WebRgbProvider {
       amount,
       recipientId: nativeText(raw.recipient_id, 'recipient ID'),
       expirationTimestamp: raw.expiration_timestamp == null ? undefined : nativeInteger(raw.expiration_timestamp, 'expiration timestamp'),
-      network: nativeText(raw.network, 'network'),
+      network: nativeNetwork(raw.network),
       transportEndpoints: [...raw.transport_endpoints]
     }
   }

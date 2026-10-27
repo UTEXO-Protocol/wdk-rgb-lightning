@@ -52,7 +52,7 @@ describe('BareRgbLightningBinding', () => {
     expect(createSpy).toHaveBeenCalledWith(expect.objectContaining({
       storage_dir_path: '/d',
       network: 'regtest',
-      reuse_addresses: true,
+      reuse_addresses: false,
       virtual_peer_pubkeys: ['02lsp'],
       lsp_base_url: 'https://lsp.example',
       lsp_bearer_token: 'token'

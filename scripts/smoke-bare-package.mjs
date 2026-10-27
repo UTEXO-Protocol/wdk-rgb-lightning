@@ -4,10 +4,10 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { minimumVersion } from './peer-version.mjs'
+import { packedBareInputs } from './packed-bare-inputs.mjs'
 import {
   assertInstallScriptConfiguration,
-  assertNativePostinstall,
-  nativeInstallPolicyKey
+  assertNativePostinstall
 } from './native-install-policy.mjs'
 
 // This desktop canary is not an iOS/Android device qualification test.
@@ -17,11 +17,10 @@ if (process.platform !== 'darwin' || process.arch !== 'arm64') {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
+const burnVector = JSON.parse(readFileSync(path.join(root, 'tests/fixtures/burn-destination-vectors.json'), 'utf8')).vectors[0]
 const nativePackage = '@utexo/rgb-lightning-node-bare'
 const nativeVersion = minimumVersion(pkg.peerDependencies[nativePackage], nativePackage)
-const nativeTarball = process.env.RLN_BARE_PACKAGE_TARBALL
-  ? path.resolve(process.env.RLN_BARE_PACKAGE_TARBALL)
-  : undefined
+const inputs = packedBareInputs({ version: nativeVersion })
 const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'wdk-rln-bare-consumer-'))
 
 function run (command, args, options = {}) {
@@ -64,12 +63,10 @@ try {
   }
   writeFileSync(path.join(temporaryRoot, 'package.json'), JSON.stringify({
     private: true,
-    allowScripts: {
-      [nativeInstallPolicyKey({ packageName: nativePackage, version: nativeVersion, tarball: nativeTarball })]: true
-    }
+    allowScripts: inputs.allowScripts
   }))
   const installation = runAndCapture('npm', ['install', '--foreground-scripts', '--no-audit', '--no-fund', '--save-exact', wdkTarball,
-    nativeTarball || `${nativePackage}@${nativeVersion}`,
+    ...inputs.installSpecs,
     'bare-runtime@1.33.0'], {
     cwd: temporaryRoot,
     env: { ...process.env, RLN_BARE_TARGETS: 'darwin-arm64' }
@@ -91,8 +88,9 @@ try {
 
   const program = `
     import WalletManager, { BareRgbLightningBinding, parseLspInfo, LightningDisabledError } from '${pkg.name}'
-    import { WebRgbProvider } from '${pkg.name}/webrgb'
+    import { WebRgbProvider, burnDestinationHash } from '${pkg.name}/webrgb'
     import { smokeWalletPolicy } from ${JSON.stringify(path.join(root, 'scripts/smoke-wallet-policy.mjs'))}
+    import { assertNativeRuntime } from ${JSON.stringify(path.join(root, 'src/native-runtime-contract.js'))}
     import native from '${nativePackage}'
     import { parseLspInfo as parseOnly } from '${pkg.name}/lsp-info'
     // An unresolved Promise alone does not keep Bare's event loop alive.
@@ -102,10 +100,14 @@ try {
     if (WalletManager.Binding !== BareRgbLightningBinding || parseLspInfo !== parseOnly) {
       throw new Error('Packed Bare exports resolved incorrectly')
     }
-    if (native.getRuntimeInfo().rln_commit !== 'ecc69f20308231400561f6f060fea88acfa40cc4') {
-      throw new Error('Wrong compiled RLN release')
-    }
+    // The source contract checks every REQUIRED_NATIVE_RUNTIME graph identity,
+    // compiled capabilities and VSS policy. Packed binding admission still runs.
+    assertNativeRuntime(native)
     BareRgbLightningBinding.healthcheck()
+    const { name, hash, encoded, ...burnDestination } = ${JSON.stringify(burnVector)}
+    if ('0x' + burnDestinationHash(burnDestination) !== hash) {
+      throw new Error('Packed Bare burn commitment differs from independent bridge vector ' + name)
+    }
     // Public deterministic fixture seed. Never fund this wallet.
     const manager = new WalletManager(new Uint8Array(64).fill(1), {
       network: 'regtest', dataDir: ${JSON.stringify(path.join(temporaryRoot, 'wallet'))}

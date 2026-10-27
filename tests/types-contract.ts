@@ -16,6 +16,7 @@ import type WalletManagerRgbLightning from '../index.js'
 import type {
   BurnAssetRequest,
   BurnAssetResponse,
+  FeeEstimateResult,
   IRgbLightningBinding,
   LnurlPayOptions,
   LspLiquidityTimeoutError,
@@ -43,6 +44,20 @@ const exportedConsignment: Promise<Uint8Array> = account.getConsignment('rgb:ass
 const readOnlyConsignment: Promise<Uint8Array> = readOnlyAccount.getConsignment('rgb:asset', '00'.repeat(32))
 void exportedConsignment
 void readOnlyConsignment
+
+const feeEstimateResult: Promise<FeeEstimateResult> = account.estimateFeeResult(6)
+const readOnlyFeeEstimateResult: Promise<FeeEstimateResult> = readOnlyAccount.estimateFeeResult(6)
+void feeEstimateResult.then(result => {
+  if (result.status === 'available') {
+    const nativeRate: number = result.estimate.fee_rate
+    return nativeRate
+  }
+  // @ts-expect-error Explicit absence does not contain an estimate or a synthetic fallback rate.
+  return result.estimate
+})
+void readOnlyFeeEstimateResult
+// @ts-expect-error Confirmation targets require numbers.
+account.estimateFeeResult('6')
 
 const signingAddress: Promise<string> = account.getMessageSigningAddress()
 const bip322Signature: Promise<string> = account.signMessageBip322('exact message\n', 'bcrt1paddress')
@@ -133,3 +148,22 @@ void nativeBackupMetadata
 account.setVssAutomaticBackupEnabled('false')
 // @ts-expect-error Read-only accounts cannot change the automatic snapshot policy.
 readOnlyAccount.setVssAutomaticBackupEnabled(false)
+
+const outputPreparation: Promise<import('../index.js').CreateUtxosOperation> = account.prepareCreateUtxos({
+  operation_id: 'ab'.repeat(16), up_to: false, num: 4, size: 20000, fee_rate: '2', skip_sync: false
+})
+const outputSubmission: Promise<import('../index.js').CreateUtxosOperation> = account.commitPreparedCreateUtxos({ operation_id: 'ab'.repeat(16) })
+const outputRecovery: Promise<import('../index.js').CreateUtxosOperation | null> = account.getCreateUtxosOperation({ operation_id: 'ab'.repeat(16) })
+const outputOperations: Promise<import('../index.js').CreateUtxosOperation[]> = account.listCreateUtxosOperations()
+const outputReservations: Promise<import('../index.js').PendingVanillaTransaction[]> = account.listPendingVanillaTransactions()
+const outputCapability: { supported: boolean } = binding.getRgbOutputSetupCapabilities!()
+void outputPreparation
+void outputSubmission
+void outputRecovery
+void outputOperations
+void outputReservations
+void outputCapability
+// @ts-expect-error A txid/old plan ID cannot replace durable operation ownership.
+account.commitPreparedCreateUtxos({ plan_id: 'ab'.repeat(16) })
+// @ts-expect-error Read-only accounts cannot prepare spending transactions.
+readOnlyAccount.prepareCreateUtxos({ operation_id: 'ab'.repeat(16), up_to: false, fee_rate: 2, skip_sync: false })

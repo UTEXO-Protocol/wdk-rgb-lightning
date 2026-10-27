@@ -1,5 +1,12 @@
 # Simulator / Emulator Qualification
 
+This controller and its fixture are historical. They do **not** qualify the
+rgb-lib-bfa/proxy-1.0 migration or Iris on iOS 27. The current migration branch
+refuses to start these Node controllers before contacting a simulator, emulator
+or legacy stack. Keep the fixture's old framework/package declarations intact;
+use the separate [migration qualification](../../MIGRATION-QUALIFICATION.md)
+and actual Iris candidate for new runtime acceptance.
+
 Disposable regtest-only application. Never install this controller-enabled app
 as a production wallet. No physical devices, real funds or production seeds.
 Run one app at a time against `server.mjs`, bound to host loopback port 29888.
@@ -9,9 +16,10 @@ Start the [local stack](../regtest/README.md) first; run chain scenarios seriall
 
 The results and framework scaffold below are historical, not qualification of
 the current RLN `0.17.0-beta.3` artifacts. The fixture's package declarations
-select candidate `0.2.0-beta.5`; changing those declarations does not upgrade or
+select released `0.2.0-beta.5`; changing those declarations does not upgrade or
 qualify the Expo 56/Bare Kit 0.14.5 scaffold. Current native peers come from the
-merged main commits in [native-peer-sources.json](../../native-peer-sources.json).
+exact candidate commits in [native-peer-sources.json](../../native-peer-sources.json),
+which require their separate build and runtime acceptance.
 Use the [current Bare integration instructions](https://github.com/UTEXO-Protocol/rgb-lightning-node-bare/blob/main/android/README.md)
 for supported Android staging. No new mobile build is claimed by WDK source or
 host package checks.
@@ -32,13 +40,14 @@ each generated fixture lockfile and build artifacts with that run's evidence.
 
 ## Build In An Isolated Directory
 
-Use a fresh copy of this directory, outside any real application. Install the
-candidate WDK and merged-main Bare tarballs, not older registry packages. All
+For historical baseline reproduction only, use its exact beta.5 source graph
+and a fresh copy of this directory outside any real application. Install the
+matching historical WDK/Bare archives. All
 commands below run from that isolated copy of the historical scaffold. Replace
 absolute placeholder paths with actual built artifacts.
 
 ```sh
-npm install --ignore-scripts --no-audit --no-fund /absolute/candidate-wdk.tgz /absolute/candidate-bare.tgz
+npm install --ignore-scripts --no-audit --no-fund /absolute/historical-beta5-wdk.tgz /absolute/historical-beta5-bare.tgz
 RLN_BARE_ARTIFACTS_DIR=/absolute/verified-bare-repo node node_modules/@utexo/rgb-lightning-node-bare/scripts/install-native-artifacts.js --platform all
 node node_modules/bare-pack/bin.js --imports node_modules/bare-node-runtime/imports.json --linked --host ios-arm64-simulator --host android-arm64 --out wallet.bundle.js wallet.mjs
 npx --no-install expo prebuild --no-install --clean --template expo-template-bare-minimum@sdk-56

@@ -130,6 +130,17 @@ describe('WebRGB session authorization', () => {
 })
 
 describe('WebRGB native mappings', () => {
+  test.each(['UnknownContractId', 'NotFound', 'AssetNotFound'])('maps contextual missing-asset code %s without exposing native details', async code => {
+    const failure = Object.assign(new Error('private path and credentials'), { code })
+    const { provider } = fixture({ sessionApproved: true }, {
+      getAssetBalance: async () => { throw failure }, getAddress: async () => { throw failure }
+    })
+    await expect(provider.getAssetBalance(ID)).rejects.toMatchObject({
+      code: 'ASSET_NOT_FOUND',
+      message: 'This asset is not in this wallet yet. Receive it first, then refresh your balance.'
+    })
+    await expect(provider.getAddress()).rejects.toMatchObject({ code: 'INTERNAL_ERROR', message: 'Wallet operation failed' })
+  })
   test('advertises exactly the read/receive subset, never burn, send or Lightning', async () => {
     const { provider } = fixture({ sessionApproved: true })
     expect(await provider.getInfo()).toEqual({ ready: true, network: 'mainnet', protocol: 'RGB_LN', methods: [...WEBRGB_READ_METHODS] })
@@ -147,7 +158,7 @@ describe('WebRGB native mappings', () => {
     const { provider, wallet, confirm } = fixture({ sessionApproved: true })
     const result = await provider.blindReceive({ assetId: ID, amount: 12, minConfirmations: 0 })
     expect(result).toEqual({ invoice: 'rgb:invoice', recipientId: 'utxob:recipient', expirationTimestamp: 2000, minConfirmations: 3 })
-    expect(wallet.createRgbInvoice).toHaveBeenCalledWith({ asset_id: ID, assignment_kind: 'Fungible', assignment_amount: 12, duration_seconds: 3600, min_confirmations: 3, witness: false })
+    expect(wallet.createRgbInvoice).toHaveBeenCalledWith({ asset_id: ID, assignment_kind: 'Fungible', assignment_amount: 12, duration_seconds: 86400, min_confirmations: 3, witness: false })
     expect(confirm.mock.calls[0][0].method).toBe('blindReceive')
     expect(Object.isFrozen(confirm.mock.calls[0][0].params)).toBe(true)
     expect(Object.isFrozen(confirm.mock.calls[0][0])).toBe(true)
@@ -156,7 +167,13 @@ describe('WebRGB native mappings', () => {
   test('unknown-asset receive uses Any and preserves a higher floor', async () => {
     const { provider, wallet } = fixture({ sessionApproved: true, minConfirmations: 6 })
     await provider.blindReceive()
-    expect(wallet.createRgbInvoice).toHaveBeenCalledWith({ assignment_kind: 'Any', duration_seconds: 3600, min_confirmations: 6, witness: false })
+    expect(wallet.createRgbInvoice).toHaveBeenCalledWith({ assignment_kind: 'Any', duration_seconds: 86400, min_confirmations: 6, witness: false })
+  })
+
+  test('accepts explicit thirty-minute RGB receive lifetime with a proxy ACK margin', async () => {
+    const { provider, wallet } = fixture({ sessionApproved: true })
+    await provider.blindReceive({ durationSeconds: 1800 })
+    expect(wallet.createRgbInvoice).toHaveBeenCalledWith(expect.objectContaining({ duration_seconds: 1800, witness: false }))
   })
 
   test('caller mutation and request origin cannot change approved invoice parameters', async () => {
@@ -188,7 +205,7 @@ describe('WebRGB native mappings', () => {
   })
 
   test.each([{ amount: 0 }, { amount: -1 }, { amount: 1.2 }, { amount: '12' }, { amount: Number.MAX_SAFE_INTEGER + 1 },
-    { assetId: '' }, { assetId: 'rgb:' }, { assetId: 'rgb:bad id' }, { durationSeconds: 0 }, { durationSeconds: 2592001 },
+    { assetId: '' }, { assetId: 'rgb:' }, { assetId: 'rgb:bad id' }, { durationSeconds: 0 }, { durationSeconds: 600 }, { durationSeconds: 1799 }, { durationSeconds: 2592001 },
     { minConfirmations: 256 }, { minConfirmations: null }, null, []].map(value => [value]))('rejects invalid receive %j before approval', async args => {
     const { provider, wallet, confirm } = fixture({ sessionApproved: true })
     await expect(provider.blindReceive(args)).rejects.toMatchObject({ code: 'INVALID_PARAMS' })
@@ -235,6 +252,71 @@ describe('WebRGB native mappings', () => {
     expect((await provider.listTransfers(ID))[0].amount).toBeUndefined()
   })
 
+  test.each(['Send', 'Burn'])('uses the requested %s amount instead of remaining wallet change', async kind => {
+    const transfer = { ...TRANSFER, kind, requested_assignment: 'Fungible(1000000)', assignments: ['Fungible(99000000)'] }
+    const { provider } = fixture({ sessionApproved: true }, { listTransfers: async () => [transfer] })
+    expect((await provider.listTransfers(ID))[0].amount).toBe(1000000)
+    expect((await provider.getTransferStatus(transfer.idx, ID)).transfer.amount).toBe(1000000)
+  })
+
+  test.each([[], ['Fungible(0)']].map(value => [value]))('preserves the outgoing amount with no remaining change %j', async assignments => {
+    const { provider } = fixture({ sessionApproved: true }, {
+      listTransfers: async () => [{
+        ...TRANSFER, kind: 'Send', requested_assignment: 'Fungible(1000000)', assignments
+      }]
+    })
+    expect((await provider.listTransfers(ID))[0].amount).toBe(1000000)
+  })
+
+  test('keeps per-recipient amounts separate when multiple sends share the same change allocation', async () => {
+    const { provider } = fixture({ sessionApproved: true }, {
+      listTransfers: async () => [
+        { ...TRANSFER, kind: 'Send', idx: 3, requested_assignment: 'Fungible(1000000)', assignments: ['Fungible(97000000)'] },
+        { ...TRANSFER, kind: 'Send', idx: 4, requested_assignment: 'Fungible(2000000)', assignments: ['Fungible(97000000)'] }
+      ]
+    })
+    expect((await provider.listTransfers(ID)).map(row => row.amount)).toEqual([1000000, 2000000])
+  })
+
+  test.each([undefined, null, {}, 'Any', 'Fungible(-1)', 'Fungible(01)', 'Fungible(1)extra', 'Fungible(18446744073709551616)'])('rejects missing or malformed outgoing requested assignment %j', async requested => {
+    for (const kind of ['Send', 'Burn']) {
+      const { provider } = fixture({ sessionApproved: true }, {
+        listTransfers: async () => [{
+          ...TRANSFER, kind, requested_assignment: requested, assignments: ['Fungible(1000000)']
+        }]
+      })
+      await expect(provider.listTransfers(ID)).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+    }
+  })
+
+  test('validates unexposed change without rounding it or substituting it for the safe requested amount', async () => {
+    const transfer = { ...TRANSFER, kind: 'Send', requested_assignment: 'Fungible(1000000)', assignments: ['Fungible(18446744073709551615)'] }
+    const { provider, wallet } = fixture({ sessionApproved: true }, { listTransfers: jest.fn(async () => [transfer]) })
+    expect((await provider.listTransfers(ID))[0].amount).toBe(1000000)
+    wallet.listTransfers.mockResolvedValue([{ ...transfer, requested_assignment: 'Fungible(9007199254740992)' }])
+    await expect(provider.listTransfers(ID)).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+    wallet.listTransfers.mockResolvedValue([{ ...transfer, assignments: ['Fungible(-1)'] }])
+    await expect(provider.listTransfers(ID)).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+  })
+
+  test('incoming amounts use actual received assignments rather than the invoice request', async () => {
+    const { provider } = fixture({ sessionApproved: true }, {
+      listTransfers: async () => [{
+        ...TRANSFER, requested_assignment: 'Fungible(100000000)', assignments: ['Fungible(1000000)']
+      }]
+    })
+    expect((await provider.listTransfers(ID))[0].amount).toBe(1000000)
+  })
+
+  test('non-fungible outgoing rights do not invent a fungible amount', async () => {
+    const { provider } = fixture({ sessionApproved: true }, {
+      listTransfers: async () => [{
+        ...TRANSFER, kind: 'Send', requested_assignment: 'MintRight', assignments: ['MintRight']
+      }]
+    })
+    expect((await provider.listTransfers(ID))[0].amount).toBeUndefined()
+  })
+
   test.each([3, '3', TXID, 'utxob:recipient'])('refreshes and resolves status by %s', async id => {
     const { provider, wallet } = fixture({ sessionApproved: true })
     const result = await provider.getTransferStatus(id, ID)
@@ -254,6 +336,22 @@ describe('WebRGB native mappings', () => {
       expect((await provider.decodeRgbInvoice('rgb:invoice')).amount).toBeNull()
     }
     wallet.decodeRgbInvoice.mockResolvedValue({ ...raw, assignment: { type: 'Fungible', value: '18446744073709551615' } })
+    await expect(provider.decodeRgbInvoice('rgb:invoice')).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+  })
+
+  test.each(['mainnet', 'testnet', 'testnet4', 'signet', 'regtest'])('normalizes native enum casing without changing invoice network: %s', async network => {
+    const { provider, wallet } = fixture({ sessionApproved: true })
+    const raw = await wallet.decodeRgbInvoice()
+    for (const native of [network, network[0].toUpperCase() + network.slice(1)]) {
+      wallet.decodeRgbInvoice.mockResolvedValue({ ...raw, network: native })
+      expect((await provider.decodeRgbInvoice('rgb:invoice')).network).toBe(network)
+    }
+  })
+
+  test.each([null, undefined, 0, '', 'Signet ', 'unknown', 'utexo', 'bitcoin'])('rejects unknown native invoice networks: %j', async network => {
+    const { provider, wallet } = fixture({ sessionApproved: true })
+    const raw = await wallet.decodeRgbInvoice()
+    wallet.decodeRgbInvoice.mockResolvedValue({ ...raw, network })
     await expect(provider.decodeRgbInvoice('rgb:invoice')).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
   })
 

@@ -23,7 +23,7 @@ try {
     ldk_peer_listening_port: 0,
     max_media_upload_size_mb: 5,
     enable_virtual_channels_v0: false,
-    reuse_addresses: true
+    reuse_addresses: false
   })
   node.initWithNativeExternalSigner(signer)
   const request = {
