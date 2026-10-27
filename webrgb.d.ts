@@ -12,7 +12,7 @@ export declare const MAX_BURN_PROOF_BYTES: number
 export declare function validateBurnDestination(value: unknown): BurnDestination
 /** Returns 32-byte hashStruct hexadecimal without a 0x prefix. */
 export declare function burnDestinationHash(value: unknown): string
-/** Only qualified EVM routes; unsupported routes are rejected. */
+/** Explicit EVM/Tron routes only. Tron requires a native Base58Check address. */
 export declare function burnDestinationFor(payout: { chainId: string; address: string }, routes: readonly BurnDestinationRoute[]): BurnDestination
 export declare function createBurnPackage(proof: Uint8Array, destination: unknown): string
 

@@ -1,11 +1,39 @@
 // Copyright 2026 UTEXO. Licensed under the Apache License, Version 2.0.
 import { keccak_256 as keccak256 } from '@noble/hashes/sha3'
+import { sha256 } from '@noble/hashes/sha256'
 import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils'
-import { base64 } from '@scure/base'
+import { base58check, base64 } from '@scure/base'
 
 export const MAX_BURN_PROOF_BYTES = 10 * 1024 * 1024
 const TYPE = 'UtexoBurnDestinationV1(uint64 destinationChainId,uint32 dstEid,bytes recipient)'
 const FIELDS = ['version', 'destinationChainId', 'dstEid', 'recipient']
+const tronBase58 = base58check(sha256)
+
+/** Return chain-native address bytes. Tron must be a checksummed native address;
+ * never silently reinterpret an EVM address as an account on another chain. */
+function payoutRecipient (chainId, address) {
+  if (typeof address !== 'string') throw new TypeError('Invalid payout address')
+  if (chainId.startsWith('eip155:')) {
+    if (!/^0x[a-f\d]{40}$/i.test(address) || /^0x0{40}$/i.test(address)) {
+      throw new TypeError('A nonzero EVM payout address is required')
+    }
+    const body = address.slice(2)
+    if (body !== body.toLowerCase() && body !== body.toUpperCase()) {
+      const hash = bytesToHex(keccak256(utf8ToBytes(body.toLowerCase())))
+      if ([...body].some((letter, index) => /[a-f]/i.test(letter) &&
+        (Number.parseInt(hash[index], 16) >= 8 ? letter !== letter.toUpperCase() : letter !== letter.toLowerCase()))) {
+        throw new TypeError('Invalid EVM payout address checksum')
+      }
+    }
+    return address.toLowerCase()
+  }
+  if (!address.startsWith('T') || address.length !== 34) throw new TypeError('A native Tron payout address is required')
+  let payload
+  try { payload = tronBase58.decode(address) } catch { throw new TypeError('Invalid Tron payout address checksum') }
+  if (payload.length !== 21 || payload[0] !== 0x41 || payload.slice(1).every(byte => byte === 0) ||
+      tronBase58.encode(payload) !== address) throw new TypeError('Invalid Tron payout address')
+  return '0x' + bytesToHex(payload)
+}
 
 /** Validate the portable V1 preimage; route policy is checked separately. */
 export function validateBurnDestination (value) {
@@ -41,21 +69,24 @@ export function burnDestinationHash (value) {
   return bytesToHex(keccak256(encoded))
 }
 
-/** Only explicitly qualified EVM routes are implemented. Never infer an endpoint ID. */
+/** Construct an explicitly admitted EVM or Tron route. Never infer an endpoint ID.
+ * This encodes a commitment; it does not establish payout liquidity or settlement. */
 export function burnDestinationFor (payout, routes) {
   if (!payout || typeof payout.chainId !== 'string' ||
-      !/^eip155:[1-9]\d{0,15}$/.test(payout.chainId) ||
-      typeof payout.address !== 'string' || !/^0x[a-f\d]{40}$/i.test(payout.address) ||
-      /^0x0{40}$/i.test(payout.address) || !Array.isArray(routes)) {
-    throw new TypeError('A supported EVM payout chain and nonzero address are required')
+      !/^(?:eip155|tron):[1-9]\d{0,15}$/.test(payout.chainId) || !Array.isArray(routes)) {
+    throw new TypeError('A supported payout chain and native address are required')
   }
   const matches = routes.filter(route => route?.chainId === payout.chainId)
   if (matches.length !== 1) throw new TypeError('This V1 payout route is not qualified')
+  const recipient = payoutRecipient(payout.chainId, payout.address)
+  if (payout.chainId.startsWith('tron:') && matches[0].dstEid === 0) {
+    throw new TypeError('A Tron payout requires an explicit nonzero endpoint')
+  }
   return validateBurnDestination({
     version: 1,
-    destinationChainId: Number(payout.chainId.slice(7)),
+    destinationChainId: Number(payout.chainId.split(':')[1]),
     dstEid: matches[0].dstEid,
-    recipient: payout.address
+    recipient
   })
 }
 
