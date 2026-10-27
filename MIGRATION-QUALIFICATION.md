@@ -13,7 +13,7 @@ until the pending acceptance checks below have real evidence.
 | UTEXO-Protocol/rgb-lib-bfa | `abd41d3afff6d8fb11461e26e843301650e22df3` |
 | LDK | `17f2fb56f8d96d0ec512c715d2ebc65f829eb2c2` |
 | Bare candidate | `8a3d1719544c113952cfb91d9b3694baa63e8cb9` |
-| Node candidate | `b516a830f579360c88920719527d0a5511da0225` |
+| Node candidate | `3b1bd68049f6a827508d6f762a0a155ae6d8876a` |
 
 The shared C-FFI lock SHA-256 is
 `741bd3d0f81b28c1f40e426b44f5c9ae152d777269934d7c0dc919d74f908da9`.
