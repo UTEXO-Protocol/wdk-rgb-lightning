@@ -12,7 +12,7 @@ until the pending acceptance checks below have real evidence.
 | Focused RLN | `89ebe9fdb1be94cbba0b2bd722cea9af297399f1` |
 | UTEXO-Protocol/rgb-lib-bfa | `abd41d3afff6d8fb11461e26e843301650e22df3` |
 | LDK | `17f2fb56f8d96d0ec512c715d2ebc65f829eb2c2` |
-| Bare candidate | `cc8a05aa3fad911a36d5761002984a94ae0595ad` |
+| Bare candidate | `8a3d1719544c113952cfb91d9b3694baa63e8cb9` |
 | Node candidate | `b516a830f579360c88920719527d0a5511da0225` |
 
 The shared C-FFI lock SHA-256 is

@@ -4,8 +4,8 @@
   "peers": {
     "@utexo/rgb-lightning-node-bare": {
       "repository": "https://github.com/UTEXO-Protocol/rgb-lightning-node-bare.git",
-      "ref": "cc8a05aa3fad911a36d5761002984a94ae0595ad",
-      "commit": "cc8a05aa3fad911a36d5761002984a94ae0595ad",
+      "ref": "8a3d1719544c113952cfb91d9b3694baa63e8cb9",
+      "commit": "8a3d1719544c113952cfb91d9b3694baa63e8cb9",
       "version": "0.2.0-bfa.1"
     },
     "@utexo/rgb-lightning-node-nodejs": {
